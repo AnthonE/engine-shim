@@ -21,6 +21,9 @@ public sealed class ShimWatch : Component
 			.Select( p => $"{p.GameObject.Name} at {p.WorldPosition.x:0},{p.WorldPosition.y:0},{p.WorldPosition.z:0} speed {p.Velocity.Length:0} {(p.IsOnGround ? $"on {p.GroundObject?.Name}" : "in the air")}" );
 		var bodies = Scene.GetAllComponents<Rigidbody>().Where( b => b.PhysicsBody.IsValid() ).ToList();
 		var awake = bodies.Count( b => !b.PhysicsBody.Sleeping );
+		var restless = awake is > 0 and <= 3
+			? " (" + string.Join( ", ", bodies.Where( b => !b.PhysicsBody.Sleeping ).Select( b => $"{b.GameObject.Name} at {b.Velocity.Length:0.0}" ) ) + ")"
+			: "";
 		var zs = bodies.Select( b => b.WorldPosition.z ).DefaultIfEmpty( 0 ).ToList();
 		var joints = Scene.GetAllComponents<Joint>().Count();
 		var colliders = Scene.GetAllComponents<Collider>().Count();
@@ -32,11 +35,18 @@ public sealed class ShimWatch : Component
 				Log.Info( $"shimwatch: {b.GameObject.Name} fell, its colliders {string.Join( ", ", b.GameObject.Components.GetAll<Collider>( FindMode.EverythingInSelfAndDescendants ).Select( c => c.GetType().Name ) )}" );
 			foreach ( var g in Scene.GetAllComponents<Collider>().GroupBy( c => c.GetType().Name ) )
 				Log.Info( $"shimwatch: {g.Count()} {g.Key}, sizes {string.Join( " ", g.Select( c => c.LocalBounds.Size.Length.ToString( "0" ) ) )}" );
+			// a model's collision names its own surfaces
+			foreach ( var m in Scene.GetAllComponents<ModelCollider>() )
+			{
+				var surfaces = m.Model?.Physics?.Surfaces?.Select( s => s?.ResourceName ?? "none" ) ?? Enumerable.Empty<string>();
+				var shapes = m.Rigidbody?.PhysicsBody?.Shapes ?? Enumerable.Empty<PhysicsShape>();
+				Log.Info( $"shimwatch: {m.GameObject.Name} ({m.Model?.ResourceName}) surfaces [{string.Join( " ", surfaces )}], its shapes [{string.Join( " ", shapes.Select( s => s.Surface?.ResourceName ?? "none" ).Distinct() )}], mass {m.Rigidbody?.Mass:0.0}" );
+			}
 		}
 
 		Shoot();
 
-		Log.Info( $"shimwatch {_ticks}: players [{string.Join( "; ", players )}] | bodies {bodies.Count} awake {awake} z {zs.Min():0}..{zs.Max():0} | joints {joints} | colliders {colliders}" );
+		Log.Info( $"shimwatch {_ticks}: players [{string.Join( "; ", players )}] | bodies {bodies.Count} awake {awake}{restless} z {zs.Min():0}..{zs.Max():0} | joints {joints} | colliders {colliders}" );
 	}
 
 	const string TargetModel = "models/first_person/v_first_person_arms_human.vmdl";

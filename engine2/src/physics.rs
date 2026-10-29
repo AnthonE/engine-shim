@@ -419,17 +419,21 @@ impl Shape {
         self.own_elasticity.unwrap_or_else(|| surface_props(t, self.surface_at(triangle)).elasticity)
     }
 
-    /// Its friction and elasticity on its collider (a triangle's own surface
-    /// is the contact hook's), as Box3D mixes them: friction the geometric
-    /// mean of two shapes', elasticity the greater.
+    /// The speed it must be hit at to bounce.
+    pub fn bounce_threshold(&self, t: &[Props], triangle: i32) -> f32 {
+        surface_props(t, self.surface_at(triangle)).bounce_threshold
+    }
+
+    /// Its friction and elasticity on its collider, as Box3D mixes them:
+    /// friction the geometric mean of two shapes', elasticity the greater.
+    /// The contact hook has the rest: a triangle's own surface, and the
+    /// bounce threshold.
     fn apply(&self, t: &[Props], co: &mut Collider) {
         co.set_friction(self.friction(t, -1));
         co.set_restitution(self.elasticity(t, -1).max(0.0));
         co.set_friction_combine_rule(CoefficientCombineRule::GeometricMean);
         co.set_restitution_combine_rule(CoefficientCombineRule::Max);
-        let mut hooks = ActiveHooks::FILTER_CONTACT_PAIRS | ActiveHooks::FILTER_INTERSECTION_PAIR;
-        if !self.materials.is_empty() { hooks |= ActiveHooks::MODIFY_SOLVER_CONTACTS; }
-        co.set_active_hooks(hooks);
+        co.set_active_hooks(ActiveHooks::FILTER_CONTACT_PAIRS | ActiveHooks::FILTER_INTERSECTION_PAIR | ActiveHooks::MODIFY_SOLVER_CONTACTS);
     }
 }
 
@@ -458,15 +462,26 @@ impl PhysicsHooks for Meta {
         a.body != b.body && !(a.trigger && b.trigger) && self.rules.between(&a.tags, &b.tags) != RULE_IGNORE
     }
 
-    /// A contact with a mesh or height field whose triangles have surfaces of
-    /// their own: the touching triangle's friction and elasticity.
+    /// A contact's friction and elasticity: the touching triangle's, where a
+    /// mesh's or height field's triangles have surfaces of their own. And no
+    /// bounce at all below the surfaces' bounce threshold (the greater of the
+    /// two), as Box3D's restitution threshold: things come to rest.
     fn modify_solver_contacts(&self, cx: &mut ContactModificationContext) {
-        let (c1, c2) = (cx.collider1, cx.collider2);
+        let (c1, c2, b1, b2, bodies) = (cx.collider1, cx.collider2, cx.rigid_body1, cx.rigid_body2, cx.bodies);
         let Some(m) = cx.rigid_mut() else { return };
-        let side = |c: ColliderHandle, tri: u32| self.shape(c).map(|s| (s.friction(&self.surfaces, tri as i32), s.elasticity(&self.surfaces, tri as i32)));
-        let (Some((f1, e1)), Some((f2, e2))) = (side(c1, m.manifold.subshape1), side(c2, m.manifold.subshape2)) else { return };
+        let t = &self.surfaces;
+        let side = |c: ColliderHandle, tri: u32| self.shape(c).map(|s| (s.friction(t, tri as i32), s.elasticity(t, tri as i32), s.bounce_threshold(t, tri as i32)));
+        let (Some((f1, e1, t1)), Some((f2, e2, t2))) = (side(c1, m.manifold.subshape1), side(c2, m.manifold.subshape2)) else { return };
         *m.friction = (f1.max(0.0) * f2.max(0.0)).sqrt();
-        *m.restitution = e1.max(e2).max(0.0);
+        let mut restitution = e1.max(e2).max(0.0);
+        if restitution > 0.0 {
+            // how fast they meet: the second's velocity towards the first along the normal (1 to 2)
+            let at = |b: Option<RigidBodyHandle>, p: Vector| b.and_then(|h| bodies.get(h)).map(|rb| rb.velocity_at_point(p)).unwrap_or(Vector::ZERO);
+            let normal = *m.normal;
+            let approach = m.solver_contacts.iter().map(|c| (at(b1, c.anchor1) - at(b2, c.anchor2)).dot(normal)).fold(0.0f32, f32::max);
+            if approach < t1.max(t2) { restitution = 0.0; }
+        }
+        *m.restitution = restitution;
     }
 }
 
@@ -2192,5 +2207,23 @@ mod tests {
             assert!(hit.f_Fraction < 1.0, "the ground is at ({x}, {y})");
             assert_eq!(hit.f_SurfaceProperty, s, "at ({x}, {y})");
         }
+    }
+
+    #[test]
+    fn a_ball_set_down_gently_does_not_bounce() {
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let rubber = surface("test_gentle_superball", 0.8, 0.9, 1200.0);
+        let w = ptr();
+        create_world(w);
+        body(w, STATIC, Vector::ZERO, Geometry::Box(Pose::IDENTITY, Vector::new(500.0, 500.0, 10.0)), &made_of(-1));
+        // half an inch up: it lands at 29 in/s, under the threshold (35)
+        let ball = body(w, DYNAMIC, Vector::new(0.0, 0.0, 18.5), Geometry::Sphere(Vector::ZERO, 8.0), &made_of(rubber));
+        let (mut up, mut slept) = (0.0f32, false);
+        for _ in 0..300 {
+            slept |= step(w, 1.0 / 60.0, 4).active.iter().any(|a| a.body == ball && a.fell_asleep);
+            up = up.max(with_body(ball, |_, rb| rb.linvel().z).unwrap());
+        }
+        assert!(up < 5.0, "no bounce back up ({up})");
+        assert!(slept, "and it rests");
     }
 }

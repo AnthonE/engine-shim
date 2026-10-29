@@ -222,9 +222,11 @@ the result vectors they fill:
   A mesh's or height field's triangles can each be of their own surface
   (a model's collision mesh, a terrain's painted materials): a contact
   takes the touching triangle's friction and elasticity, and a trace or a
-  touch reports its surface. A surface reloaded reaches the shapes made
-  of it, and their mass. A model file's shapes name their surfaces by
-  hash, found by name when managed asks.
+  touch reports its surface. Nothing bounces off a contact slower than
+  its surfaces' bounce threshold (Box3D's restitution threshold), so
+  things come to rest. A surface reloaded reaches the shapes made of it,
+  and their mass. A model file's shapes name their surfaces by hash,
+  found by name when managed asks.
 - **The step**: `StepSimulation` steps, then tells managed each body that
   moved (`PhysicsEngine.OnActive`: where, how fast, whether it fell
   asleep), which is how a `Rigidbody` follows its body.
@@ -293,7 +295,30 @@ slides over 400 on ice (friction 0.01) and under 100 on the default; a
 box of wood weighs 540 kg/m³ and twice that once the surface reloads; a
 floor mesh half glue and half ice holds one box and lets the other slide,
 traces and touches naming each half's surface; a height field's painted
-cell traces as its own. Not yet measured under the real server.
+cell traces as its own; a rubber ball set down gently doesn't bounce.
+
+Measured under the real server with core's surfaces compiled (`sh
+tools/compile.sh <sbox-public>/game/core surface`) and `tools/surfacerig.sh`'s
+rig, made of s&box's own colliders on a floor of the default surface:
+
+| | measured | predicted |
+| --- | --- | --- |
+| a ball dropped 180: default (0.05), rubber (0.4), metal sheet (0.25) | 0.2, 28.2, 10.8 | 0.45, 28.8, 11.25 (e²h) |
+| a box pushed at 300: default, slippy_wheels, slippy_wheels with `Friction = 1` | 65.8, 591.5, 58.6 | 66.2, 592, 59.2 (v²/2μg, μ the geometric mean) |
+| a 20 cube's `Rigidbody.Mass`: default, wood, metal, fabric | 262.2, 183.5, 354.0, 22.3 | the same (volume × density) |
+
+and a trace down onto each box names its surface. In Sandbox's zoo the
+props' model files name theirs: the office chair is rubber, plastic,
+metal, fabric and slippy_wheels; the car seat fabric and metal sheet. All
+18 bodies are asleep within two seconds, a player joins and stands, and
+the cubes and joints above measure as they did.
+
+```sh
+sh tools/compile.sh ../sbox-public/game/core surface
+sh tools/surfacerig.sh ../sbox-public /tmp/surfacerig
+SBOX=../sbox-public sh spike.sh 20 +shimgame /tmp/surfacerig/.sbproj
+grep surfacerig target/spike/server.log
+```
 
 ## A real game: Facepunch's Sandbox
 
@@ -400,8 +425,11 @@ What the game's components still can't do:
 - **Model data.** A model's key values (`prop_data`: a prop's health,
   its gibs) aren't made into KeyValues3 yet; nor are a runtime model's
   bones, hitboxes and meshes (`ModelBuilder`) kept.
-- **Surfaces' finer points.** Rolling resistance and the bounce
-  threshold are kept but not simulated: Rapier has neither.
+- **Rolling resistance.** A surface's is kept but not simulated: Rapier
+  has none.
+- **Compiled resources from sbox.game.** A downloaded package's
+  GameResources (its sounds, clothing, prefabs) are binary resource
+  containers, and only plain JSON is read as one yet: they fail to load.
 
 ## Reproduce
 
@@ -489,6 +517,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
 | `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
 | `tools/jointrig.sh`, `tools/jointrig/` | five rigs of s&box's joint components, and what each does |
+| `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
