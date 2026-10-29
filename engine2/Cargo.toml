@@ -6,5 +6,22 @@ license = "MIT"
 description = "s&box's native engine interface (igen_engine), reimplemented: for now, every slot a stub that records its first call"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
+
+[dependencies]
+# Sign-In With Ethereum: recover a signer (secp256k1) from a keccak digest.
+# The versions Gates' shards verify the same proofs with.
+k256 = { version = "0.13.4", default-features = false, features = ["ecdsa", "arithmetic"] }
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+# The transport: QUIC through WebTransport, as Gates' shards speak it, so a
+# browser can join one day. Git-pinned past the two-byte remote panic in
+# 0.7.1 (#317), the rev Gates pins (its docs/NETCODE.md §2.2).
+wtransport = { git = "https://github.com/BiagioFesta/wtransport", rev = "a11e6a8e7ff33c6eef522d308007da55d1df9f81", features = ["dangerous-configuration", "self-signed", "quinn"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+# Elo Pros' origin: who holds a copy (/api/ticket). Blocking and never on a
+# hot path; rustls, as Gates' shards ask it.
+ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
+# LZ4 (block and frame, the C library's formats): s&box compresses its
+# network packets and its saved data with it.
+lz4_flex = { version = "0.11", default-features = false, features = ["std", "frame", "safe-encode", "safe-decode"] }
