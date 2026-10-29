@@ -25,6 +25,7 @@ mod slots;
 mod steam;
 mod surfaces;
 mod trace;
+mod world;
 
 use std::sync::OnceLock;
 

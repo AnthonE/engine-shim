@@ -434,6 +434,38 @@ playing `Punching_Right_Hit_01` (0.83s, looping), the hand swings 24 to 30
 from where it rested, a shot where it rested misses, and a shot where it
 is hits `hand_R`. A player joins and stands as before.
 
+**Maps** (`engine2/src/world.rs`, `assets/vpk.rs`, `assets/entities.rs`).
+A map is a pak (`maps/flatgrass.vpk`, Valve's VPK, read here) of its
+world: its collision (`world_physics.vphys`), its entities
+(`entities/default_ents.vents_c`) and its game objects (`world.scene`).
+`CreateWorld` mounts the pak, so the engine's files find what's in it;
+the world answers its folder and its entity lumps, each entity's keys
+(Source 2's entity blob: keys by StringToken hash, typed values) as the
+text managed converts; the collision is a physics resource managed loads
+by name, made into shapes as a model's is, with the collision attributes
+(tags) its shapes name. Sandbox's own map, Facepunch's flatgrass, is a
+Steam workshop item now, which needs Steam; its last revision on
+sbox.game's CDN is fetched with `tools/map.sh` into the project, and
+`tools/sandbox.sh` points Sandbox's map at it. Measured: flatgrass's 249
+entities (190 spawn points, lights, fog, soundscapes) and its collision
+(1,246 hulls and two meshes over 12 surfaces) load; traces from above
+land on grass at z 0 and on the spawn building's roof at 382; a player
+joins, spawns on the roof and stands there.
+
+A player runs its own copy of the world, and the map's too. A player of
+a local project's map gets the game's code from the server but not its
+pak: `ENGINE2_CONTENT` names folders it looks in for files (the pak
+`tools/map.sh` fetched). Without it a player has no collision and falls,
+as the server sees.
+
+```sh
+sh tools/map.sh facepunch.flatgrass ../sandbox/Assets
+sh tools/sandbox.sh ../sandbox scenes/sandbox.scene
+SBOX=../sbox-public sh spike.sh 300 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
+# once "Server started!":
+(cd ../sbox-public/game && ENGINE2_CONTENT=$PWD/../../sandbox/Assets ./sbox-server +shimclient 127.0.0.1:27015 +instanceid 2)
+```
+
 What the game's components still can't do:
 
 - **Animation graphs.** A model's `.vanmgrph` isn't run, so a renderer
@@ -444,6 +476,10 @@ What the game's components still can't do:
   keeps its collision, not its bones, hitboxes and meshes.
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
   has none.
+- **Workshop maps.** A map that's only on Steam's workshop needs Steam
+  to download; `tools/map.sh` takes the newest revision sbox.game's CDN
+  still holds. A player sees each map's spawn points twice (380 to the
+  server's 190): not looked into yet.
 
 ## Reproduce
 
@@ -521,8 +557,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/surfaces.rs` | surfaces: what shapes are made of, by index and by name, and what each does to them |
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
-| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`) |
-| `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders, the game's own |
+| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
+| `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders (case blind, as managed names them), the game's own, mounted paks |
+| `engine2/src/world.rs` | maps: worlds from a map's pak, their folder and entity lumps |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
 | `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
@@ -534,21 +571,22 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
 | `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
 | `tools/jointrig.sh`, `tools/jointrig/` | five rigs of s&box's joint components, and what each does |
+| `tools/map.sh` | a map package's paks from sbox.game, into a project |
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
 
-1. **A server that runs a game.** Facepunch's Sandbox hosts and is joined
-   (above). What its world still lacks is model files: the assets step.
+1. **A server that runs a game.** Facepunch's Sandbox hosts on its own map
+   and is joined (above). What a player's model still lacks is its
+   animation graph.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
    the shard list and the relay are ours now, and a player joins (above).
    Next: lobbies. A relay run for others wants a price, as the stream relay's
    credits do (scry-forge `meter/relay.py`).
-3. **Assets.** A model's collision is read from its file (above). Next a
-   model's bones and hitboxes (a server's hit detection), then maps
-   (`.vmap_c`: a world's collision and entities). Materials, textures and
-   shaders only matter to a client.
+3. **Assets.** Models (collision, bones, hitboxes, sequences, key
+   values), surfaces and maps are read (above). Next animation graphs.
+   Materials, textures and shaders only matter to a client.
 4. **A client.** Rendering: about 670 scene and render slots onto a renderer
    of our own choosing (Bevy or Godot; see below), then sound and input.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large

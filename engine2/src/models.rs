@@ -81,6 +81,8 @@ pub struct Part {
     pub bone: String,
     pub bind_pose: Pose,
     pub surface: u32,
+    /// each shape's collision attribute (its tags), in the order managed adds them
+    pub collision_attributes: Vec<u16>,
 }
 
 impl Default for Part {
@@ -101,6 +103,7 @@ impl Default for Part {
             bone: String::new(),
             bind_pose: Pose::IDENTITY,
             surface: 0,
+            collision_attributes: Vec::new(),
         }
     }
 }
@@ -114,6 +117,8 @@ pub struct Bodies {
     pub surfaces: Vec<i32>,
     /// a model file's surfaces instead, by their names' hashes (found when asked for: they may load after it)
     pub surface_hashes: Vec<u32>,
+    /// the collision attributes its shapes name: each one's tags
+    pub attributes: Vec<Vec<std::ffi::CString>>,
     /// the bone each part follows, and its bind pose (a model file's; none for a built one)
     pub bones: Vec<(String, Pose)>,
 }
@@ -354,19 +359,22 @@ fn bind_pose(v: &Value) -> Pose {
     Pose::from_parts(Vector::new(f[3], f[7], f[11]), rapier3d::math::Rotation::from_mat3(&m).normalize())
 }
 
-/// A shape description's surface: which of its model's surfaces it is made
-/// of, where managed reads it (`m_nSurfacePropertyIndex`).
-fn surface_of(ptr: usize, desc: &Value, field: u32) -> usize {
-    crate::state::set(ptr, field, desc.i64("m_nSurfacePropertyIndex") as u32);
+/// A shape description's surface and collision attribute: which of its
+/// model's each is, where managed reads them (`m_nSurfacePropertyIndex`,
+/// `m_nCollisionAttributeIndex`).
+fn surface_of(ptr: usize, desc: &Value, (surface, attribute): (u32, u32)) -> usize {
+    crate::state::set(ptr, surface, desc.i64("m_nSurfacePropertyIndex") as u32);
+    crate::state::set(ptr, attribute, desc.i64("m_nCollisionAttributeIndex") as u32);
     ptr
 }
 
 /// VPhysXAggregateData_t as the objects a built model's physics is.
 fn physics(agg: &Value) -> usize {
-    use crate::slots::{
-        PROP__RnCapsuleDesc_t_m_nSurfacePropertyIndex as CAPSULE, PROP__RnHullDesc_t_m_nSurfacePropertyIndex as HULL,
-        PROP__RnMeshDesc_t_m_nSurfacePropertyIndex as MESH, PROP__RnSphereDesc_t_m_nSurfacePropertyIndex as SPHERE,
-    };
+    use crate::slots::*;
+    const SPHERE: (u32, u32) = (PROP__RnSphereDesc_t_m_nSurfacePropertyIndex, PROP__RnSphereDesc_t_m_nCollisionAttributeIndex);
+    const CAPSULE: (u32, u32) = (PROP__RnCapsuleDesc_t_m_nSurfacePropertyIndex, PROP__RnCapsuleDesc_t_m_nCollisionAttributeIndex);
+    const HULL: (u32, u32) = (PROP__RnHullDesc_t_m_nSurfacePropertyIndex, PROP__RnHullDesc_t_m_nCollisionAttributeIndex);
+    const MESH: (u32, u32) = (PROP__RnMeshDesc_t_m_nSurfacePropertyIndex, PROP__RnMeshDesc_t_m_nCollisionAttributeIndex);
     let mut parts = Vec::new();
     for p in agg.get("m_parts").map(Value::as_array).unwrap_or(&[]) {
         let shape = p.get("m_rnShape");
@@ -379,6 +387,7 @@ fn physics(agg: &Value) -> usize {
             flags: p.i64("m_nFlags") as u32,
             override_mass_center: p.i64("m_bOverrideMassCenter") != 0,
             mass_center: vec3(p.get("m_vMassCenterOverride")),
+            collision_attributes: shape.and_then(|s| s.get("m_CollisionAttributeIndices")).map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_i64).map(|i| i as u16).collect(),
             ..Default::default()
         };
         for s in list("m_spheres") {
@@ -404,13 +413,38 @@ fn physics(agg: &Value) -> usize {
             let o = Obj::Mesh(Mesh { vertices: points(mesh.get("m_Vertices")), triangles: triangles(mesh.get("m_Triangles")), materials });
             part.meshes.push(surface_of(make(o), &m, MESH));
         }
-        parts.push(make(Obj::Part(part)));
+        let ptr = make(Obj::Part(part));
+        crate::state::set(ptr, PROP__VPhysXBodyPart_t_m_nCollisionAttributeIndex, p.i64("m_nCollisionAttributeIndex") as u16);
+        parts.push(ptr);
     }
     let names: Vec<String> = agg.get("m_boneNames").map(Value::as_array).unwrap_or(&[]).iter().filter_map(|n| n.as_str().map(String::from)).collect();
     let poses: Vec<Pose> = agg.get("m_bindPose").map(Value::as_array).unwrap_or(&[]).iter().map(bind_pose).collect();
     let bones = names.into_iter().enumerate().map(|(i, n)| (n, poses.get(i).copied().unwrap_or(Pose::IDENTITY))).collect();
     let surface_hashes = agg.get("m_surfacePropertyHashes").map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_i64).map(|h| h as u32).collect();
-    make(Obj::Bodies(Bodies { parts, bones, surface_hashes, ..Default::default() }))
+    let attributes = agg.get("m_collisionAttributes").map(Value::as_array).unwrap_or(&[]).iter()
+        .map(|a| a.get("m_PhysicsTagStrings").map(Value::as_array).unwrap_or(&[]).iter().filter_map(|t| t.as_str()).map(cs).collect())
+        .collect();
+    make(Obj::Bodies(Bodies { parts, bones, surface_hashes, attributes, ..Default::default() }))
+}
+
+fn cs(s: &str) -> std::ffi::CString {
+    std::ffi::CString::new(s.replace('\0', "")).unwrap_or_default()
+}
+
+/// A physics resource of its own (`maps/x/world_physics.vphys`, a map's
+/// collision): its physics container, read once (0: none to be read).
+pub fn load_physics(name: &str) -> usize {
+    static LOADED: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+    let key = crate::fs::normal(name.trim_end_matches("_c"));
+    let loaded = LOADED.get_or_init(Default::default);
+    if let Some(&p) = loaded.lock().unwrap().get(&key) { return p; }
+    let Some(bytes) = crate::fs::read_compiled(&key) else { return 0 };
+    let p = match crate::assets::resource::Resource::parse(bytes).map(|r| r.kv3("DATA")) {
+        Ok(Some(Ok(v))) => physics(&v),
+        _ => { crate::trace::note(&format!("models: {name}: no collision to read")); return 0 }
+    };
+    loaded.lock().unwrap().insert(key, p);
+    p
 }
 
 /// A planar polygon (convex or not, wound either way) as triangles: indices

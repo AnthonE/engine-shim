@@ -1700,10 +1700,10 @@ unsafe extern "C" fn s317(_a0: usize) { hit(317);  }
 unsafe extern "C" fn s318(_a0: usize, _a1: i32, _a2: usize) { hit(318);  }
 unsafe extern "C" fn s319(_a0: usize) -> usize { hit(319); crate::trace::object(319) }
 unsafe extern "C" fn s320(_a0: usize, _a1: usize) { hit(320);  }
-unsafe extern "C" fn s321(_a0: usize, _a1: S_Sandbox_StringToken, _a2: usize) -> usize { hit(321); crate::trace::object(321) }
-unsafe extern "C" fn s322(_a0: usize) -> i32 { hit(322); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s323(_a0: usize, _a1: i32) -> u32 { hit(323); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s324(_a0: usize, _a1: u32, _a2: usize) -> usize { hit(324); crate::trace::object(324) }
+unsafe extern "C" fn s321(_a0: usize, _a1: S_Sandbox_StringToken, _a2: usize) -> usize { hit(321); unsafe { crate::impls::CEntityKeyValues_GetValueString(_a0, _a1, _a2) } }
+unsafe extern "C" fn s322(_a0: usize) -> i32 { hit(322); unsafe { crate::impls::CEntityKeyValues_GetKeyCount(_a0) } }
+unsafe extern "C" fn s323(_a0: usize, _a1: i32) -> u32 { hit(323); unsafe { crate::impls::CEntityKeyValues_GetKey(_a0, _a1) } }
+unsafe extern "C" fn s324(_a0: usize, _a1: u32, _a2: usize) -> usize { hit(324); unsafe { crate::impls::CEntityKeyValues_GetValueString_1(_a0, _a1, _a2) } }
 unsafe extern "C" fn s325(_a0: usize) -> usize { hit(325); _a0 }
 unsafe extern "C" fn s326(_a0: usize) -> usize { hit(326); _a0 }
 unsafe extern "C" fn s327(_a0: usize) -> usize { hit(327); _a0 }
@@ -2112,9 +2112,9 @@ unsafe extern "C" fn s729(_a0: usize, _a1: i32) -> S_Transform { hit(729); unsaf
 unsafe extern "C" fn s730(_a0: usize, _a1: i32) -> usize { hit(730); unsafe { crate::impls::CPhysicsData_GetPart(_a0, _a1) } }
 unsafe extern "C" fn s731(_a0: usize, _a1: i32) -> usize { hit(731); unsafe { crate::impls::CPhysicsData_GetSurfaceProperties(_a0, _a1) } }
 unsafe extern "C" fn s732(_a0: usize) -> i32 { hit(732); unsafe { crate::impls::CPhysicsData_GetSurfacePropertiesCount(_a0) } }
-unsafe extern "C" fn s733(_a0: usize) -> i32 { hit(733); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s734(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(734); crate::trace::object(734) }
-unsafe extern "C" fn s735(_a0: usize, _a1: i32) -> i32 { hit(735); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s733(_a0: usize) -> i32 { hit(733); unsafe { crate::impls::CPhysicsData_GetCollisionAttributeCount(_a0) } }
+unsafe extern "C" fn s734(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(734); unsafe { crate::impls::CPhysicsData_GetTag(_a0, _a1, _a2) } }
+unsafe extern "C" fn s735(_a0: usize, _a1: i32) -> i32 { hit(735); unsafe { crate::impls::CPhysicsData_GetTagCount(_a0, _a1) } }
 unsafe extern "C" fn s736(_a0: usize) -> i32 { hit(736); unsafe { crate::impls::CPhysicsData_GetJointCount(_a0) } }
 unsafe extern "C" fn s737(_a0: usize, _a1: i32) -> usize { hit(737); unsafe { crate::impls::CPhysicsData_GetJoint(_a0, _a1) } }
 unsafe extern "C" fn s738(_a0: usize) -> u16 { hit(738); crate::state::get::<u16>(_a0, 100) }
@@ -3034,7 +3034,7 @@ unsafe extern "C" fn s1651() -> i32 { hit(1651); unsafe { core::mem::zeroed() } 
 unsafe extern "C" fn s1652(_a0: i32, _a1: i32) { hit(1652);  }
 unsafe extern "C" fn s1653(_a0: usize, _a1: S_System_Guid) -> usize { hit(1653); unsafe { crate::impls::Glue_Resources_GetModel(_a0, _a1) } }
 unsafe extern "C" fn s1654(_a0: usize) -> usize { hit(1654); unsafe { crate::impls::Glue_Resources_GetModelResourceName(_a0) } }
-unsafe extern "C" fn s1655(_a0: usize, _a1: S_System_Guid) -> usize { hit(1655); crate::trace::object(1655) }
+unsafe extern "C" fn s1655(_a0: usize, _a1: S_System_Guid) -> usize { hit(1655); unsafe { crate::impls::Glue_Resources_GetPhysics(_a0, _a1) } }
 unsafe extern "C" fn s1656(_a0: usize, _a1: S_System_Guid) -> usize { hit(1656); crate::trace::object(1656) }
 unsafe extern "C" fn s1657(_a0: usize, _a1: S_System_Guid) -> usize { hit(1657); crate::trace::object(1657) }
 unsafe extern "C" fn s1658(_a0: usize) -> usize { hit(1658); crate::trace::object(1658) }
@@ -3633,16 +3633,16 @@ unsafe extern "C" fn s2250(_a0: usize) { hit(2250);  }
 unsafe extern "C" fn s2251(_a0: usize) -> usize { hit(2251); crate::trace::object(2251) }
 unsafe extern "C" fn s2252(_a0: usize) { hit(2252);  }
 unsafe extern "C" fn s2253(_a0: usize, _a1: usize, _a2: usize) { hit(2253);  }
-unsafe extern "C" fn s2254(_a0: usize) { hit(2254);  }
-unsafe extern "C" fn s2255(_a0: usize) -> i32 { hit(2255); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2256(_a0: usize) -> i32 { hit(2256); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2254(_a0: usize) { hit(2254); unsafe { crate::impls::IWorldReference_Release(_a0) } }
+unsafe extern "C" fn s2255(_a0: usize) -> i32 { hit(2255); unsafe { crate::impls::IWorldReference_IsWorldLoaded(_a0) } }
+unsafe extern "C" fn s2256(_a0: usize) -> i32 { hit(2256); unsafe { crate::impls::IWorldReference_IsErrorWorld(_a0) } }
 unsafe extern "C" fn s2257(_a0: usize) -> i32 { hit(2257); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2258(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(2258); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2259(_a0: usize) -> i32 { hit(2259); crate::handles::related(_a0, "SceneWorld") }
+unsafe extern "C" fn s2259(_a0: usize) -> i32 { hit(2259); unsafe { crate::impls::IWorldReference_GetSceneWorld(_a0) } }
 unsafe extern "C" fn s2260(_a0: usize, _a1: u32) { hit(2260);  }
-unsafe extern "C" fn s2261(_a0: usize) -> usize { hit(2261); crate::trace::object(2261) }
-unsafe extern "C" fn s2262(_a0: usize, _a1: usize) -> i32 { hit(2262); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2263(_a0: usize, _a1: usize, _a2: i32) -> usize { hit(2263); crate::trace::object(2263) }
+unsafe extern "C" fn s2261(_a0: usize) -> usize { hit(2261); unsafe { crate::impls::IWorldReference_GetFolder(_a0) } }
+unsafe extern "C" fn s2262(_a0: usize, _a1: usize) -> i32 { hit(2262); unsafe { crate::impls::IWorldReference_GetEntityCount(_a0, _a1) } }
+unsafe extern "C" fn s2263(_a0: usize, _a1: usize, _a2: i32) -> usize { hit(2263); unsafe { crate::impls::IWorldReference_GetEntityKeyValues(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2264(_a0: usize, _a1: usize) { hit(2264);  }
 unsafe extern "C" fn s2265(_a0: i32, _a1: i32, _a2: i32, _a3: i64, _a4: i32) -> i32 { hit(2265); unsafe { crate::impls::ImageLoader_GetMemRequired(_a0, _a1, _a2, _a3, _a4) } }
 unsafe extern "C" fn s2266(_a0: i32, _a1: i32, _a2: i32, _a3: i32, _a4: i64) -> i32 { hit(2266); unsafe { crate::impls::ImageLoader_GetMemRequired_1(_a0, _a1, _a2, _a3, _a4) } }
@@ -4081,8 +4081,8 @@ unsafe extern "C" fn s2698(_a0: usize) -> i32 { hit(2698); unsafe { crate::impls
 unsafe extern "C" fn s2699(_a0: usize, _a1: i32) -> usize { hit(2699); unsafe { crate::impls::VPhysXBodyPart_t_GetHull(_a0, _a1) } }
 unsafe extern "C" fn s2700(_a0: usize) -> i32 { hit(2700); unsafe { crate::impls::VPhysXBodyPart_t_GetMeshCount(_a0) } }
 unsafe extern "C" fn s2701(_a0: usize, _a1: i32) -> usize { hit(2701); unsafe { crate::impls::VPhysXBodyPart_t_GetMesh(_a0, _a1) } }
-unsafe extern "C" fn s2702(_a0: usize) -> i32 { hit(2702); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2703(_a0: usize, _a1: i32) -> u16 { hit(2703); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2702(_a0: usize) -> i32 { hit(2702); unsafe { crate::impls::VPhysXBodyPart_t_GetCollisionAttributeCount(_a0) } }
+unsafe extern "C" fn s2703(_a0: usize, _a1: i32) -> u16 { hit(2703); unsafe { crate::impls::VPhysXBodyPart_t_GetCollisionAttributeIndex(_a0, _a1) } }
 unsafe extern "C" fn s2704(_a0: usize) -> u32 { hit(2704); unsafe { crate::impls::Get__VPhysXBodyPart_t_m_nFlags(_a0) } }
 unsafe extern "C" fn s2705(_a0: usize, _a1: u32) { hit(2705); unsafe { crate::impls::Set__VPhysXBodyPart_t_m_nFlags(_a0, _a1) } }
 unsafe extern "C" fn s2706(_a0: usize) -> f32 { hit(2706); unsafe { crate::impls::Get__VPhysXBodyPart_t_m_flMass(_a0) } }
@@ -4430,9 +4430,9 @@ unsafe extern "C" fn s3047(_a0: usize, _a1: i32, _a2: i32, _a3: i32, _a4: i32, _
 unsafe extern "C" fn s3048(_a0: usize) { hit(3048);  }
 unsafe extern "C" fn s3049() { hit(3049);  }
 unsafe extern "C" fn s3050(_a0: S_Sandbox_StringToken, _a1: usize, _a2: f32, _a3: f32) -> u32 { hit(3050); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3051(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32, _a5: i32, _a6: S_Sandbox_StringToken, _a7: usize) -> usize { hit(3051); crate::trace::object(3051) }
-unsafe extern "C" fn s3052(_a0: usize, _a1: usize) -> i32 { hit(3052); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3053(_a0: usize) -> i32 { hit(3053); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3051(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32, _a5: i32, _a6: S_Sandbox_StringToken, _a7: usize) -> usize { hit(3051); unsafe { crate::impls::g_pWrldRndrrMgr_CreateWorld(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7) } }
+unsafe extern "C" fn s3052(_a0: usize, _a1: usize) -> i32 { hit(3052); unsafe { crate::impls::g_pWrldRndrrMgr_MountWorldVPK(_a0, _a1) } }
+unsafe extern "C" fn s3053(_a0: usize) -> i32 { hit(3053); unsafe { crate::impls::g_pWrldRndrrMgr_UnmountWorldVPK(_a0) } }
 unsafe extern "C" fn s3054(_a0: usize, _a1: usize, _a2: usize) { hit(3054);  }
 unsafe extern "C" fn s3055(_a0: usize, _a1: usize, _a2: usize) { hit(3055);  }
 unsafe extern "C" fn s3056(_a0: usize, _a1: usize) { hit(3056); unsafe { crate::impls::global_Plat_MessageBox(_a0, _a1) } }

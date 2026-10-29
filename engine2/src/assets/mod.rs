@@ -1,10 +1,12 @@
 //! Compiled Source 2 assets, read: the resource container, binary KV3 in
 //! it, and what physics needs of a model (models.rs makes the model).
 pub mod anim;
+pub mod entities;
 pub mod kv3;
 pub mod kv3text;
 pub mod model;
 pub mod resource;
+pub mod vpk;
 
 #[cfg(test)]
 mod tests {

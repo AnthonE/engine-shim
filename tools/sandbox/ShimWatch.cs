@@ -60,6 +60,17 @@ public sealed class ShimWatch : Component
 				var shapes = m.Rigidbody?.PhysicsBody?.Shapes ?? Enumerable.Empty<PhysicsShape>();
 				Log.Info( $"shimwatch: {m.GameObject.Name} ({m.Model?.ResourceName}) surfaces [{string.Join( " ", surfaces )}], its shapes [{string.Join( " ", shapes.Select( s => s.Surface?.ResourceName ?? "none" ).Distinct() )}], mass {m.Rigidbody?.Mass:0.0}" );
 			}
+			// a map's ground, if there's a map: straight down at a few places, and what's there
+			foreach ( var m in Scene.GetAllComponents<MapInstance>() )
+			{
+				var spawns = Scene.GetAllComponents<SpawnPoint>().Select( x => x.WorldPosition ).ToList();
+				var shots = string.Join( ", ", new[] { Vector3.Zero, new Vector3( 1000, 1000, 0 ), new Vector3( -2000, 500, 0 ) }.Concat( spawns.Take( 2 ) ).Select( at =>
+				{
+					var tr = Scene.Trace.Ray( at.WithZ( 4000 ), at.WithZ( -4000 ) ).Run();
+					return tr.Hit ? $"({at.x:0},{at.y:0}) z {tr.EndPosition.z:0} {tr.GameObject?.Name} {tr.Surface?.ResourceName} [{string.Join( " ", tr.Tags )}]" : $"({at.x:0},{at.y:0}) nothing";
+				} ) );
+				Log.Info( $"shimwatch: map {m.MapName} loaded {m.IsLoaded}, {spawns.Count} spawn points, map objects {Scene.GetAllComponents<MapObjectComponent>().Count()}; ground: {shots}" );
+			}
 			// and its key values: a prop's health, what it breaks into
 			foreach ( var p in Scene.GetAllComponents<Prop>() )
 				Log.Info( $"shimwatch: prop {p.GameObject.Name} health {p.Health:0} explosive {p.IsExplosive} gibs {p.Model?.GetData<Sandbox.ModelEditor.Nodes.ModelBreakPiece[]>()?.Length ?? 0}" );
@@ -103,6 +114,16 @@ public sealed class ShimWatch : Component
 		}
 
 		Shoot();
+
+		// each player: what the controller's ground probe finds under them, and the map still there
+		foreach ( var p in Scene.GetAllComponents<PlayerController>() )
+		{
+			var probe = Scene.Trace.Box( new BBox( new Vector3( -16, -16, 0 ), new Vector3( 16, 16, 0 ) ), p.WorldPosition + Vector3.Up * 4, p.WorldPosition - Vector3.Up * 2 )
+				.IgnoreGameObjectHierarchy( p.GameObject ).WithCollisionRules( p.Tags ).UseHitPosition().Run();
+			var below = Scene.Trace.Ray( p.WorldPosition + Vector3.Up * 10, p.WorldPosition - Vector3.Up * 100000 ).IgnoreGameObjectHierarchy( p.GameObject ).Run();
+			var map = Scene.GetAllComponents<MapCollider>().FirstOrDefault();
+			Log.Info( $"shimwatch player {p.GameObject.Name}: tags [{string.Join( " ", p.Tags )}] probe {(probe.Hit ? $"{probe.GameObject?.Name} frac {probe.Fraction:0.00} solid {probe.StartedSolid}" : "nothing")} | below {(below.Hit ? $"{below.GameObject?.Name} z {below.EndPosition.z:0}" : "nothing")} | map collider {(map is null ? "gone" : $"{(map.Enabled ? "on" : "off")} at {map.WorldPosition}")} | body {(p.Body is { } b ? $"motion {b.MotionEnabled} gravity {b.Gravity} v {b.Velocity.z:0}" : "none")}" );
+		}
 
 		Log.Info( $"shimwatch {_ticks}: players [{string.Join( "; ", players )}] | bodies {bodies.Count} awake {awake}{restless} z {zs.Min():0}..{zs.Max():0} | joints {joints} | colliders {colliders}" );
 	}

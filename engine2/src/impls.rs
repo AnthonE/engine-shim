@@ -1230,6 +1230,23 @@ pub unsafe fn CPhysicsData_GetBindingPtr(physics: usize) -> usize { physics }
 pub unsafe fn CPhysicsData_GetSurfacePropertiesCount(physics: usize) -> i32 {
     models::models().bodies(physics).map(|b| b.surfaces.len().max(b.surface_hashes.len()) as i32).unwrap_or(0)
 }
+/// The collision attributes its shapes name: each one's tags.
+pub unsafe fn CPhysicsData_GetCollisionAttributeCount(physics: usize) -> i32 {
+    models::models().bodies(physics).map(|b| b.attributes.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CPhysicsData_GetTagCount(physics: usize, a: i32) -> i32 {
+    models::models().bodies(physics).and_then(|b| b.attributes.get(a as usize).map(|t| t.len() as i32)).unwrap_or(0)
+}
+pub unsafe fn CPhysicsData_GetTag(physics: usize, a: i32, i: i32) -> usize {
+    // the container lives as long as its model: its strings are where they are
+    models::models().bodies(physics).and_then(|b| b.attributes.get(a as usize)?.get(i as usize).map(|t| t.as_ptr() as usize)).unwrap_or(c"".as_ptr() as usize)
+}
+/// Each of a part's shapes' collision attribute, in the order managed adds them.
+pub unsafe fn VPhysXBodyPart_t_GetCollisionAttributeCount(p: usize) -> i32 { part(p, |x| x.collision_attributes.len() as i32) }
+pub unsafe fn VPhysXBodyPart_t_GetCollisionAttributeIndex(p: usize, i: i32) -> u16 { part(p, |x| x.collision_attributes.get(i as usize).copied().unwrap_or(0)) }
+/// A physics resource by name (a map's collision).
+pub unsafe fn Glue_Resources_GetPhysics(name: usize, _guid: S_System_Guid) -> usize { models::load_physics(&unsafe { read(name) }) }
+
 pub unsafe fn CPhysicsData_GetSurfaceProperties(physics: usize, i: i32) -> usize {
     let Ok(i) = usize::try_from(i) else { return 0 };
     let index = models::models().bodies(physics).and_then(|b| match b.surfaces.get(i) {
@@ -2462,5 +2479,39 @@ mod scene_models {
             assert!((CScnnmtblbjct_GetSequenceCycle(obj) - 0.1).abs() < 1e-3);
             assert_eq!(CScnnmtblbjct_IsSequenceFinished(obj), 0);
         }
+    }
+}
+
+// ---- maps (world.rs): a world from a map's pak, its folder and its entities
+
+use crate::world;
+
+pub unsafe fn g_pWrldRndrrMgr_CreateWorld(map: usize, scene_world: usize, _async: i32, _ignore_existing: i32, _vis: i32, _precache: i32, _group: S_Sandbox_StringToken, _tx: usize) -> usize {
+    world::create(&unsafe { read(map) }, scene_world).unwrap_or(0)
+}
+pub unsafe fn g_pWrldRndrrMgr_MountWorldVPK(name: usize, path: usize) -> i32 {
+    crate::fs::mount(&unsafe { read(name) }, &unsafe { read(path) }).is_ok() as i32
+}
+pub unsafe fn g_pWrldRndrrMgr_UnmountWorldVPK(name: usize) -> i32 { crate::fs::unmount(&unsafe { read(name) }) as i32 }
+pub unsafe fn IWorldReference_Release(w: usize) { world::release(w) }
+/// Loaded as soon as it's made: there is nothing to stream in for a server.
+pub unsafe fn IWorldReference_IsWorldLoaded(w: usize) -> i32 { world::with(w, |_| ()).is_some() as i32 }
+pub unsafe fn IWorldReference_IsErrorWorld(w: usize) -> i32 { world::with(w, |_| ()).is_none() as i32 }
+pub unsafe fn IWorldReference_GetSceneWorld(w: usize) -> i32 { world::with(w, |x| crate::handles::of(x.scene_world)).unwrap_or(0) }
+pub unsafe fn IWorldReference_GetFolder(w: usize) -> usize { world::with(w, |x| x.folder.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize) }
+pub unsafe fn IWorldReference_GetEntityCount(w: usize, lump: usize) -> i32 { world::lump(w, &unsafe { read(lump) }).len() as i32 }
+pub unsafe fn IWorldReference_GetEntityKeyValues(w: usize, lump: usize, i: i32) -> usize {
+    world::lump(w, &unsafe { read(lump) }).get(i as usize).map(|e| *e as *const _ as usize).unwrap_or(0)
+}
+pub unsafe fn CEntityKeyValues_GetKeyCount(e: usize) -> i32 { world::entity(e).map(|e| e.keys.len() as i32).unwrap_or(0) }
+pub unsafe fn CEntityKeyValues_GetKey(e: usize, i: i32) -> u32 { world::entity(e).and_then(|e| e.keys.get(i as usize).map(|k| k.0)).unwrap_or(0) }
+pub unsafe fn CEntityKeyValues_GetValueString(e: usize, key: S_Sandbox_StringToken, default: usize) -> usize {
+    unsafe { CEntityKeyValues_GetValueString_1(e, key.f_Value, default) }
+}
+/// A key's value as text, or the default managed gave (its own string, handed back).
+pub unsafe fn CEntityKeyValues_GetValueString_1(e: usize, key: u32, default: usize) -> usize {
+    match world::entity(e).and_then(|e| e.get(key)) {
+        Some(v) => returned(v.to_string()),
+        None => default,
     }
 }
