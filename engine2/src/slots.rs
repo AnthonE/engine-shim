@@ -2653,34 +2653,34 @@ unsafe extern "C" fn s1610(_a0: usize) -> usize { hit(1610); crate::trace::objec
 unsafe extern "C" fn s1611(_a0: usize, _a1: usize) { hit(1611);  }
 unsafe extern "C" fn s1612(_a0: usize) { hit(1612);  }
 unsafe extern "C" fn s1613(_a0: usize, _a1: usize) { hit(1613);  }
-unsafe extern "C" fn s1614() { hit(1614);  }
+unsafe extern "C" fn s1614() { hit(1614); unsafe { crate::impls::Glue_Networking_RunCallbacks() } }
 unsafe extern "C" fn s1615(_a0: i32, _a1: usize) { hit(1615);  }
-unsafe extern "C" fn s1616(_a0: usize) -> i64 { hit(1616); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1617(_a0: usize) -> i64 { hit(1617); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1618(_a0: i32) -> S_Sandbox_Network_HSteamListenSocket { hit(1618); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1619(_a0: i32, _a1: i32) -> S_Sandbox_Network_HSteamListenSocket { hit(1619); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1620(_a0: S_Sandbox_Network_HSteamListenSocket) { hit(1620);  }
-unsafe extern "C" fn s1621(_a0: S_Sandbox_Network_HSteamListenSocket) -> usize { hit(1621); crate::trace::object(1621) }
+unsafe extern "C" fn s1616(_a0: usize) -> i64 { hit(1616); unsafe { crate::impls::Glue_Networking_GetAuthenticationStatus(_a0) } }
+unsafe extern "C" fn s1617(_a0: usize) -> i64 { hit(1617); unsafe { crate::impls::Glue_Networking_GetRelayNetworkStatus(_a0) } }
+unsafe extern "C" fn s1618(_a0: i32) -> S_Sandbox_Network_HSteamListenSocket { hit(1618); unsafe { crate::impls::Glue_Networking_CreateSocket(_a0) } }
+unsafe extern "C" fn s1619(_a0: i32, _a1: i32) -> S_Sandbox_Network_HSteamListenSocket { hit(1619); unsafe { crate::impls::Glue_Networking_CreateIpBasedSocket(_a0, _a1) } }
+unsafe extern "C" fn s1620(_a0: S_Sandbox_Network_HSteamListenSocket) { hit(1620); unsafe { crate::impls::Glue_Networking_CloseSocket(_a0) } }
+unsafe extern "C" fn s1621(_a0: S_Sandbox_Network_HSteamListenSocket) -> usize { hit(1621); unsafe { crate::impls::Glue_Networking_GetSocketAddress(_a0) } }
 unsafe extern "C" fn s1622() { hit(1622);  }
-unsafe extern "C" fn s1623() -> usize { hit(1623); crate::trace::object(1623) }
-unsafe extern "C" fn s1624() -> S_Sandbox_Network_HSteamNetPollGroup { hit(1624); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1625(_a0: S_Sandbox_Network_HSteamNetPollGroup) { hit(1625);  }
-unsafe extern "C" fn s1626(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: S_Sandbox_Network_HSteamNetPollGroup) { hit(1626);  }
-unsafe extern "C" fn s1627(_a0: S_Sandbox_Network_HSteamNetPollGroup, _a1: usize, _a2: i32) -> i32 { hit(1627); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1628(_a0: u64, _a1: i32) -> S_Sandbox_Network_HSteamNetConnection { hit(1628); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1629(_a0: usize) -> S_Sandbox_Network_HSteamNetConnection { hit(1629); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1630(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: i32, _a2: usize) { hit(1630);  }
+unsafe extern "C" fn s1623() -> usize { hit(1623); unsafe { crate::impls::Glue_Networking_GetIdentity() } }
+unsafe extern "C" fn s1624() -> S_Sandbox_Network_HSteamNetPollGroup { hit(1624); unsafe { crate::impls::Glue_Networking_CreatePollGroup() } }
+unsafe extern "C" fn s1625(_a0: S_Sandbox_Network_HSteamNetPollGroup) { hit(1625); unsafe { crate::impls::Glue_Networking_DestroyPollGroup(_a0) } }
+unsafe extern "C" fn s1626(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: S_Sandbox_Network_HSteamNetPollGroup) { hit(1626); unsafe { crate::impls::Glue_Networking_SetPollGroup(_a0, _a1) } }
+unsafe extern "C" fn s1627(_a0: S_Sandbox_Network_HSteamNetPollGroup, _a1: usize, _a2: i32) -> i32 { hit(1627); unsafe { crate::impls::Glue_Networking_GetPollGroupMessages(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1628(_a0: u64, _a1: i32) -> S_Sandbox_Network_HSteamNetConnection { hit(1628); unsafe { crate::impls::Glue_Networking_ConnectToSteamId(_a0, _a1) } }
+unsafe extern "C" fn s1629(_a0: usize) -> S_Sandbox_Network_HSteamNetConnection { hit(1629); unsafe { crate::impls::Glue_Networking_ConnectToIpAddress(_a0) } }
+unsafe extern "C" fn s1630(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: i32, _a2: usize) { hit(1630); unsafe { crate::impls::Glue_Networking_CloseConnection(_a0, _a1, _a2) } }
 unsafe extern "C" fn s1631(_a0: S_Sandbox_Network_HSteamNetConnection) { hit(1631);  }
-unsafe extern "C" fn s1632(_a0: usize) -> usize { hit(1632); crate::trace::object(1632) }
+unsafe extern "C" fn s1632(_a0: usize) -> usize { hit(1632); unsafe { crate::impls::Glue_Networking_GetMessageDataBuffer(_a0) } }
 unsafe extern "C" fn s1633(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: usize, _a2: i32, _a3: i32) -> usize { hit(1633); crate::trace::object(1633) }
-unsafe extern "C" fn s1634(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: i32, _a2: i32) -> usize { hit(1634); crate::trace::object(1634) }
+unsafe extern "C" fn s1634(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: i32, _a2: i32) -> usize { hit(1634); unsafe { crate::impls::Glue_Networking_AllocateMessage(_a0, _a1, _a2) } }
 unsafe extern "C" fn s1635(_a0: S_Sandbox_Network_HSteamNetConnection) { hit(1635);  }
-unsafe extern "C" fn s1636(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: usize, _a2: i32, _a3: i32) -> i64 { hit(1636); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1637(_a0: usize, _a1: i32) { hit(1637);  }
-unsafe extern "C" fn s1638(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: usize, _a2: i32) -> i32 { hit(1638); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1639(_a0: S_Sandbox_Network_HSteamNetConnection) -> i32 { hit(1639); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1640(_a0: S_Sandbox_Network_HSteamNetConnection) -> usize { hit(1640); crate::trace::object(1640) }
-unsafe extern "C" fn s1641(_a0: S_Sandbox_Network_HSteamNetConnection) -> u64 { hit(1641); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1636(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: usize, _a2: i32, _a3: i32) -> i64 { hit(1636); unsafe { crate::impls::Glue_Networking_SendMessage(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s1637(_a0: usize, _a1: i32) { hit(1637); unsafe { crate::impls::Glue_Networking_SendMessages(_a0, _a1) } }
+unsafe extern "C" fn s1638(_a0: S_Sandbox_Network_HSteamNetConnection, _a1: usize, _a2: i32) -> i32 { hit(1638); unsafe { crate::impls::Glue_Networking_GetConnectionMessages(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1639(_a0: S_Sandbox_Network_HSteamNetConnection) -> i32 { hit(1639); unsafe { crate::impls::Glue_Networking_GetConnectionState(_a0) } }
+unsafe extern "C" fn s1640(_a0: S_Sandbox_Network_HSteamNetConnection) -> usize { hit(1640); unsafe { crate::impls::Glue_Networking_GetConnectionDescription(_a0) } }
+unsafe extern "C" fn s1641(_a0: S_Sandbox_Network_HSteamNetConnection) -> u64 { hit(1641); unsafe { crate::impls::Glue_Networking_GetConnectionSteamId(_a0) } }
 unsafe extern "C" fn s1642(_a0: usize) { hit(1642);  }
 unsafe extern "C" fn s1643(_a0: i64) -> i64 { hit(1643); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1644(_a0: i32) -> i32 { hit(1644); unsafe { core::mem::zeroed() } }
@@ -3210,18 +3210,18 @@ unsafe extern "C" fn s2167(_a0: usize, _a1: i32) { hit(2167);  }
 unsafe extern "C" fn s2168(_a0: usize, _a1: i32) { hit(2168);  }
 unsafe extern "C" fn s2169(_a0: usize, _a1: i32) { hit(2169);  }
 unsafe extern "C" fn s2170(_a0: usize, _a1: i32) { hit(2170);  }
-unsafe extern "C" fn s2171(_a0: usize) { hit(2171);  }
-unsafe extern "C" fn s2172(_a0: usize, _a1: usize) { hit(2172);  }
-unsafe extern "C" fn s2173(_a0: usize) { hit(2173);  }
+unsafe extern "C" fn s2171(_a0: usize) { hit(2171); unsafe { crate::impls::ISteamGameServer_LogOnAnonymous(_a0) } }
+unsafe extern "C" fn s2172(_a0: usize, _a1: usize) { hit(2172); unsafe { crate::impls::ISteamGameServer_LogOn(_a0, _a1) } }
+unsafe extern "C" fn s2173(_a0: usize) { hit(2173); unsafe { crate::impls::ISteamGameServer_LogOff(_a0) } }
 unsafe extern "C" fn s2174(_a0: usize, _a1: usize) { hit(2174);  }
 unsafe extern "C" fn s2175(_a0: usize, _a1: usize) { hit(2175);  }
 unsafe extern "C" fn s2176(_a0: usize, _a1: usize) { hit(2176);  }
-unsafe extern "C" fn s2177(_a0: usize) -> i32 { hit(2177); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2177(_a0: usize) -> i32 { hit(2177); unsafe { crate::impls::ISteamGameServer_BLoggedOn(_a0) } }
 unsafe extern "C" fn s2178(_a0: usize) -> usize { hit(2178); crate::trace::object(2178) }
-unsafe extern "C" fn s2179(_a0: usize, _a1: u64, _a2: usize, _a3: usize) -> S_Steamworks_Data_HAuthTicket { hit(2179); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2180(_a0: usize, _a1: u64, _a2: usize, _a3: i32) -> i64 { hit(2180); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2179(_a0: usize, _a1: u64, _a2: usize, _a3: usize) -> S_Steamworks_Data_HAuthTicket { hit(2179); unsafe { crate::impls::ISteamGameServer_GetAuthSessionTicket(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2180(_a0: usize, _a1: u64, _a2: usize, _a3: i32) -> i64 { hit(2180); unsafe { crate::impls::ISteamGameServer_BeginAuthSession(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s2181(_a0: usize, _a1: S_Steamworks_Data_HAuthTicket) { hit(2181);  }
-unsafe extern "C" fn s2182(_a0: usize, _a1: u64) { hit(2182);  }
+unsafe extern "C" fn s2182(_a0: usize, _a1: u64) { hit(2182); unsafe { crate::impls::ISteamGameServer_EndAuthSession(_a0, _a1) } }
 unsafe extern "C" fn s2183(_a0: usize) -> i32 { hit(2183); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2184(_a0: usize) -> i32 { hit(2184); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2185(_a0: usize, _a1: usize, _a2: usize) -> u64 { hit(2185); unsafe { core::mem::zeroed() } }
@@ -3265,7 +3265,7 @@ unsafe extern "C" fn s2222(_a0: usize, _a1: u64) -> S_Steamworks_Data_SteamNetCo
 unsafe extern "C" fn s2223(_a0: usize, _a1: S_Sandbox_Network_HSteamNetConnection) -> S_Steamworks_Data_SteamNetConnectionRealTimeStatus_t { hit(2223); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2224(_a0: usize) { hit(2224);  }
 unsafe extern "C" fn s2225(_a0: usize) { hit(2225);  }
-unsafe extern "C" fn s2226(_a0: usize, _a1: usize) { hit(2226);  }
+unsafe extern "C" fn s2226(_a0: usize, _a1: usize) { hit(2226); unsafe { crate::impls::StmNtwrkngSckts_ReleaseMessage(_a0, _a1) } }
 unsafe extern "C" fn s2227(_a0: usize, _a1: i64, _a2: i32) { hit(2227);  }
 unsafe extern "C" fn s2228(_a0: usize, _a1: i64, _a2: usize) { hit(2228);  }
 unsafe extern "C" fn s2229(_a0: usize) { hit(2229);  }
@@ -3277,12 +3277,12 @@ unsafe extern "C" fn s2234(_a0: usize, _a1: usize, _a2: usize, _a3: i32) -> i32 
 unsafe extern "C" fn s2235(_a0: usize, _a1: usize, _a2: usize, _a3: i32) -> i32 { hit(2235); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2236(_a0: usize, _a1: usize, _a2: usize, _a3: u32) -> u64 { hit(2236); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2237(_a0: usize, _a1: usize) -> i32 { hit(2237); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2238(_a0: usize) -> i32 { hit(2238); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2239(_a0: usize) -> u64 { hit(2239); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2240(_a0: usize, _a1: u64, _a2: usize, _a3: usize) -> S_Steamworks_Data_HAuthTicket { hit(2240); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2241(_a0: usize, _a1: u64, _a2: usize, _a3: i32) -> i64 { hit(2241); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2238(_a0: usize) -> i32 { hit(2238); unsafe { crate::impls::ISteamUser_BLoggedOn(_a0) } }
+unsafe extern "C" fn s2239(_a0: usize) -> u64 { hit(2239); unsafe { crate::impls::ISteamUser_GetSteamID(_a0) } }
+unsafe extern "C" fn s2240(_a0: usize, _a1: u64, _a2: usize, _a3: usize) -> S_Steamworks_Data_HAuthTicket { hit(2240); unsafe { crate::impls::ISteamUser_GetAuthSessionTicket(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2241(_a0: usize, _a1: u64, _a2: usize, _a3: i32) -> i64 { hit(2241); unsafe { crate::impls::ISteamUser_BeginAuthSession(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s2242(_a0: usize, _a1: S_Steamworks_Data_HAuthTicket) { hit(2242);  }
-unsafe extern "C" fn s2243(_a0: usize, _a1: u64) { hit(2243);  }
+unsafe extern "C" fn s2243(_a0: usize, _a1: u64) { hit(2243); unsafe { crate::impls::ISteamUser_EndAuthSession(_a0, _a1) } }
 unsafe extern "C" fn s2244(_a0: usize, _a1: u32) -> i32 { hit(2244); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2245(_a0: usize, _a1: i64, _a2: u64, _a3: usize, _a4: usize, _a5: u32) -> i32 { hit(2245); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2246(_a0: usize, _a1: usize) { hit(2246);  }
@@ -4600,8 +4600,8 @@ unsafe extern "C" fn s3557(_a0: usize, _a1: i32) { hit(3557);  }
 unsafe extern "C" fn s3558(_a0: usize, _a1: i32) { hit(3558);  }
 unsafe extern "C" fn s3559(_a0: usize, _a1: i32, _a2: i32, _a3: usize, _a4: usize) { hit(3559);  }
 unsafe extern "C" fn s3560() -> usize { hit(3560); crate::trace::object(3560) }
-unsafe extern "C" fn s3561() { hit(3561);  }
-unsafe extern "C" fn s3562() { hit(3562);  }
+unsafe extern "C" fn s3561() { hit(3561); unsafe { crate::impls::globalSteam_SteamAPI_RunCallbacks() } }
+unsafe extern "C" fn s3562() { hit(3562); unsafe { crate::impls::globalSteam_SteamGameServer_RunCallbacks() } }
 unsafe extern "C" fn s3563() -> usize { hit(3563); crate::trace::object(3563) }
 unsafe extern "C" fn s3564() -> usize { hit(3564); crate::trace::object(3564) }
 unsafe extern "C" fn s3565() -> usize { hit(3565); crate::trace::object(3565) }
@@ -4612,7 +4612,7 @@ unsafe extern "C" fn s3569() -> usize { hit(3569); crate::trace::object(3569) }
 unsafe extern "C" fn s3570() -> usize { hit(3570); crate::trace::object(3570) }
 unsafe extern "C" fn s3571() -> usize { hit(3571); crate::trace::object(3571) }
 unsafe extern "C" fn s3572() -> i32 { hit(3572); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3573() -> u64 { hit(3573); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3573() -> u64 { hit(3573); unsafe { crate::impls::globalSteam_SteamGameServer_GetSteamID() } }
 unsafe extern "C" fn s3574() { hit(3574);  }
 unsafe extern "C" fn s3575() { hit(3575);  }
 unsafe extern "C" fn s3576() -> usize { hit(3576); crate::trace::object(3576) }

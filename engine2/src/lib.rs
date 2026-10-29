@@ -9,7 +9,9 @@
 //! which slots a game needs, in the order it needs them.
 mod handles;
 mod impls;
+mod net;
 mod slots;
+mod steam;
 mod trace;
 
 use std::sync::OnceLock;

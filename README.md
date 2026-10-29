@@ -58,6 +58,21 @@ a handle calls managed's `HandleIndex.RegisterHandle(pointer, type)` with
 StringToken's type token (`engine2/src/handles.rs`), so the physics world
 and the colliders now exist. Casts between classes return the same object.
 
+The way in for players is written. A dedicated server logs on to Steam before it opens
+its sockets; here logging on succeeds without Steam
+(`ISteamGameServer_LogOn…`, answered with the `SteamServersConnected`
+callback). The server then listens with Facepunch's own networking code
+over our transport (`engine2/src/net.rs`): the 29 `Glue.Networking` slots,
+which hold the listen sockets, connections, poll groups and messages in the
+layout managed reads, carried as length-prefixed frames over TCP on the
+server's port (27015). A player's ticket is checked by `BeginAuthSession`
+and answered with `ValidateAuthTicketResponse`, as Steam would answer it
+(`engine2/src/steam.rs`). Identity is a u64 in place of a SteamID
+(`ENGINE2_IDENTITY`, or one made up at start). For now a ticket is taken at
+its word: `steam::verify` is where a real sign-in goes. The slots are tested
+the way managed calls them (`cargo test`), but not yet under a running
+server with a client.
+
 What the game's components still can't do:
 
 - **Object state.** A light registers, then asks for its world
@@ -123,6 +138,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/slots.rs` | generated: 3,578 typed stubs, 81 struct layouts, the names |
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer |
+| `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over our own transport |
+| `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, auth tickets, the callbacks managed waits on |
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
 | `spike.sh` | one turn of the loop |
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
@@ -132,9 +149,13 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 1. **A server that runs a game.** The handle protocol, then physics, then
    a real open-source s&box game: its trace is the measured size of "a
    server", the slots one game needs.
-2. **Steam's part.** A server that is not on Steam needs identity,
-   connections and lobbies from somewhere else: the Elo Pros wallet sign-in
-   and our relay, behind the `steam_api` functions the managed side calls.
+2. **Steam's part.** Connections and a server's logon are ours now (above).
+   What's left comes from our own services: the Elo Pros wallet sign-in
+   behind `steam::verify` (a ticket in, the account it proves out), and our
+   relay behind `ConnectToSteamId` and the identity socket (`CreateSocket`),
+   so a player reaches a server by identity rather than address. The relay
+   carries `net.rs`'s frames as they are. Lobbies and the server list
+   follow.
 3. **Assets.** Games ship compiled Source 2 resources. ValveResourceFormat
    (MIT) reads models, materials, textures and maps. A server needs maps
    and collision first; shaders only matter to a client.
