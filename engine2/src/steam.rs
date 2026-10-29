@@ -33,6 +33,7 @@ pub const BEGIN_AUTH_DUPLICATE: i64 = 2;
 
 /// EAuthSessionResponse
 pub const AUTH_OK: i32 = 0;
+pub const AUTH_NO_LICENSE: i32 = 2;
 pub const AUTH_TICKET_USED: i32 = 7;
 pub const AUTH_TICKET_INVALID: i32 = 8;
 
@@ -163,6 +164,7 @@ fn verify_proof(claimed: u64, message: &str, signature: &[u8], domains: &[String
         Some(_) => {
             c.remove(&f.nonce);
             crate::trace::note(&format!("steam: {claimed} is {}", siwe::hex(&signer)));
+            wallets().lock().unwrap().insert(claimed, siwe::hex(&signer));
             Ok(claimed)
         }
     }
@@ -225,20 +227,58 @@ fn sessions() -> &'static Mutex<HashSet<u64>> {
 
 /// A player's ticket, checked: the answer is a ValidateAuthTicketResponse_t,
 /// queued for the next callbacks.
+///
+/// On a server that sells copies (`elo::origin`), a signed-in player's
+/// wallet is asked about first, off the calling thread: a definite "no copy"
+/// refuses them, and "could not look" lets them in.
 pub fn begin_auth(player: u64, ticket: &[u8], server: bool) -> i64 {
+    begin_auth_at(player, ticket, server, crate::elo::origin())
+}
+
+fn begin_auth_at(player: u64, ticket: &[u8], server: bool, origin: Option<String>) -> i64 {
     if ticket.is_empty() { return BEGIN_AUTH_INVALID_TICKET; }
     if !sessions().lock().unwrap().insert(player) { return BEGIN_AUTH_DUPLICATE; }
     let (response, owner) = match verify(player, ticket) {
         Ok(owner) => (AUTH_OK, owner),
         Err(r) => (r, 0),
     };
-    crate::trace::note(&format!("steam: {player}'s ticket: {}", if response == AUTH_OK { "ok".into() } else { format!("refused ({response})") }));
-    queue(VALIDATE_AUTH_TICKET_RESPONSE, validate_response(player, response, owner), server);
+    let answer = move |response: i32| {
+        crate::trace::note(&format!("steam: {player}'s ticket: {}", if response == AUTH_OK { "ok".into() } else { format!("refused ({response})") }));
+        queue(VALIDATE_AUTH_TICKET_RESPONSE, validate_response(player, response, owner), server);
+    };
+    match (response, origin, wallet_of(player)) {
+        (AUTH_OK, Some(origin), Some(wallet)) => {
+            std::thread::spawn(move || {
+                let v = crate::elo::check_one(&origin, &crate::elo::slug(), &wallet);
+                answer(if v == crate::elo::Verdict::Nope { AUTH_NO_LICENSE } else { AUTH_OK });
+            });
+        }
+        _ => answer(response),
+    }
     BEGIN_AUTH_OK
 }
 
 pub fn end_auth(player: u64) {
     sessions().lock().unwrap().remove(&player);
+    wallets().lock().unwrap().remove(&player);
+}
+
+// ---- wallets: the address each signed-in player proved
+
+fn wallets() -> &'static Mutex<HashMap<u64, String>> {
+    static W: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
+    W.get_or_init(Default::default)
+}
+
+pub fn wallet_of(player: u64) -> Option<String> {
+    wallets().lock().unwrap().get(&player).cloned()
+}
+
+/// The players in a session who signed in: (player, wallet).
+pub fn roster() -> Vec<(u64, String)> {
+    let s = sessions().lock().unwrap();
+    let w = wallets().lock().unwrap();
+    s.iter().filter_map(|p| w.get(p).map(|a| (*p, a.clone()))).collect()
 }
 
 /// ValidateAuthTicketResponse_t, Pack 4: SteamID, the response, the owner.
@@ -363,6 +403,54 @@ mod tests {
         let t = proved(ov, "127.0.0.1:27015", &nonce).unwrap();
         assert_eq!(verify_with(me, &t, &["127.0.0.1:27015".into()], NOW), Ok(me));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_player_without_a_copy_is_refused_at_the_door() {
+        // an origin that says this wallet holds none
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut c, _) = l.accept().unwrap();
+            let mut b = [0u8; 2048];
+            let _ = c.read(&mut b);
+            let body = r#"{"entitled":false}"#;
+            let _ = write!(c, "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+        });
+        let (_, a) = siwe::test_key(11);
+        let me = siwe::id_of(&a);
+        let (_, t) = proof(11, "shard.example", &challenge(me), &now_rfc3339());
+        assert_eq!(begin_auth_at(me, &t, true, Some(origin)), BEGIN_AUTH_OK);
+        let t0 = Instant::now();
+        let mut said = None;
+        while said.is_none() {
+            assert!(t0.elapsed() < Duration::from_secs(10), "no answer");
+            run_callbacks(true, |k, d, n, _| if k == VALIDATE_AUTH_TICKET_RESPONSE {
+                let d = unsafe { core::slice::from_raw_parts(d, n as usize) };
+                if d[..8] == me.to_le_bytes() { said = Some(i32::from_le_bytes(d[8..12].try_into().unwrap())) }
+            });
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(said, Some(AUTH_NO_LICENSE));
+        end_auth(me);
+    }
+
+    /// Now, as a launcher writes `Issued At`.
+    fn now_rfc3339() -> String {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let (days, secs) = (t.div_euclid(86_400), t.rem_euclid(86_400));
+        // civil from days (Howard Hinnant's)
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = yoe + era * 400 + (m <= 2) as i64;
+        format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs / 60 % 60, secs % 60)
     }
 
     #[test]

@@ -71,6 +71,7 @@ pub unsafe fn CMtrlSystm2ppSys_GetContentPath(_self: usize) -> usize { global_Ge
 /// One engine frame: true to keep running. The engine paces the loop; the
 /// stub at 60 Hz, as a dedicated server's default tick would.
 pub unsafe fn global_SourceEngineFrame(_app_system: usize, _time: f64, _previous: f64) -> i32 {
+    crate::elo::TICK.fetch_add(1, Ordering::Relaxed);
     std::thread::sleep(std::time::Duration::from_micros(16_667));
     1
 }
@@ -334,8 +335,31 @@ pub unsafe fn globalSteam_SteamAPI_RunCallbacks() {
 }
 pub unsafe fn globalSteam_SteamGameServer_GetSteamID() -> u64 { crate::steam::identity() }
 
-pub unsafe fn ISteamGameServer_LogOnAnonymous(_self: usize) { crate::steam::log_on() }
-pub unsafe fn ISteamGameServer_LogOn(_self: usize, _token: usize) { crate::steam::log_on() }
+/// Logged on, a server is open for business: its status answers, and on a
+/// title that sells copies, the roster is swept (elo.rs).
+fn open_for_business() {
+    crate::steam::log_on();
+    crate::elo::announce();
+    crate::elo::serve_status(|| net().players());
+    crate::elo::sweep(crate::steam::roster, |player| net().kick(player, KICK_NO_COPY, "you no longer hold a copy of this game"));
+}
+
+/// k_ESteamNetConnectionEnd_App_Min: an end the application names.
+const KICK_NO_COPY: i32 = 1000;
+
+pub unsafe fn ISteamGameServer_LogOnAnonymous(_self: usize) { open_for_business() }
+pub unsafe fn ISteamGameServer_LogOn(_self: usize, _token: usize) { open_for_business() }
+
+// what the server list shows: the Elo Pros shard row (elo.rs)
+pub unsafe fn ISteamGameServer_SetServerName(_self: usize, name: usize) {
+    let name = unsafe { read(name) };
+    crate::elo::describe(|s| s.name = name)
+}
+pub unsafe fn ISteamGameServer_SetMapName(_self: usize, map: usize) {
+    let map = unsafe { read(map) };
+    crate::elo::describe(|s| s.map = map)
+}
+pub unsafe fn ISteamGameServer_SetMaxPlayerCount(_self: usize, max: i32) { crate::elo::describe(|s| s.max_players = max) }
 pub unsafe fn ISteamGameServer_LogOff(_self: usize) { crate::steam::log_off() }
 pub unsafe fn ISteamGameServer_BLoggedOn(_self: usize) -> i32 { crate::steam::logged_on() as i32 }
 

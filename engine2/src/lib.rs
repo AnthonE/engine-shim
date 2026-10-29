@@ -9,6 +9,7 @@
 //! which slots a game needs, in the order it needs them.
 #[allow(dead_code)]
 mod elo_overlay;
+mod elo;
 mod handles;
 mod impls;
 mod net;

@@ -84,12 +84,31 @@ With no launcher a player has a guest ticket.
 | `ENGINE2_SIWE_DOMAINS` | the names a server answers to (commas). Set: only a sign-in for one of them gets in. Unset: a development server, which takes guests at their word |
 | `ENGINE2_TLS_CERT`, `ENGINE2_TLS_KEY` | the server's certificate (PEM). Unset: a self-signed one, its hash printed at start (valid 14 days, WebTransport's rule) |
 | `ENGINE2_CERT_HASH` | a player pins a self-signed server by that hash. Without it a player checks the system's roots, and takes any certificate on loopback only: the sign-in has no channel binding, so an unchecked relay could sign in as the player |
-| `ENGINE2_ELO_GAME` | the slug the launcher signs for (default `engine-shim`) |
+| `ENGINE2_ELO_GAME` | the title's slug in the Elo Pros catalog: what the launcher signs for, and what copies are checked against (default `engine-shim`) |
 | `ENGINE2_IDENTITY` | an id to be, over the launcher's |
+
+A server is on the store the way Gates' shards are (`engine2/src/elo.rs`,
+after elo-pros-launcher's `ROOMS-SERVER.md` §4). The name, map and cap
+managed hands Steam's game server become a shard-list row
+(`elo-shardlist-v1`), a status endpoint answers the launcher's count, and
+on a title that sells copies a signed-in player's wallet is asked about at
+join and the roster every two minutes: a definite "no copy" refuses or
+kicks (the player hears why), and "could not look" never does.
+
+| | |
+| --- | --- |
+| `ENGINE2_PUBLIC_ADDR` | `host:port` players reach this server at: the row's `addr`, and the `elo://join/<slug>/<addr>` link printed at start |
+| `ENGINE2_SHARDLIST` | where to write the row, kept current; the origin serves `$SCRY_DEPOTS_DIR/<slug>/servers.json` as written |
+| `ENGINE2_SHARD_ID` | the row's `id` (default: the address) |
+| `ENGINE2_STATUS_ADDR` | where `GET /status.json` answers, plain HTTP (`{"players":…,"max_players":…,"tick":…}`) |
+| `ENGINE2_STATUS_URL` | where the world reaches it, for the row's `status_url` (https, behind your proxy) |
+| `ENGINE2_ELO_ORIGIN` | `https://elopros.com` arms the copy check (`/api/ticket/<slug>/…`). Unset: nothing is checked |
 
 The slots are tested the way managed calls them (`cargo test`: a server
 logs on, listens, takes a player over QUIC, checks a proof a stand-in
-launcher signed, and they talk), but not yet under a running server.
+launcher signed, they talk, a player without a copy is refused at the door
+by a stand-in origin, and a kicked one hears why), but not yet under a
+running server.
 
 What the game's components still can't do:
 
@@ -158,6 +177,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
+| `engine2/src/elo.rs` | the store's side of a server: the shard-list row, `status.json`, copies checked at join and on a sweep |
 | `engine2/src/siwe.rs` | Sign-In With Ethereum, checked: the signer recovered, the message's fields read |
 | `engine2/src/elo_overlay.rs` | the Elo Pros launcher's client, vendored as its SDK asks (elo-pros-launcher `sdk/rust/elo_overlay.rs`) |
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
@@ -173,8 +193,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    sign-in are ours now (above). Next is our relay behind
    `ConnectToSteamId` and the identity socket (`CreateSocket`), so a player
    reaches a server by identity rather than address; the relay carries
-   `net.rs`'s session as it is. Then lobbies and the server list (the
-   launcher's shard list).
+   `net.rs`'s session as it is. Then lobbies. (The server list is the
+   launcher's shard list now, above.)
 3. **Assets.** Games ship compiled Source 2 resources. ValveResourceFormat
    (MIT) reads models, materials, textures and maps. A server needs maps
    and collision first; shaders only matter to a client.

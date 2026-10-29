@@ -19,3 +19,6 @@ tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 # 0.7.1 (#317), the rev Gates pins (its docs/NETCODE.md §2.2).
 wtransport = { git = "https://github.com/BiagioFesta/wtransport", rev = "a11e6a8e7ff33c6eef522d308007da55d1df9f81", features = ["dangerous-configuration", "self-signed", "quinn"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+# Elo Pros' origin: who holds a copy (/api/ticket). Blocking and never on a
+# hot path; rustls, as Gates' shards ask it.
+ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }

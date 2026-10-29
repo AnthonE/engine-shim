@@ -423,6 +423,25 @@ impl Net {
             _ => 3, // k_EResultNoConnection
         }
     }
+    /// Players on our listen sockets, past the door.
+    pub fn players(&self) -> usize {
+        self.state.lock().unwrap().conns.values().filter(|c| c.socket != 0 && c.state == STATE_CONNECTED).count()
+    }
+
+    /// Every connection on our listen sockets from `peer`, ended as if they
+    /// had left: they hear `text` now, managed hears it in `run_callbacks`
+    /// and closes its side (with its own words, which no longer reach them).
+    pub fn kick(&self, peer: u64, reason: i32, text: &str) {
+        let mut s = self.state.lock().unwrap();
+        let theirs: Vec<u32> = s.conns.iter().filter(|(_, c)| c.socket != 0 && c.peer == peer && c.state == STATE_CONNECTED).map(|(id, _)| *id).collect();
+        for id in theirs {
+            let c = s.conns.get_mut(&id).unwrap();
+            c.shut(reason, text);
+            c.state = STATE_CLOSED_BY_PEER;
+            s.events.push_back(Event::Ended(id, reason, text.to_string()));
+        }
+    }
+
     pub fn state(&self, conn: u32) -> i32 {
         self.state.lock().unwrap().conns.get(&conn).map(|c| c.state).unwrap_or(STATE_NONE)
     }
@@ -837,6 +856,22 @@ mod tests {
         until(&[(&server, &slog)], || server.state(sc) == STATE_NONE);
         assert_eq!(slog.take(), [format!("gone {socket} {sc}")]);
         assert_eq!(client.send(c, 8, b"late"), 3);
+        server.close_socket(socket);
+    }
+
+    #[test]
+    fn a_kicked_player_hears_why() {
+        let (server, slog) = (Net::new(1), Log::default());
+        let (client, clog) = (Net::new(77), Log::default());
+        let socket = server.listen_ip(0);
+        let c = client.connect(&format!("127.0.0.1:{}", server.socket_port(socket)), 0);
+        until(&[(&server, &slog), (&client, &clog)], || client.state(c) == STATE_CONNECTED);
+        assert_eq!(server.players(), 1);
+        let sc: u32 = slog.take()[1].rsplit(' ').next().unwrap().parse().unwrap();
+        server.kick(77, 1000, "no copy");
+        until(&[(&server, &slog), (&client, &clog)], || client.state(c) == STATE_NONE && server.players() == 0);
+        assert_eq!(slog.take(), [format!("gone {socket} {sc}")]);
+        assert_eq!(clog.take(), [format!("ended {c} 1000 no copy")]);
         server.close_socket(socket);
     }
 
