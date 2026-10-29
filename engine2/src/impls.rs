@@ -1473,6 +1473,421 @@ pub unsafe fn CtlVctrnt32_Element(v: usize, i: i32) -> u32 {
     INDICES.lock().unwrap().iter().find(|(p, _)| *p == v).and_then(|(_, x)| x.get(i as usize).copied()).unwrap_or(0)
 }
 
+// ---- what a model file holds besides its collision (assets/model.rs): its
+// bones, meshes and body groups, the hitboxes and attachments its meshes
+// carry, its sequences. A model built at runtime has none of these yet.
+
+use crate::animation::{self, Xf};
+use crate::assets::model::{HitBox, HitBoxSet, ModelFile};
+use crate::models::Piece;
+use crate::slots::S_Color32;
+
+fn file(model: usize) -> Option<&'static ModelFile> { models::file(model) }
+
+/// A string for managed to read, kept once however often it's asked for.
+fn interned(s: &str) -> usize {
+    static ALL: Mutex<Option<std::collections::HashMap<String, CString>>> = Mutex::new(None);
+    let mut all = ALL.lock().unwrap();
+    let all = all.get_or_insert_with(Default::default);
+    all.entry(s.to_string()).or_insert_with(|| CString::new(s.replace('\0', "")).unwrap()).as_ptr() as usize
+}
+
+fn ptr(s: &CStr) -> usize { s.as_ptr() as usize }
+
+/// A value written where managed's out pointer points (nothing if null).
+unsafe fn out<T>(p: usize, v: T) {
+    if p != 0 { unsafe { core::ptr::write_unaligned(p as *mut T, v) }; }
+}
+
+fn at<T>(v: &[T], i: i32) -> Option<&T> {
+    usize::try_from(i).ok().and_then(|i| v.get(i))
+}
+
+pub unsafe fn CModel_IsStrongHandleLoaded(_model: usize) -> i32 { 1 }
+pub unsafe fn CModel_GetModelName(model: usize) -> usize { interned(&models::name_of(model).unwrap_or_default()) }
+pub unsafe fn CModel_GetBaseModelName(model: usize) -> usize { unsafe { CModel_GetModelName(model) } }
+/// No model here inherits from another.
+pub unsafe fn CModel_GetBaseModel(_model: usize) -> usize { 0 }
+pub unsafe fn CModel_IsTranslucent(_model: usize) -> i32 { 0 }
+pub unsafe fn CModel_IsTranslucentTwoPass(_model: usize) -> i32 { 0 }
+pub unsafe fn CModel_HasPhysics(model: usize) -> i32 {
+    let mut m = models::models();
+    let physics = m.physics_of(model);
+    m.bodies(physics).is_some_and(|b| !b.parts.is_empty()) as i32
+}
+/// Model data (KeyValues3) isn't made here yet: none.
+pub unsafe fn CModel_FindModelSubKey(_model: usize, _name: usize) -> usize { 0 }
+pub unsafe fn CModel_GetAnimationGraph(_model: usize) -> usize { 0 }
+pub unsafe fn CModel_MeshTrace(_model: usize, _input: usize, _output: usize) -> i32 { 0 }
+
+// bones
+
+pub unsafe fn CModel_NumBones(model: usize) -> i32 { file(model).map(|f| f.bones.len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_FindBoneIndex(model: usize, name: usize) -> i32 { file(model).map(|f| f.bone(&unsafe { read(name) })).unwrap_or(-1) }
+pub unsafe fn CModel_boneName(model: usize, i: i32) -> usize {
+    file(model).and_then(|f| at(&f.bones, i)).map(|b| ptr(&b.name)).unwrap_or(ptr(c""))
+}
+pub unsafe fn CModel_boneParent(model: usize, i: i32) -> i32 { file(model).and_then(|f| at(&f.bones, i)).map(|b| b.parent).unwrap_or(-1) }
+pub unsafe fn CModel_boneFlags(model: usize, i: i32) -> i64 { file(model).and_then(|f| at(&f.bones, i)).map(|b| b.flags).unwrap_or(0) }
+/// A bone in bind pose, in the model's space.
+pub unsafe fn CModel_GetBoneTransform(model: usize, i: i32) -> S_Transform {
+    file(model).and_then(|f| at(&f.bones, i)).map(|b| Xf::of(b.model).managed()).unwrap_or(Xf::IDENTITY.managed())
+}
+pub unsafe fn CModel_bonePosParentSpace(model: usize, i: i32) -> S_Vector3 {
+    phys::v3(file(model).and_then(|f| at(&f.bones, i)).map(|b| b.pos).unwrap_or_default())
+}
+pub unsafe fn CModel_boneRotParentSpace(model: usize, i: i32) -> S_Rotation {
+    phys::rot(file(model).and_then(|f| at(&f.bones, i)).map(|b| b.rot).unwrap_or(rapier3d::math::Rotation::IDENTITY))
+}
+pub unsafe fn CModel_HasSkinnedMeshes(model: usize) -> i32 { file(model).is_some_and(|f| !f.bones.is_empty()) as i32 }
+pub unsafe fn CModel_HasAnimationDrivenFlexes(_model: usize) -> i32 { 0 }
+pub unsafe fn CModel_NumFlexControllers(_model: usize) -> i32 { 0 }
+pub unsafe fn CModel_GetVisemeIndex(_model: usize, _viseme: usize) -> i32 { -1 }
+
+// sequences and animations: their names
+
+pub unsafe fn CModel_GetNumAnim(model: usize) -> i32 { file(model).map(|f| f.animations.len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_GetAnimationName(model: usize, i: i32) -> usize {
+    file(model).and_then(|f| at(&f.animations, i)).map(|a| ptr(a)).unwrap_or(ptr(c""))
+}
+pub unsafe fn CModel_GetSequenceNames(model: usize, names: usize) {
+    let Some(f) = file(model) else { return };
+    if let Some((_, v)) = STRINGS.lock().unwrap().iter_mut().find(|(p, _)| *p == names) {
+        v.extend(f.sequences.iter().cloned());
+    }
+}
+
+// CUtlVector<CUtlString>: a list of names managed asks native to fill
+
+static STRINGS: Mutex<Vec<(usize, Vec<CString>)>> = Mutex::new(Vec::new());
+
+pub unsafe fn CtlVctrCtlStrng_Create(_grow: i32, _capacity: i32) -> usize {
+    let p = crate::handles::object();
+    STRINGS.lock().unwrap().push((p, Vec::new()));
+    p
+}
+pub unsafe fn CtlVctrCtlStrng_DeleteThis(v: usize) { STRINGS.lock().unwrap().retain(|(p, _)| *p != v) }
+pub unsafe fn CtlVctrCtlStrng_Count(v: usize) -> i32 {
+    STRINGS.lock().unwrap().iter().find(|(p, _)| *p == v).map(|(_, x)| x.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CtlVctrCtlStrng_SetCount(v: usize, n: i32) {
+    if let Some((_, x)) = STRINGS.lock().unwrap().iter_mut().find(|(p, _)| *p == v) { x.resize(n.max(0) as usize, CString::default()); }
+}
+pub unsafe fn CtlVctrCtlStrng_Element(v: usize, i: i32) -> usize {
+    let all = STRINGS.lock().unwrap();
+    // the list's own string, alive until managed deletes the list
+    all.iter().find(|(p, _)| *p == v).and_then(|(_, x)| at(x, i)).map(|s| ptr(s)).unwrap_or(ptr(c""))
+}
+
+// meshes, their LODs and the groups that switch them
+
+pub unsafe fn CModel_GetNumMeshes(model: usize) -> i32 { file(model).map(|f| f.meshes.len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_HasSceneObjects(model: usize) -> i32 { file(model).is_some_and(|f| f.meshes.iter().any(|m| !m.objects.is_empty())) as i32 }
+pub unsafe fn CModel_GetMeshName(model: usize, mesh: i32) -> usize {
+    file(model).and_then(|f| at(&f.meshes, mesh)).map(|m| ptr(&m.name)).unwrap_or(ptr(c""))
+}
+pub unsafe fn CModel_GetNumSceneObjects(model: usize, mesh: i32) -> i32 {
+    file(model).and_then(|f| at(&f.meshes, mesh)).map(|m| m.objects.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CModel_GetNumDrawCalls(model: usize, mesh: i32, object: i32) -> i32 {
+    file(model).and_then(|f| at(&f.meshes, mesh)).and_then(|m| at(&m.objects, object)).map(|o| o.draws.len() as i32).unwrap_or(0)
+}
+/// Materials aren't loaded on a server: none.
+pub unsafe fn CModel_GetMaterial(_model: usize, _mesh: i32, _object: i32, _draw: i32) -> usize { 0 }
+pub unsafe fn CModel_GetDrawCallMaterial(_model: usize, _mesh: i32, _draw: i32) -> usize { 0 }
+pub unsafe fn CModel_GetMaterialIndexCount(_model: usize) -> i32 { 0 }
+pub unsafe fn CModel_GetMaterialByIndex(_model: usize, _i: i32) -> usize { 0 }
+pub unsafe fn CModel_GetMaterialInGroup(_model: usize, _group: i32, _i: i32) -> usize { 0 }
+pub unsafe fn CModel_GetNumMaterialsInGroup(_model: usize, _group: i32) -> i32 { 0 }
+pub unsafe fn CModel_GetNumMaterialGroups(model: usize) -> i32 { file(model).map(|f| f.material_groups.len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_GetMaterialGroupName(model: usize, i: i32) -> usize {
+    file(model).and_then(|f| at(&f.material_groups, i)).map(|g| ptr(g)).unwrap_or(ptr(c""))
+}
+pub unsafe fn CModel_GetMaterialGroupIndex(model: usize, token: S_Sandbox_StringToken) -> i32 {
+    file(model).and_then(|f| f.material_groups.iter().position(|g| crate::handles::murmur2(&g.to_string_lossy()) == token.f_Value)).map(|i| i as i32).unwrap_or(-1)
+}
+pub unsafe fn CModel_GetTotalMeshCounts(model: usize, vertices: usize, triangles: usize, draws: usize) {
+    let (v, t, d) = file(model).map(|f| f.meshes.iter().map(|m| m.counts()).fold((0, 0, 0), |a, c| (a.0 + c.0, a.1 + c.1, a.2 + c.2))).unwrap_or_default();
+    unsafe { out(vertices, v); out(triangles, t); out(draws, d); }
+}
+pub unsafe fn CModel_GetMeshInfo(model: usize, mesh: i32, vertices: usize, triangles: usize, draws: usize, lod_mask: usize, translucency: usize, min: usize, max: usize) {
+    let f = file(model);
+    let m = f.and_then(|f| at(&f.meshes, mesh));
+    let (v, t, d) = m.map(|m| m.counts()).unwrap_or_default();
+    let (lo, hi) = m.and_then(|m| m.bounds()).unwrap_or_default();
+    let lod = f.and_then(|f| at(&f.lod_masks, mesh)).copied().unwrap_or(0) as i32;
+    unsafe { out(vertices, v); out(triangles, t); out(draws, d); out(lod_mask, lod); out(translucency, 0i32); out(min, phys::v3(lo)); out(max, phys::v3(hi)); }
+}
+/// A draw call by its index across the mesh's scene objects.
+pub unsafe fn CModel_GetDrawCallInfo(model: usize, mesh: i32, draw: i32, vertices: usize, indices: usize, primitive: usize, uv_density: usize, instances: usize, alpha: usize, start: usize, base: usize) {
+    let d = file(model).and_then(|f| at(&f.meshes, mesh)).and_then(|m| m.objects.iter().flat_map(|o| &o.draws).nth(draw.max(0) as usize));
+    unsafe {
+        out(vertices, d.map(|d| d.vertices).unwrap_or(0));
+        out(indices, d.map(|d| d.indices).unwrap_or(0));
+        out(primitive, d.map(|d| d.primitive).unwrap_or(0));
+        out(uv_density, d.map(|d| d.uv_density).unwrap_or(0.0));
+        out(instances, d.map(|d| d.instances).unwrap_or(0));
+        out(alpha, 0i32);
+        out(start, d.map(|d| d.start_index).unwrap_or(0));
+        out(base, d.map(|d| d.base_vertex).unwrap_or(0));
+    }
+}
+pub unsafe fn CModel_ComputeMaxLODLevelUsedByModel(model: usize) -> i32 {
+    let all = file(model).map(|f| f.lod_masks.iter().fold(0u64, |a, m| a | m)).unwrap_or(0);
+    if all == 0 { 0 } else { 63 - all.leading_zeros() as i32 }
+}
+pub unsafe fn CModel_LODLevelForScreenSize(_model: usize, _width: f32, _scale: f32) -> i32 { 0 }
+pub unsafe fn CModel_GetLODSwitchDistanceCount(model: usize) -> i32 { file(model).map(|f| f.lod_switch.len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_GetLODSwitchDistance(model: usize, i: i32) -> f32 { file(model).and_then(|f| at(&f.lod_switch, i)).copied().unwrap_or(0.0) }
+
+pub unsafe fn CModel_GetMeshBounds(model: usize) -> S_BBox { bbox(file(model).and_then(ModelFile::render_bounds).unwrap_or_default()) }
+pub unsafe fn CModel_GetModelRenderBounds(model: usize) -> S_BBox { unsafe { CModel_GetMeshBounds(model) } }
+/// What the model's collision covers: its parts' shapes, each in its bone's bind pose.
+pub unsafe fn CModel_GetPhysicsBounds(model: usize) -> S_BBox {
+    let mut m = models::models();
+    let physics = m.physics_of(model);
+    let Some(b) = m.bodies(physics).cloned() else { return bbox(Default::default()) };
+    let mut points = Vec::new();
+    for &p in &b.parts {
+        let Some(part) = m.part(p).cloned() else { continue };
+        let pose = b.bones.iter().find(|(n, _)| *n == part.bone).map(|x| x.1).unwrap_or(part.bind_pose);
+        for &s in &part.spheres { if let Some(Obj::Sphere(c, r)) = m.objs.get(&s) { points.extend([*c - rapier3d::math::Vector::splat(*r), *c + rapier3d::math::Vector::splat(*r)].map(|x| pose * x)); } }
+        for &s in &part.capsules { if let Some(Obj::Capsule(a, c, r)) = m.objs.get(&s) { let r = rapier3d::math::Vector::splat(*r); points.extend([*a - r, *a + r, *c - r, *c + r].map(|x| pose * x)); } }
+        for &h in &part.hulls { if let Some(h) = m.hull(h) { points.extend(h.points.iter().map(|&x| pose * x)); } }
+        for &h in &part.meshes { if let Some(h) = m.mesh(h) { points.extend(h.vertices.iter().map(|&x| pose * x)); } }
+    }
+    if points.is_empty() { return bbox(Default::default()); }
+    bbox(points.iter().fold((rapier3d::math::Vector::splat(f32::MAX), rapier3d::math::Vector::splat(f32::MIN)), |(lo, hi), &p| (lo.min(p), hi.max(p))))
+}
+
+// body groups: a group's choices are mesh groups (`<group>_@<n>`)
+
+pub unsafe fn CModel_GetNumMeshGroups(model: usize) -> i32 { file(model).map(|f| f.mesh_groups.len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_GetDefaultMeshGroupMask(model: usize) -> u64 { file(model).map(|f| f.default_mask).unwrap_or(0) }
+pub unsafe fn CModel_GetMeshGroupMaskForMesh(model: usize, mesh: i32) -> u64 { file(model).and_then(|f| at(&f.mesh_group_masks, mesh)).copied().unwrap_or(0) }
+pub unsafe fn CModel_GetNumBodyParts(model: usize) -> i32 { file(model).map(|f| f.body_parts.len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_GetBodyPartForName(model: usize, name: usize) -> i32 {
+    let n = unsafe { read(name) };
+    file(model).and_then(|f| f.body_parts.iter().position(|p| p.name.to_bytes().eq_ignore_ascii_case(n.as_bytes()))).map(|i| i as i32).unwrap_or(-1)
+}
+pub unsafe fn CModel_GetBodyPartName(model: usize, part: i32) -> usize {
+    file(model).and_then(|f| at(&f.body_parts, part)).map(|p| ptr(&p.name)).unwrap_or(ptr(c""))
+}
+pub unsafe fn CModel_GetNumBodyPartMeshes(model: usize, part: i32) -> i32 {
+    file(model).and_then(|f| at(&f.body_parts, part)).map(|p| p.choices.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CModel_GetBodyPartMask(model: usize, part: i32) -> u64 {
+    file(model).and_then(|f| at(&f.body_parts, part)).map(|p| p.choices.iter().fold(0, |a, c| a | c.1)).unwrap_or(0)
+}
+pub unsafe fn CModel_GetBodyPartMeshMask(model: usize, part: i32, choice: i32) -> u64 {
+    file(model).and_then(|f| at(&f.body_parts, part)).and_then(|p| at(&p.choices, choice)).map(|c| c.1).unwrap_or(0)
+}
+pub unsafe fn CModel_GetBodyPartMeshName(model: usize, part: i32, choice: i32) -> usize {
+    file(model).and_then(|f| at(&f.body_parts, part)).and_then(|p| at(&p.choices, choice)).map(|c| ptr(&c.0)).unwrap_or(ptr(c""))
+}
+/// The choice of a body group that a mesh group mask selects.
+pub unsafe fn CModel_FindMeshIndexForMask(model: usize, part: i32, mask: u64) -> i32 {
+    file(model).and_then(|f| at(&f.body_parts, part)).and_then(|p| p.choices.iter().position(|c| c.1 & mask != 0)).map(|i| i as i32).unwrap_or(-1)
+}
+
+// hitboxes (CHitBoxSet, CHitBox): the model's own, by their addresses
+
+fn hitbox_set(p: usize) -> Option<&'static HitBoxSet> {
+    match models::piece(p) { Some(Piece::HitBoxSet(s)) => Some(s), _ => None }
+}
+fn hitbox(p: usize) -> Option<&'static HitBox> {
+    match models::piece(p) { Some(Piece::HitBox(h)) => Some(h), _ => None }
+}
+
+pub unsafe fn CModel_GetHitboxSetCount(model: usize, mesh: i32) -> i32 { file(model).map(|f| f.hitbox_sets(mesh).len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_GetHitboxSetByIndex(model: usize, i: i32, mesh: i32) -> usize {
+    file(model).and_then(|f| at(f.hitbox_sets(mesh), i)).map(|s| s as *const HitBoxSet as usize).unwrap_or(0)
+}
+pub unsafe fn CModel_FindHitboxSetIndexByName(model: usize, name: usize, mesh: i32) -> i32 {
+    let n = unsafe { read(name) };
+    file(model).and_then(|f| f.hitbox_sets(mesh).iter().position(|s| s.name.to_bytes().eq_ignore_ascii_case(n.as_bytes()))).map(|i| i as i32).unwrap_or(-1)
+}
+pub unsafe fn CModel_FindHitboxSetByName(model: usize, name: usize, mesh: i32) -> usize {
+    let i = unsafe { CModel_FindHitboxSetIndexByName(model, name, mesh) };
+    unsafe { CModel_GetHitboxSetByIndex(model, i, mesh) }
+}
+pub unsafe fn CModel_GetBoneIndexForHitbox(model: usize, h: usize) -> i32 {
+    match (file(model), hitbox(h)) {
+        (Some(f), Some(h)) => f.bone(&h.bone.to_string_lossy()),
+        _ => -1,
+    }
+}
+
+pub unsafe fn CHitBoxSet_numhitboxes(set: usize) -> i32 { hitbox_set(set).map(|s| s.boxes.len() as i32).unwrap_or(0) }
+pub unsafe fn CHitBoxSet_pHitbox(set: usize, i: i32) -> usize { hitbox_set(set).and_then(|s| at(&s.boxes, i)).map(|h| h as *const HitBox as usize).unwrap_or(0) }
+pub unsafe fn Get__CHitBoxSet_m_name(set: usize) -> usize { hitbox_set(set).map(|s| ptr(&s.name)).unwrap_or(ptr(c"")) }
+pub unsafe fn Get__CHitBoxSet_m_SourceFilename(set: usize) -> usize { hitbox_set(set).map(|s| ptr(&s.source)).unwrap_or(ptr(c"")) }
+
+pub unsafe fn CHitBox_GetTag(h: usize, i: i32) -> usize { hitbox(h).and_then(|h| at(&h.tags, i)).map(|t| ptr(t)).unwrap_or(ptr(c"")) }
+pub unsafe fn Get__CHitBox_m_vMinBounds(h: usize) -> S_Vector3 { phys::v3(hitbox(h).map(|h| h.min).unwrap_or_default()) }
+pub unsafe fn Get__CHitBox_m_vMaxBounds(h: usize) -> S_Vector3 { phys::v3(hitbox(h).map(|h| h.max).unwrap_or_default()) }
+pub unsafe fn Get__CHitBox_m_name(h: usize) -> usize { hitbox(h).map(|h| ptr(&h.name)).unwrap_or(ptr(c"")) }
+pub unsafe fn Get__CHitBox_m_sSurfaceProperty(h: usize) -> usize { hitbox(h).map(|h| ptr(&h.surface)).unwrap_or(ptr(c"")) }
+pub unsafe fn Get__CHitBox_m_sBoneName(h: usize) -> usize { hitbox(h).map(|h| ptr(&h.bone)).unwrap_or(ptr(c"")) }
+pub unsafe fn Get__CHitBox_m_flShapeRadius(h: usize) -> f32 { hitbox(h).map(|h| h.radius).unwrap_or(0.0) }
+pub unsafe fn Get__CHitBox_m_nBoneNameHash(h: usize) -> u32 { hitbox(h).map(|h| h.bone_hash).unwrap_or(0) }
+pub unsafe fn Get__CHitBox_m_cRenderColor(h: usize) -> S_Color32 {
+    let [r, g, b, a] = hitbox(h).map(|h| h.color).unwrap_or_default();
+    S_Color32 { f_r: r, f_g: g, f_b: b, f_a: a }
+}
+pub unsafe fn Get__CHitBox_m_nHitBoxIndex(h: usize) -> u16 { hitbox(h).map(|h| h.index).unwrap_or(0) }
+pub unsafe fn Get__CHitBox_m_nShapeType(h: usize) -> u8 { hitbox(h).map(|h| h.shape).unwrap_or(0) }
+pub unsafe fn Get__CHitBox_m_bTranslationOnly(h: usize) -> i32 { hitbox(h).is_some_and(|h| h.translation_only) as i32 }
+pub unsafe fn Get__CHitBox_m_bVisible(h: usize) -> i32 { hitbox(h).is_some_and(|h| h.visible) as i32 }
+pub unsafe fn Get__CHitBox_m_bForcedTransform(_h: usize) -> i32 { 0 }
+pub unsafe fn Get__CHitBox_m_bSelected(_h: usize) -> i32 { 0 }
+
+// attachments (CAttachment)
+
+fn attachment(p: usize) -> Option<&'static crate::assets::model::Attachment> {
+    match models::piece(p) { Some(Piece::Attachment(a)) => Some(a), _ => None }
+}
+
+pub unsafe fn CModel_GetNumAttachments(model: usize) -> i32 { file(model).map(|f| f.attachments().len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_GetAttachment(model: usize, i: i32) -> usize {
+    file(model).and_then(|f| at(f.attachments(), i)).map(|a| a as *const _ as usize).unwrap_or(0)
+}
+pub unsafe fn CModel_GetAttachmentNameFromIndex(model: usize, i: i32) -> usize {
+    file(model).and_then(|f| at(f.attachments(), i)).map(|a| ptr(&a.name)).unwrap_or(ptr(c""))
+}
+/// An attachment by its name's token, in the model's space, its bones in bind pose.
+pub unsafe fn CModel_GetAttachmentTransform(model: usize, name: S_Sandbox_StringToken, tx: usize) -> i32 {
+    let Some(f) = file(model) else { return 0 };
+    let Some(a) = f.attachments().iter().find(|a| crate::handles::murmur2(&a.name.to_string_lossy()) == name.f_Value) else { return 0 };
+    unsafe { out(tx, Xf::of(f.attachment_pose(a)).managed()) };
+    1
+}
+pub unsafe fn Get__CAttachment_m_name(a: usize) -> usize { attachment(a).map(|a| ptr(&a.name)).unwrap_or(ptr(c"")) }
+pub unsafe fn Get__CAttachment_m_nInfluences(a: usize) -> u8 { attachment(a).map(|a| a.influences.len() as u8).unwrap_or(0) }
+pub unsafe fn Get__CAttachment_m_bIgnoreRotation(a: usize) -> i32 { attachment(a).is_some_and(|a| a.ignore_rotation) as i32 }
+pub unsafe fn CAttachment_GetInfluenceName(a: usize, i: i32) -> usize {
+    attachment(a).and_then(|a| at(&a.influences, i)).map(|x| ptr(&x.0)).unwrap_or(ptr(c""))
+}
+pub unsafe fn CAttachment_GetInfluenceOffset(a: usize, i: i32) -> S_Vector3 { phys::v3(attachment(a).and_then(|a| at(&a.influences, i)).map(|x| x.1).unwrap_or_default()) }
+pub unsafe fn CAttachment_GetInfluenceRotation(a: usize, i: i32) -> S_Rotation {
+    phys::rot(attachment(a).and_then(|a| at(&a.influences, i)).map(|x| x.2).unwrap_or(rapier3d::math::Rotation::IDENTITY))
+}
+
+// ---- models in the scene (SceneModel, CSceneAnimatableObject): their
+// bones, animation.rs. Every model scene object is one.
+
+/// A scene object showing `model`, at the transform managed passes, in the
+/// world it names.
+pub unsafe fn g_pMeshSystem_CreateSceneObject(model: usize, transform: usize, _desc: usize, _flags: i64, _type_flags: i64, world: usize, _x: i32) -> i32 {
+    let obj = crate::handles::object();
+    unsafe { crate::state::set_from::<S_Transform>(obj, crate::slots::PROP_Transform, transform) };
+    animation::create(obj, model);
+    crate::handles::register(obj, "SceneObject", &[model, world])
+}
+pub unsafe fn g_pMeshSystem_ChangeModel(obj: usize, model: usize) { animation::change_model(obj, model) }
+pub unsafe fn CSceneObject_GetModelHandle(obj: usize) -> usize { animation::model_of(obj) }
+pub unsafe fn CScnnmtblbjct_GetModelHandle(obj: usize) -> usize { animation::model_of(obj) }
+pub unsafe fn CSceneObject_GetCTransform(obj: usize) -> S_Transform { crate::state::get::<S_Transform>(obj, crate::slots::PROP_Transform) }
+pub unsafe fn CScnnmtblbjct_GetCTransform(obj: usize) -> S_Transform { crate::state::get::<S_Transform>(obj, crate::slots::PROP_Transform) }
+
+fn bone_of(obj: usize, name: usize) -> i32 {
+    file(animation::model_of(obj)).map(|f| f.bone(&unsafe { read(name) })).unwrap_or(-1)
+}
+/// A bone's transform from one of the pose's arrays (zeroes for none: managed's "no such bone").
+fn bone(obj: usize, i: i32, which: impl FnOnce(&animation::Posed) -> &Vec<Xf>) -> S_Transform {
+    animation::with(obj, |p| at(which(p), i).map(Xf::managed)).flatten().unwrap_or(unsafe { core::mem::zeroed() })
+}
+/// `n` transforms from one of the pose's arrays into managed's buffer.
+unsafe fn bones_into(obj: usize, n: i32, dest: usize, which: impl FnOnce(&animation::Posed) -> &Vec<Xf>) {
+    if dest == 0 { return; }
+    animation::with(obj, |p| {
+        for (k, x) in which(p).iter().take(n.max(0) as usize).enumerate() {
+            unsafe { core::ptr::write_unaligned((dest as *mut S_Transform).add(k), x.managed()) };
+        }
+    });
+}
+
+pub unsafe fn CScnnmtblbjct_GetWorldSpaceRenderBoneTransform(obj: usize, i: i32) -> S_Transform { bone(obj, i, |p| &p.world) }
+pub unsafe fn CScnnmtblbjct_GetWorldSpaceRenderBoneTransform_1(obj: usize, name: usize) -> S_Transform { bone(obj, bone_of(obj, name), |p| &p.world) }
+pub unsafe fn CScnnmtblbjct_GetWorldSpaceRenderBonePreviousTransform(obj: usize, i: i32) -> S_Transform { bone(obj, i, |p| &p.previous) }
+pub unsafe fn CScnnmtblbjct_GetWorldSpaceRenderBonePreviousTransform_1(obj: usize, name: usize) -> S_Transform { bone(obj, bone_of(obj, name), |p| &p.previous) }
+pub unsafe fn CScnnmtblbjct_GetLocalSpaceRenderBoneTransform(obj: usize, i: i32) -> S_Transform { bone(obj, i, |p| &p.model_space) }
+pub unsafe fn CScnnmtblbjct_GetLocalSpaceRenderBoneTransform_1(obj: usize, name: usize) -> S_Transform { bone(obj, bone_of(obj, name), |p| &p.model_space) }
+pub unsafe fn CScnnmtblbjct_GetWorldSpaceAnimationTransform(obj: usize, i: i32) -> S_Transform { bone(obj, i, |p| &p.world) }
+pub unsafe fn CScnnmtblbjct_GetParentSpaceBone(obj: usize, i: i32) -> S_Transform { bone(obj, i, |p| &p.local) }
+pub unsafe fn CScnnmtblbjct_GetWorldSpaceRenderBoneTransforms(obj: usize, n: i32, dest: usize) { unsafe { bones_into(obj, n, dest, |p| &p.world) } }
+pub unsafe fn CScnnmtblbjct_GetWorldSpaceRenderBonePreviousTransforms(obj: usize, n: i32, dest: usize) { unsafe { bones_into(obj, n, dest, |p| &p.previous) } }
+pub unsafe fn CScnnmtblbjct_GetParentSpaceBones(obj: usize, n: i32, dest: usize) { unsafe { bones_into(obj, n, dest, |p| &p.local) } }
+pub unsafe fn CScnnmtblbjct_SetWorldSpaceRenderBoneTransform(obj: usize, i: i32, tx: usize) {
+    if tx == 0 { return; }
+    let x = Xf::from_managed(&unsafe { core::ptr::read_unaligned(tx as *const S_Transform) });
+    animation::with(obj, |p| if let Some(w) = usize::try_from(i).ok().and_then(|i| p.world.get_mut(i)) { *w = x; });
+}
+pub unsafe fn CScnnmtblbjct_SetParentSpaceBone(obj: usize, i: i32, tx: usize) {
+    if tx == 0 { return; }
+    let x = Xf::from_managed(&unsafe { core::ptr::read_unaligned(tx as *const S_Transform) });
+    animation::with(obj, |p| if let Some(l) = usize::try_from(i).ok().and_then(|i| p.local.get_mut(i)) { *l = x; });
+}
+pub unsafe fn CScnnmtblbjct_GetClosestBoneIndex(obj: usize, point: usize) -> i32 {
+    let at = unsafe { phys::read_vec(point) };
+    animation::with(obj, |p| p.world.iter().enumerate().min_by(|a, b| (a.1.pos - at).length_squared().total_cmp(&(b.1.pos - at).length_squared())).map(|(i, _)| i as i32)).flatten().unwrap_or(-1)
+}
+pub unsafe fn CScnnmtblbjct_Update(obj: usize, delta: f32) { animation::update(obj, delta) }
+pub unsafe fn Get__CScnnmtblbjct_m_flDeltaTime(obj: usize) -> f32 { animation::with(obj, |p| p.delta).unwrap_or(0.0) }
+pub unsafe fn CScnnmtblbjct_SetBindPose(obj: usize) { animation::set_bind_pose(obj) }
+pub unsafe fn CScnnmtblbjct_CalculateWorldSpaceBones(obj: usize) { animation::calculate(obj) }
+pub unsafe fn CScnnmtblbjct_FinishUpdate(_obj: usize) {}
+pub unsafe fn CScnnmtblbjct_MergeFrom(obj: usize, from: usize) { animation::merge_from(obj, from) }
+pub unsafe fn CScnnmtblbjct_GetAnimGraph(_obj: usize) -> usize { 0 }
+
+// sequences played straight (no animation graph runs here)
+
+pub unsafe fn CScnnmtblbjct_SetSequence(obj: usize, name: usize) {
+    let n = unsafe { read(name) };
+    animation::with(obj, |p| p.play(&n));
+}
+pub unsafe fn CScnnmtblbjct_GetSequence(obj: usize) -> usize {
+    interned(&animation::with(obj, |p| p.playing().map(|(s, _, _)| s.name.clone())).flatten().unwrap_or_default())
+}
+pub unsafe fn CScnnmtblbjct_GetSequenceDuration(obj: usize) -> f32 { animation::with(obj, |p| p.playing().map(|x| x.1)).flatten().unwrap_or(0.0) }
+pub unsafe fn CScnnmtblbjct_GetSequenceCycle(obj: usize) -> f32 { animation::with(obj, |p| p.cycle).unwrap_or(0.0) }
+pub unsafe fn CScnnmtblbjct_SetSequenceCycle(obj: usize, cycle: f32) { animation::with(obj, |p| p.cycle = cycle.clamp(0.0, 1.0)); }
+pub unsafe fn CScnnmtblbjct_SetSequenceLooping(obj: usize, looping: i32) { animation::with(obj, |p| p.looping = Some(looping != 0)); }
+pub unsafe fn CScnnmtblbjct_IsSequenceFinished(obj: usize) -> i32 { animation::with(obj, |p| p.finished()).unwrap_or(true) as i32 }
+/// Sequences cut from one to the next here: blending is asked for, not done.
+pub unsafe fn CScnnmtblbjct_SetSequenceBlending(_obj: usize, _blending: i32) {}
+pub unsafe fn CScnnmtblbjct_GetPlaybackRate(obj: usize) -> f32 { animation::with(obj, |p| p.rate.unwrap_or(1.0)).unwrap_or(1.0) }
+pub unsafe fn CScnnmtblbjct_SetPlaybackRate(obj: usize, rate: f32) { animation::with(obj, |p| p.rate = Some(rate)); }
+/// A physics bone (a ragdoll's): the bone where physics has it, in the model's space.
+pub unsafe fn CScnnmtblbjct_SetPhysicsBone(obj: usize, i: u16, tx: usize) {
+    if tx == 0 { return; }
+    let x = Xf::from_managed(&unsafe { core::ptr::read_unaligned(tx as *const S_Transform) });
+    animation::with(obj, |p| { p.overrides.insert(i as usize, x); });
+}
+pub unsafe fn CScnnmtblbjct_ClearPhysicsBones(obj: usize) { animation::with(obj, |p| p.overrides.clear()); }
+pub unsafe fn CScnnmtblbjct_HasPhysicsBones(obj: usize) -> i32 { animation::with(obj, |p| !p.overrides.is_empty()).unwrap_or(false) as i32 }
+/// An attachment by its name's token, where the bones are now: in the
+/// world, or in the model's space.
+pub unsafe fn CScnnmtblbjct_SBox_GetAttachment(obj: usize, name: S_Sandbox_StringToken, world: i32, tx: usize) -> i32 {
+    let model = animation::model_of(obj);
+    let Some(f) = file(model) else { return 0 };
+    let Some(a) = f.attachments().iter().find(|a| crate::handles::murmur2(&a.name.to_string_lossy()) == name.f_Value) else { return 0 };
+    let Some((bone_name, offset, rot)) = a.influences.first() else { return 0 };
+    let local = Xf::of(rapier3d::math::Pose::from_parts(*offset, *rot));
+    let i = f.bone(&bone_name.to_string_lossy());
+    let found = animation::with(obj, |p| {
+        let space = if world != 0 { &p.world } else { &p.model_space };
+        match usize::try_from(i).ok().and_then(|i| space.get(i)) {
+            Some(b) => b.to_world(&local),
+            None if world != 0 => Xf::from_managed(&crate::state::get::<S_Transform>(obj, crate::slots::PROP_Transform)).to_world(&local),
+            None => local,
+        }
+    });
+    let Some(x) = found else { return 0 };
+    unsafe { out(tx, x.managed()) };
+    1
+}
+
 #[cfg(test)]
 mod tests {
     //! The slots as managed calls them: a dedicated server logs on, listens,
@@ -1755,6 +2170,149 @@ mod tests {
             ISteamGameServer_EndAuthSession(0, me);
             Glue_Networking_DestroyPollGroup(group);
             Glue_Networking_CloseSocket(socket);
+        }
+    }
+}
+
+#[cfg(test)]
+mod scene_models {
+    //! A model in the scene as managed drives it: placed, posed, merged,
+    //! its bones and hitboxes read back.
+    use super::*;
+    use crate::assets::model::{Bone, HitBox, HitBoxSet, ModelFile, RenderMesh};
+    use rapier3d::math::{Pose, Rotation, Vector};
+
+    fn cs(s: &str) -> CString { CString::new(s).unwrap() }
+
+    /// A root, and an arm 10 up it with a capsule hitbox along it.
+    fn arm_model() -> usize {
+        let bone = |name: &str, parent: i32, pos: Vector, model: Vector| Bone { name: cs(name), parent, pos, rot: Rotation::IDENTITY, flags: 0, model: Pose::from_translation(model) };
+        let hit = HitBox {
+            name: cs("arm"), surface: cs("flesh"), bone: cs("arm"), min: Vector::ZERO, max: Vector::new(0.0, 0.0, 8.0), radius: 2.0, shape: 2,
+            bone_hash: 0, color: [0; 4], index: 0, translation_only: false, visible: false, tags: vec![cs("head")],
+        };
+        let mesh = RenderMesh { hitbox_sets: vec![HitBoxSet { name: cs("default"), source: cs(""), boxes: vec![hit] }], ..Default::default() };
+        let file = ModelFile {
+            bones: vec![bone("root", -1, Vector::ZERO, Vector::ZERO), bone("arm", 0, Vector::new(0.0, 0.0, 10.0), Vector::new(0.0, 0.0, 10.0))],
+            meshes: vec![mesh],
+            ..Default::default()
+        };
+        models::from_file(0, Some(file))
+    }
+
+    fn transform(pos: Vector, rot: Rotation) -> S_Transform { Xf { pos, rot, scale: Vector::ONE }.managed() }
+    fn pos(t: S_Transform) -> Vector { phys::vec(t.f_Position) }
+    fn near(a: Vector, b: Vector) -> bool { (a - b).length() < 1e-4 }
+
+    #[test]
+    fn a_scene_models_bones_follow_it_and_managed() {
+        unsafe {
+            let model = arm_model();
+            let name = cs("ARM");
+            assert_eq!(CModel_NumBones(model), 2);
+            assert_eq!(CModel_FindBoneIndex(model, name.as_ptr() as usize), 1, "names are case blind");
+            assert_eq!(CModel_boneParent(model, 1), 0);
+            assert!(near(pos(CModel_GetBoneTransform(model, 1)), Vector::new(0.0, 0.0, 10.0)));
+
+            // its hitbox, as ModelHitboxes reads it
+            assert_eq!(CModel_GetHitboxSetCount(model, 0), 1);
+            let set = CModel_GetHitboxSetByIndex(model, 0, 0);
+            assert_eq!(read(Get__CHitBoxSet_m_name(set)), "default");
+            assert_eq!(CHitBoxSet_numhitboxes(set), 1);
+            let h = CHitBoxSet_pHitbox(set, 0);
+            assert_eq!(read(Get__CHitBox_m_sBoneName(h)), "arm");
+            assert_eq!(Get__CHitBox_m_nShapeType(h), 2);
+            assert_eq!(Get__CHitBox_m_flShapeRadius(h), 2.0);
+            assert_eq!(read(CHitBox_GetTag(h, 0)), "head");
+            assert_eq!(read(CHitBox_GetTag(h, 1)), "");
+            assert_eq!(CModel_GetBoneIndexForHitbox(model, h), 1);
+            assert_eq!(CModel_GetHitboxSetByIndex(model, 1, 0), 0, "no second set");
+
+            // placed at x 100, turned a quarter about z: the arm stands 10 over it
+            let at = transform(Vector::new(100.0, 0.0, 0.0), Rotation::from_rotation_z(std::f32::consts::FRAC_PI_2));
+            g_pMeshSystem_CreateSceneObject(model, &at as *const _ as usize, 0, 0, 0, 0, 0);
+            let obj = crate::animation::find_by_model(model).unwrap();
+            assert!(near(pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform(obj, 1)), Vector::new(100.0, 0.0, 10.0)));
+            assert!(near(pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform_1(obj, name.as_ptr() as usize)), Vector::new(100.0, 0.0, 10.0)));
+            assert_eq!(pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform(obj, 7)), Vector::ZERO, "no such bone: zeroes");
+
+            // managed moves it, and bends the arm (a procedural bone): parent space, then world
+            let moved = transform(Vector::new(0.0, 50.0, 0.0), Rotation::IDENTITY);
+            crate::state::set(obj, crate::slots::PROP_Transform, moved);
+            CScnnmtblbjct_Update(obj, 0.016);
+            let bent = transform(Vector::new(5.0, 0.0, 0.0), Rotation::IDENTITY);
+            CScnnmtblbjct_SetParentSpaceBone(obj, 1, &bent as *const _ as usize);
+            CScnnmtblbjct_CalculateWorldSpaceBones(obj);
+            assert!(near(pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform(obj, 1)), Vector::new(5.0, 50.0, 0.0)));
+            assert!(near(pos(CScnnmtblbjct_GetWorldSpaceRenderBonePreviousTransform(obj, 1)), Vector::new(100.0, 0.0, 10.0)), "where it was");
+            let mut parent_space = [transform(Vector::ZERO, Rotation::IDENTITY); 2];
+            CScnnmtblbjct_GetParentSpaceBones(obj, 2, parent_space.as_mut_ptr() as usize);
+            assert!(near(pos(parent_space[1]), Vector::new(5.0, 0.0, 0.0)));
+            // the next update starts again from the animation's pose (bind, for now)
+            CScnnmtblbjct_Update(obj, 0.016);
+            CScnnmtblbjct_CalculateWorldSpaceBones(obj);
+            assert!(near(pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform(obj, 1)), Vector::new(0.0, 50.0, 10.0)));
+
+            // a physics bone (a ragdoll's) wins, in the model's space
+            let ragdoll = transform(Vector::new(0.0, 0.0, -3.0), Rotation::IDENTITY);
+            CScnnmtblbjct_SetPhysicsBone(obj, 1, &ragdoll as *const _ as usize);
+            assert_eq!(CScnnmtblbjct_HasPhysicsBones(obj), 1);
+            CScnnmtblbjct_CalculateWorldSpaceBones(obj);
+            assert!(near(pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform(obj, 1)), Vector::new(0.0, 50.0, -3.0)));
+            CScnnmtblbjct_ClearPhysicsBones(obj);
+            let point = phys::v3(Vector::new(0.0, 50.0, 9.0));
+            CScnnmtblbjct_CalculateWorldSpaceBones(obj);
+            assert_eq!(CScnnmtblbjct_GetClosestBoneIndex(obj, &point as *const _ as usize), 1);
+
+            // a second model merged onto the first takes its arm's pose
+            let clothes = arm_model();
+            g_pMeshSystem_CreateSceneObject(clothes, &moved as *const _ as usize, 0, 0, 0, 0, 0);
+            let worn = crate::animation::find_by_model(clothes).unwrap();
+            CScnnmtblbjct_SetParentSpaceBone(obj, 1, &bent as *const _ as usize);
+            CScnnmtblbjct_CalculateWorldSpaceBones(obj);
+            CScnnmtblbjct_MergeFrom(worn, obj);
+            assert!(near(pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform(worn, 1)), Vector::new(5.0, 50.0, 0.0)));
+        }
+    }
+
+    #[test]
+    fn a_downloaded_models_sequence_plays() {
+        // s&box's own download cache, if this machine has one
+        let Ok(dir) = std::env::var("ENGINE2_SAMPLE_ASSETS") else { return };
+        let dir = std::path::Path::new(&dir).join("models/first_person");
+        let Some(file) = std::fs::read_dir(&dir).ok().and_then(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.to_string_lossy().contains("v_first_person_arms_human."))) else { return };
+        crate::fs::add_link("models/first_person/v_first_person_arms_human.vmdl_c", file.to_str().unwrap());
+        unsafe {
+            let name = cs("models/first_person/v_first_person_arms_human.vmdl");
+            let model = Glue_Resources_GetModel(name.as_ptr() as usize, core::mem::zeroed());
+            let at = transform(Vector::ZERO, Rotation::IDENTITY);
+            g_pMeshSystem_CreateSceneObject(model, &at as *const _ as usize, 0, 0, 0, 0, 0);
+            let obj = crate::animation::find_by_model(model).unwrap();
+            let hand = cs("hand_R");
+            let rest = pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform_1(obj, hand.as_ptr() as usize));
+
+            let seq = cs("Punching_Right_Hit_01");
+            CScnnmtblbjct_SetSequence(obj, seq.as_ptr() as usize);
+            assert_eq!(read(CScnnmtblbjct_GetSequence(obj)), "Punching_Right_Hit_01");
+            let duration = CScnnmtblbjct_GetSequenceDuration(obj);
+            assert!(duration > 0.1);
+            CScnnmtblbjct_SetSequenceLooping(obj, 0);
+            // through the punch a tenth at a time: the hand goes somewhere, and it ends
+            let mut farthest = 0f32;
+            for _ in 0..12 {
+                CScnnmtblbjct_Update(obj, duration / 10.0);
+                CScnnmtblbjct_CalculateWorldSpaceBones(obj);
+                farthest = farthest.max((pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform_1(obj, hand.as_ptr() as usize)) - rest).length());
+            }
+            assert!(farthest > 1.0, "the hand moved {farthest}");
+            assert_eq!(CScnnmtblbjct_GetSequenceCycle(obj), 1.0);
+            assert_eq!(CScnnmtblbjct_IsSequenceFinished(obj), 1);
+            // looping, it comes round again
+            CScnnmtblbjct_SetSequenceLooping(obj, 1);
+            CScnnmtblbjct_SetSequenceCycle(obj, 0.9);
+            CScnnmtblbjct_Update(obj, duration / 5.0);
+            assert!((CScnnmtblbjct_GetSequenceCycle(obj) - 0.1).abs() < 1e-3);
+            assert_eq!(CScnnmtblbjct_IsSequenceFinished(obj), 0);
         }
     }
 }
