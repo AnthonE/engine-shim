@@ -2945,7 +2945,7 @@ unsafe extern "C" fn s1562(_a0: usize, _a1: usize) -> i32 { hit(1562); unsafe { 
 unsafe extern "C" fn s1563() -> u64 { hit(1563); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1564(_a0: usize, _a1: i32) -> usize { hit(1564); unsafe { crate::impls::EngineGlue_ReadCompiledResourceFileJson(_a0, _a1) } }
 unsafe extern "C" fn s1565(_a0: usize, _a1: usize, _a2: i32, _a3: usize) -> usize { hit(1565); unsafe { crate::impls::EngineGlue_ReadCompiledResourceFileBlock(_a0, _a1, _a2, _a3) } }
-unsafe extern "C" fn s1566(_a0: usize) -> usize { hit(1566); crate::trace::object(1566) }
+unsafe extern "C" fn s1566(_a0: usize) -> usize { hit(1566); unsafe { crate::impls::EngineGlue_ReadCompiledResourceFileJsonFromFilesystem(_a0) } }
 unsafe extern "C" fn s1567(_a0: i32) { hit(1567);  }
 unsafe extern "C" fn s1568() { hit(1568);  }
 unsafe extern "C" fn s1569() { hit(1569);  }

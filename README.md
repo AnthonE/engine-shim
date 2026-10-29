@@ -427,9 +427,6 @@ What the game's components still can't do:
   bones, hitboxes and meshes (`ModelBuilder`) kept.
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
   has none.
-- **Compiled resources from sbox.game.** A downloaded package's
-  GameResources (its sounds, clothing, prefabs) are binary resource
-  containers, and only plain JSON is read as one yet: they fail to load.
 
 ## Reproduce
 
@@ -484,7 +481,10 @@ first.
   These are fixes upstream could take.
 
 `tools/compile.sh` copies a project's scenes and prefabs to their `_c`
-names, which is all a JSON resource needs here. Models, materials and
+names, which is all a JSON resource needs here. A GameResource s&box
+compiled (a package's sounds, clothing and prefabs from sbox.game) is a
+resource container, read for its `DATA` block, the same JSON; its other
+blocks are found by name for managed (a GameResource's binary blob). Models, materials and
 textures are Source 2's binary formats and wait for the assets step.
 
 No EULA binary is used: the checkout's `game/bin` holds only text files,

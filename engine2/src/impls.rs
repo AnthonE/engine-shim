@@ -154,8 +154,8 @@ pub unsafe fn g_pRenderDevice_GetRenderDeviceAPI() -> i64 { RENDER_DEVICE_API_EM
 
 // ---- compiled resources: a game's JSON resources (scenes, prefabs, its own
 // GameResource types) are read as `<name>_c`. Ours is the JSON itself, as
-// tools/compile.sh writes it; Source 2's own container (a header and named
-// blocks) is not read yet.
+// tools/compile.sh writes it; one compiled by s&box (a package downloaded
+// from sbox.game) is Source 2's container, its JSON the DATA block.
 
 thread_local! {
     /// The last JSON handed back, kept until the next call on this thread
@@ -163,25 +163,62 @@ thread_local! {
     static LAST_JSON: std::cell::RefCell<CString> = std::cell::RefCell::new(CString::default());
 }
 
-pub unsafe fn EngineGlue_ReadCompiledResourceFileJson(data: usize, len: i32) -> usize {
-    if data == 0 || len <= 0 { return 0; }
-    let bytes = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
-    let start = bytes.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(bytes.len());
-    if !matches!(bytes.get(start), Some(b'{') | Some(b'[')) {
-        crate::trace::note("ReadCompiledResourceFileJson: a Source 2 container, not plain JSON: not read yet");
-        return 0;
+/// The JSON in a compiled resource: the file itself, or its container's DATA block.
+fn resource_json(bytes: &[u8]) -> Option<&[u8]> {
+    fn json(b: &[u8]) -> Option<&[u8]> {
+        let start = b.iter().position(|c| !c.is_ascii_whitespace())?;
+        let end = b.iter().rposition(|&c| c != 0 && !c.is_ascii_whitespace())? + 1;
+        matches!(b[start], b'{' | b'[').then(|| &b[start..end])
     }
-    let Ok(s) = CString::new(&bytes[start..]) else { return 0 };
+    json(bytes).or_else(|| json(resource_block(bytes, b"DATA")?))
+}
+
+/// The block of a compiled resource's container by its tag (DATA, a
+/// GameResource's binary blob...): none in plain JSON or anything else.
+fn resource_block<'a>(bytes: &'a [u8], tag: &[u8; 4]) -> Option<&'a [u8]> {
+    let u32_at = |at: usize| bytes.get(at..at + 4).map(|x| u32::from_le_bytes(x.try_into().unwrap()) as usize);
+    // the header: the file's size, a 12-byte header, a version, then the block list
+    if bytes.get(4..6) != Some(&12u16.to_le_bytes()[..]) || u32_at(0)? > bytes.len() { return None; }
+    let (list, count) = (8 + u32_at(8)?, u32_at(12)?);
+    (0..count.min(64)).find_map(|i| {
+        let at = list + 12 * i;
+        if bytes.get(at..at + 4)? != tag { return None; }
+        let start = at + 4 + u32_at(at + 4)?;
+        bytes.get(start..start + u32_at(at + 8)?)
+    })
+}
+
+fn json_returned(json: &[u8]) -> usize {
+    let Ok(s) = CString::new(json) else { return 0 };
     LAST_JSON.with(|l| {
         *l.borrow_mut() = s;
         l.borrow().as_ptr() as usize
     })
 }
 
-/// A named binary block inside a compiled resource: plain JSON has none.
-pub unsafe fn EngineGlue_ReadCompiledResourceFileBlock(_name: usize, _data: usize, _len: i32, size: usize) -> usize {
+pub unsafe fn EngineGlue_ReadCompiledResourceFileJson(data: usize, len: i32) -> usize {
+    if data == 0 || len <= 0 { return 0; }
+    let bytes = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
+    resource_json(bytes).map(json_returned).unwrap_or(0)
+}
+
+/// As above, the file found by the engine's file system.
+pub unsafe fn EngineGlue_ReadCompiledResourceFileJsonFromFilesystem(name: usize) -> usize {
+    let name = unsafe { read(name) };
+    crate::fs::read_compiled(&name).and_then(|b| resource_json(&b).map(json_returned)).unwrap_or(0)
+}
+
+/// A named block inside a compiled resource, where it lies in managed's
+/// buffer (which managed copies from before letting go).
+pub unsafe fn EngineGlue_ReadCompiledResourceFileBlock(name: usize, data: usize, len: i32, size: usize) -> usize {
     if size != 0 { unsafe { *(size as *mut i32) = 0 }; }
-    0
+    if data == 0 || len <= 0 { return 0; }
+    let name = unsafe { read(name) };
+    let Ok(tag) = <[u8; 4]>::try_from(name.as_bytes().get(..4).unwrap_or_default()) else { return 0 };
+    let bytes = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
+    let Some(block) = resource_block(bytes, &tag) else { return 0 };
+    if size != 0 { unsafe { *(size as *mut i32) = block.len() as i32 }; }
+    block.as_ptr() as usize
 }
 
 /// A string returned to managed, kept until the next on this thread
@@ -1939,6 +1976,50 @@ pub unsafe fn CScnnmtblbjct_SBox_GetAttachment(obj: usize, name: S_Sandbox_Strin
 mod tests {
     //! The slots as managed calls them: a dedicated server logs on, listens,
     //! takes a player, checks their ticket, and they talk.
+
+    /// A container as s&box compiles a GameResource: the header, a block
+    /// list, and the JSON in DATA (ended with a NUL).
+    fn container(blocks: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+        let list = 16;
+        let mut data_at = list + 12 * blocks.len();
+        let mut out = vec![0u8; data_at];
+        out[4..6].copy_from_slice(&12u16.to_le_bytes());
+        out[8..12].copy_from_slice(&8u32.to_le_bytes());
+        out[12..16].copy_from_slice(&(blocks.len() as u32).to_le_bytes());
+        for (i, (tag, body)) in blocks.iter().enumerate() {
+            let at = list + 12 * i;
+            out[at..at + 4].copy_from_slice(&tag[..]);
+            out[at + 4..at + 8].copy_from_slice(&((data_at - (at + 4)) as u32).to_le_bytes());
+            out[at + 8..at + 12].copy_from_slice(&(body.len() as u32).to_le_bytes());
+            out.extend_from_slice(body);
+            data_at += body.len();
+        }
+        let n = out.len() as u32;
+        out[0..4].copy_from_slice(&n.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn a_compiled_resource_reads_as_its_json() {
+        let read = |b: &[u8]| {
+            let p = unsafe { EngineGlue_ReadCompiledResourceFileJson(b.as_ptr() as usize, b.len() as i32) };
+            (p != 0).then(|| unsafe { CStr::from_ptr(p as *const core::ffi::c_char) }.to_str().unwrap().to_string())
+        };
+        // ours: the JSON itself
+        assert_eq!(read(b"  {\"Volume\":1}\n").as_deref(), Some("{\"Volume\":1}"));
+        // s&box's: its DATA block, past the references and the edit info
+        let c = container(&[(b"RERL", b"\x0c\0\0\0refs"), (b"REDI", &[0u8; 20]), (b"DATA", b"{\"Volume\":2}\0"), (b"BLOB", b"\x01\x02\x03")]);
+        assert_eq!(read(&c).as_deref(), Some("{\"Volume\":2}"));
+        assert_eq!(read(b"\x03VKV not json"), None);
+        // and a block of it by name, where it lies
+        let mut size = 0i32;
+        let name = c"BLOB";
+        let p = unsafe { EngineGlue_ReadCompiledResourceFileBlock(name.as_ptr() as usize, c.as_ptr() as usize, c.len() as i32, &mut size as *mut i32 as usize) };
+        assert_eq!(unsafe { core::slice::from_raw_parts(p as *const u8, size as usize) }, b"\x01\x02\x03");
+        let p = unsafe { EngineGlue_ReadCompiledResourceFileBlock(c"MDAT".as_ptr() as usize, c.as_ptr() as usize, c.len() as i32, &mut size as *mut i32 as usize) };
+        assert_eq!((p, size), (0, 0), "no such block");
+    }
+
     #[test]
     fn lz4_round_trips_blocks_and_frames() {
         unsafe {
