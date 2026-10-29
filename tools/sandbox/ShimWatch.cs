@@ -4,16 +4,33 @@
 /// how many awake, how high), the joints. And shoots at a model's
 /// hitboxes: a skinned model from s&box's download cache, with
 /// ModelHitboxes, hit by traces aimed at its bones, then turned and moved,
-/// then playing a sequence. And breaks a prop, and follows its gibs.
+/// then playing a sequence. And breaks a prop, and follows its gibs; and
+/// sets off an explosive one, and sees what it does to its neighbours.
 /// </summary>
 public sealed class ShimWatch : Component
 {
 	TimeSince _last;
 	int _ticks;
-	Prop _broken;
+	Prop _broken, _bomb;
+	Vector3 _blast;
+	Dictionary<Rigidbody, Vector3> _near;
+	bool _blew;
 
 	protected override void OnFixedUpdate()
 	{
+		// the step after the blast: how fast each neighbour goes, against what
+		// RadiusDamage's force (1e10 / (d² + 1), for one step) predicts
+		if ( _blew )
+		{
+			_blew = false;
+			Log.Info( "shimwatch blast 0: " + string.Join( ", ", _near.Keys.Where( b => b.IsValid() ).Select( b =>
+			{
+				var d = _near[b].Distance( _blast );
+				var predicted = 10000000000f / (d * d + 1) / b.Mass * Time.Delta;
+				return $"{b.GameObject.Name} {b.Mass:0.0}kg {b.Velocity.Length:0} vs {predicted:0}";
+			} ) ) + $" (dt {Time.Delta:0.0000})" );
+		}
+
 		if ( _last < 1 ) return;
 		_last = 0;
 		_ticks++;
@@ -58,6 +75,27 @@ public sealed class ShimWatch : Component
 				_broken.Kill();
 			}
 		}
+		// once: set off the explosive prop, and see what it does to its neighbours
+		if ( _ticks == 30 )
+		{
+			_bomb = Scene.GetAllComponents<Prop>().FirstOrDefault( p => p.IsExplosive );
+			if ( _bomb is not null )
+			{
+				_blast = _bomb.WorldPosition;
+				_near = Scene.GetAllComponents<Rigidbody>().Where( b => b.GameObject != _bomb.GameObject && b.WorldPosition.Distance( _blast ) < 300 )
+					.ToDictionary( b => b, b => b.WorldPosition );
+				Log.Info( $"shimwatch: detonating {_bomb.GameObject.Name} at {_blast}; within 300: {string.Join( ", ", _near.Keys.Select( b => $"{b.GameObject.Name} {b.WorldPosition.Distance( _blast ):0} away" + (b.Components.Get<Prop>() is { } p ? $" health {p.Health:0}" : "") ) )}" );
+				_bomb.Kill();
+				_blew = true;
+			}
+		}
+		if ( _ticks is > 30 and <= 33 && _near is not null )
+		{
+			var gibs = Scene.GetAllComponents<Gib>().Count( g => g.WorldPosition.Distance( _blast ) < 400 );
+			Log.Info( $"shimwatch blast {_ticks - 30}: {gibs} gibs near it, explosion {(Scene.GetAllComponents<RadiusDamage>().Any() ? "there" : "none")} | "
+				+ string.Join( ", ", _near.Select( kv => !kv.Key.IsValid() ? $"(broken)" : $"{kv.Key.GameObject.Name} moved {kv.Key.WorldPosition.Distance( kv.Value ):0}" + (kv.Key.Components.Get<Prop>() is { } p ? $" health {p.Health:0}" : "") ) ) );
+		}
+
 		if ( _ticks > 20 && _ticks <= 26 && _broken is not null )
 		{
 			var gibs = Scene.GetAllComponents<Gib>().ToList();

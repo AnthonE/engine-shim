@@ -12,6 +12,8 @@ exts=${*:-scene prefab}
 root=$dir/Assets; [ -d "$root" ] || root=$dir
 n=0
 for e in $exts; do
-  for f in $(find "$root" -type f -name "*.$e"); do cp "$f" "${f}_c"; n=$((n + 1)); done
+  k=$(find "$root" -type f -name "*.$e" | wc -l)
+  find "$root" -type f -name "*.$e" -exec sh -c 'for f; do cp "$f" "${f}_c"; done' sh {} +
+  n=$((n + k))
 done
 echo "$n resources compiled in $root ($exts)"

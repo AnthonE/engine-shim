@@ -346,6 +346,7 @@ adds a watcher. Measured (`grep shimwatch target/spike/server.log`):
   player controller's ground traces run on this library's physics.
 
 ```sh
+sh tools/compile.sh ../sbox-public/game/core surface prefab sound decal
 git clone https://github.com/Facepunch/sandbox ../sandbox
 sh tools/sandbox.sh ../sandbox
 SBOX=../sbox-public sh spike.sh 120 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
@@ -402,7 +403,13 @@ deserializes them from (`KeyValues3ToJson`). All 52 cached models that
 have any read (38 with `prop_data`, 87 break pieces). Measured in the zoo:
 the TV has 15 health and six gibs, the explosive oil drum 100 and four;
 killed, the TV is gone and its six gibs fall and sleep within three
-seconds.
+seconds. Set off, the oil drum breaks into its gibs and spawns core's
+explosion (`prefabs/engine/explosion_med.prefab`: compile core's
+prefabs, sounds and decals too), whose `RadiusDamage` finds its
+neighbours, traces its line of sight to each and pushes them for one
+step: on the next, an unshadowed gib of 1 kg 128 away goes 11,916 in/s,
+the 11,945 its force predicts (1e10/(d²+1) × dt / m); a body behind
+another doesn't move.
 
 And a model in the scene has a pose (`engine2/src/animation.rs`, the
 `CSceneAnimatableObject` slots `SceneModel` drives): its bones in parent
