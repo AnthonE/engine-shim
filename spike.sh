@@ -13,6 +13,8 @@ dotnet run --project gen -- "$SBOX" engine engine2/src/slots.rs
 cargo build --release -q
 mkdir -p "$SBOX/game/bin/linuxsteamrt64"
 cp target/release/libengine2.so "$SBOX/game/bin/linuxsteamrt64/"
+# the engine modules the managed side loads by name, all this one library
+for m in vfx_vulkan filesystem_stdio; do ln -sf libengine2.so "$SBOX/game/bin/linuxsteamrt64/lib$m.so"; done
 (cd "$SBOX/game" && ENGINE2_TRACE="$ROOT/$OUT/trace.txt" timeout "$secs" ./sbox-server "$@" > "$ROOT/$OUT/server.log" 2>&1) && code=0 || code=$?
 echo "exit $code"
 grep -v '^\s*at ' "$OUT/server.log" | tail -12

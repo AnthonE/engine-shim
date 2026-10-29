@@ -43,17 +43,20 @@ pub unsafe fn global_SourceEngineInit(_app_system: usize) -> i32 { 1 }
 // ---- the app system (CMaterialSystem2AppSystemDict): what kind of process
 // this is, set by managed before the engine starts and read back after
 
-macro_rules! flag {
-    ($store:ident, $set:ident, $is:ident) => {
-        static $store: AtomicI32 = AtomicI32::new(0);
-        pub unsafe fn $set(_self: usize, v: i32) { $store.store(v, Ordering::Relaxed) }
-        pub unsafe fn $is(_self: usize) -> i32 { $store.load(Ordering::Relaxed) }
-    };
-}
-flag!(DEDICATED, CMtrlSystm2ppSys_SetDedicatedServer, CMtrlSystm2ppSys_IsDedicatedServer);
-flag!(TOOLS, CMtrlSystm2ppSys_SetInToolsMode, CMtrlSystm2ppSys_IsInToolsMode);
-flag!(TEST, CMtrlSystm2ppSys_SetInTestMode, CMtrlSystm2ppSys_IsInTestMode);
-flag!(STANDALONE, CMtrlSystm2ppSys_SetInStandaloneApp, CMtrlSystm2ppSys_IsStandaloneApp);
+// written out, not by a macro: gen/ finds these by their names in this
+// file. Dedicated takes a value; the other three only switch on.
+static DEDICATED: AtomicI32 = AtomicI32::new(0);
+pub unsafe fn CMtrlSystm2ppSys_SetDedicatedServer(_self: usize, v: i32) { DEDICATED.store(v, Ordering::Relaxed) }
+pub unsafe fn CMtrlSystm2ppSys_IsDedicatedServer(_self: usize) -> i32 { DEDICATED.load(Ordering::Relaxed) }
+static TOOLS: AtomicI32 = AtomicI32::new(0);
+pub unsafe fn CMtrlSystm2ppSys_SetInToolsMode(_self: usize) { TOOLS.store(1, Ordering::Relaxed) }
+pub unsafe fn CMtrlSystm2ppSys_IsInToolsMode(_self: usize) -> i32 { TOOLS.load(Ordering::Relaxed) }
+static TEST: AtomicI32 = AtomicI32::new(0);
+pub unsafe fn CMtrlSystm2ppSys_SetInTestMode(_self: usize) { TEST.store(1, Ordering::Relaxed) }
+pub unsafe fn CMtrlSystm2ppSys_IsInTestMode(_self: usize) -> i32 { TEST.load(Ordering::Relaxed) }
+static STANDALONE: AtomicI32 = AtomicI32::new(0);
+pub unsafe fn CMtrlSystm2ppSys_SetInStandaloneApp(_self: usize) { STANDALONE.store(1, Ordering::Relaxed) }
+pub unsafe fn CMtrlSystm2ppSys_IsStandaloneApp(_self: usize) -> i32 { STANDALONE.load(Ordering::Relaxed) }
 
 static APP_ID: AtomicU32 = AtomicU32::new(0);
 pub unsafe fn CMtrlSystm2ppSys_SetSteamAppId(_self: usize, id: u32) { APP_ID.store(id, Ordering::Relaxed) }
@@ -111,4 +114,65 @@ pub unsafe fn ImageLoader_GetMemRequired(w: i32, h: i32, d: i32, format: i64, mi
 /// (width, height, depth, mip levels, format)
 pub unsafe fn ImageLoader_GetMemRequired_1(w: i32, h: i32, d: i32, mips: i32, format: i64) -> i32 {
     mem_required(w, h, d, mips, format)
+}
+
+// ---- sound: a device with nowhere to play, as a server's is
+
+pub unsafe fn g_pAudioDevice_Name() -> usize { cstr("null") }
+pub unsafe fn g_pAudioDevice_ChannelCount() -> u32 { 2 }
+pub unsafe fn g_pAudioDevice_MixChannelCount() -> u32 { 2 }
+pub unsafe fn g_pAudioDevice_BitsPerSample() -> u32 { 16 }
+pub unsafe fn g_pAudioDevice_BytesPerSample() -> u32 { 2 }
+pub unsafe fn g_pAudioDevice_SampleRate() -> u32 { 44_100 }
+
+/// What the engine would show in a box: on a server, a line on stderr.
+pub unsafe fn global_Plat_MessageBox(title: usize, text: usize) {
+    let (t, x) = unsafe { (read(title), read(text)) };
+    eprintln!("engine2: message box: {t}: {x}");
+    crate::trace::note(&format!("Plat_MessageBox: {t}: {x}"));
+}
+
+/// The engine ends the process when it can't go on (a failed start
+/// included): so does this.
+pub unsafe fn global_Plat_ExitProcess(code: i32) {
+    crate::trace::note(&format!("Plat_ExitProcess({code})"));
+    std::process::exit(code);
+}
+
+// ---- rendering: the empty device, the one Facepunch's engine runs a
+// server on (Graphics.Initialize skips the GPU's work for it)
+
+const RENDER_DEVICE_API_EMPTY: i64 = 2;
+pub unsafe fn g_pRenderDevice_GetRenderDeviceAPI() -> i64 { RENDER_DEVICE_API_EMPTY }
+
+// ---- compiled resources: a game's JSON resources (scenes, prefabs, its own
+// GameResource types) are read as `<name>_c`. Ours is the JSON itself, as
+// tools/compile.sh writes it; Source 2's own container (a header and named
+// blocks) is not read yet.
+
+thread_local! {
+    /// The last JSON handed back, kept until the next call on this thread
+    /// (managed copies it into a string straight away).
+    static LAST_JSON: std::cell::RefCell<CString> = std::cell::RefCell::new(CString::default());
+}
+
+pub unsafe fn EngineGlue_ReadCompiledResourceFileJson(data: usize, len: i32) -> usize {
+    if data == 0 || len <= 0 { return 0; }
+    let bytes = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
+    let start = bytes.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(bytes.len());
+    if !matches!(bytes.get(start), Some(b'{') | Some(b'[')) {
+        crate::trace::note("ReadCompiledResourceFileJson: a Source 2 container, not plain JSON: not read yet");
+        return 0;
+    }
+    let Ok(s) = CString::new(&bytes[start..]) else { return 0 };
+    LAST_JSON.with(|l| {
+        *l.borrow_mut() = s;
+        l.borrow().as_ptr() as usize
+    })
+}
+
+/// A named binary block inside a compiled resource: plain JSON has none.
+pub unsafe fn EngineGlue_ReadCompiledResourceFileBlock(_name: usize, _data: usize, _len: i32, size: usize) -> usize {
+    if size != 0 { unsafe { *(size as *mut i32) = 0 }; }
+    0
 }

@@ -34,17 +34,38 @@ Measured on sbox-public at the commit in `SBOX_PUBLIC_COMMIT`:
 ## What runs now
 
 Facepunch's managed dedicated server (`engine/Launcher/SboxServer`) builds
-on Linux from the public repo and NuGet alone. Run on `libengine2.so` from
-this repository, it boots, runs its frame loop at 60 Hz and shuts down in
-order. Of the 3,578 slots, 118 are called on the way. 13 are written by
-hand (`engine2/src/impls.rs`); every other slot is a generated stub that
-records its first call and returns zeroes, or a fresh zeroed block where it
-returns a pointer.
+on Linux from the public repo and NuGet alone. On `libengine2.so` from this
+repository it boots as a dedicated server, compiles and loads a game, and
+runs it:
 
-It does not load a game yet. Loading Facepunch's Sweeper sample stops at
-two static constructors: audio's mixing thread (an assert) and the shader
-compiler (it loads `vfx_vulkan`). The game command is registered by the
-game instance after both, so it is not there yet.
+```
+engine-shim: dedicated=True editor=False headless=True
+Loading game 'local.sweeper#local'
+game.load success local.sweeper#local 2581ms [... assemblies=60, resources=154, fonts=12, scene=454]
+```
+
+That is Facepunch's Sweeper sample: its C# compiled in the engine, its
+scene loaded, its components started. 131 of the 3,578 slots are called on
+the way; 33 are written by hand (`engine2/src/impls.rs`), among them a null
+audio device, the empty render device Facepunch's engine already runs a
+server on (`RENDER_DEVICE_API_EMPTY`), and compiled resources read as
+plain JSON. Every other slot is a generated stub that records its first
+call and returns zeroes, or a fresh zeroed block where it returns a pointer.
+
+Native objects of the handle classes (scene objects, worlds, lights,
+physics bodies) are made and registered: every `Create…` slot that returns
+a handle calls managed's `HandleIndex.RegisterHandle(pointer, type)` with
+StringToken's type token (`engine2/src/handles.rs`), so the physics world
+and the colliders now exist. Casts between classes return the same object.
+
+What the game's components still can't do:
+
+- **Object state.** A light registers, then asks for its world
+  (`GetWorld`), and the stub has nothing to say. Native objects need to
+  remember: the arguments they were made with, what each `Set…` stored for
+  its `Get…`. That is the next layer, and most of it is generic.
+- **Physics.** The world exists; bodies and their simulation do not. About
+  300 slots; Rapier or Jolt behind them.
 
 ## Reproduce
 
@@ -58,8 +79,12 @@ git apply ../engine-shim/sbox-public.patch     # below
 DOTNET_ROOT=~/.dotnet dotnet build engine/Launcher/SboxServer/Sbox-Server.csproj -c Release -p:ApplicationIcon=
 # SkiaSharp and HarfBuzz's Linux natives (MIT, NuGet's *.NativeAssets.Linux)
 #   into game/bin/linuxsteamrt64/ and game/bin/managed/
+# .NET's reference assemblies (MIT, the SDK's packs/Microsoft.NETCore.App.Ref/
+#   <version>/ref/net10.0/*.dll) into engine/Sandbox.Compiling/EmbeddedRefs/
+#   before the build: the engine's C# compiler embeds them
 cd ../engine-shim
-SBOX=../sbox-public sh spike.sh 40 +game ../sbox-public/game/samples/sweeper/.sbproj
+sh tools/compile.sh ../sbox-public/game/samples/sweeper      # its scene as engine2 reads it
+SBOX=../sbox-public sh spike.sh 90 +shimgame ../sbox-public/game/samples/sweeper/.sbproj
 ```
 
 `spike.sh` regenerates `engine2/src/slots.rs` (`gen/`), builds, installs
@@ -76,9 +101,15 @@ first.
 **sbox-public.patch** changes two things locally, neither shipped:
 
 - `System.Speech` comes from NuGet, not the Windows DLL their setup downloads.
-- The server's launcher prints every managed log line to stdout, and runs
-  `+game` from the command line 30 frames in. Source's command buffer did
-  this natively. Doing it in `engine2` is on the list.
+- The server's launcher prints every managed log line to stdout (and says
+  whether it is a dedicated server), and runs `+shimgame <project.sbproj>`
+  through the `game` command 30 frames in. The engine runs `+game` itself,
+  but only as a package to download from sbox.game; a local project goes
+  through the command.
+
+`tools/compile.sh` copies a project's scenes and prefabs to their `_c`
+names, which is all a JSON resource needs here. Models, materials and
+textures are Source 2's binary formats and wait for the assets step.
 
 No EULA binary is used: the checkout's `game/bin` holds only text files,
 and Facepunch's artifact download (`Setup.sh`) is never run.
@@ -91,15 +122,16 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/lib.rs` | `igen_engine`: fills the table |
 | `engine2/src/slots.rs` | generated: 3,578 typed stubs, 81 struct layouts, the names |
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
+| `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer |
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
 | `spike.sh` | one turn of the loop |
+| `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
 
 ## Next
 
-1. **A server that loads a game.** Answer the mixing thread and the shader
-   compiler as a server would (no audio device, no shaders), run `+game` in
-   `engine2`, and load Sweeper. Then a real open-source s&box game, and its
-   trace is the measured size of "a server": the slots one game needs.
+1. **A server that runs a game.** The handle protocol, then physics, then
+   a real open-source s&box game: its trace is the measured size of "a
+   server", the slots one game needs.
 2. **Steam's part.** A server that is not on Steam needs identity,
    connections and lobbies from somewhere else: the Elo Pros wallet sign-in
    and our relay, behind the `steam_api` functions the managed side calls.
