@@ -13,6 +13,7 @@ mod elo;
 mod handles;
 mod impls;
 mod net;
+mod physics;
 pub mod relay;
 mod siwe;
 mod state;

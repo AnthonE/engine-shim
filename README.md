@@ -196,10 +196,53 @@ writes all of it from the managed interop:
 Measured: Sweeper's scene loads on the server, and on a player who joins
 it, with no error at all, and the physics world steps on both.
 
+**Things move** (`engine2/src/physics.rs`). Where s&box's native engine
+runs Box3D, worlds, bodies and shapes here are Rapier's (MIT/Apache-2.0,
+pure Rust, so the browser too), in s&box's units (inches, kilograms;
+Rapier's tolerances told so). 157 slots are written, the physics ones and
+the result vectors they fill:
+
+- **Bodies**: static, keyframed (sent to a target each step) and dynamic;
+  position, rotation, velocities, impulses and forces (spent each step, as
+  Box3D's are), damping, gravity and its scale, motion locks, sleep, CCD.
+  Mass comes from the shapes at water's density, unless managed sets a
+  mass, a centre or an inertia over it; mass updates defer while a
+  collider builds its shapes.
+- **Shapes**: spheres, capsules, boxes, hulls, triangle meshes and height
+  fields, each with its tags, its surface, friction, elasticity, and
+  whether it is a trigger, ignores traces or weighs nothing.
+- **The step**: `StepSimulation` steps, then tells managed each body that
+  moved (`PhysicsEngine.OnActive`: where, how fast, whether it fell
+  asleep), which is how a `Rigidbody` follows its body.
+  `ProcessIntersections` hands over touches begun, kept and ended and
+  triggers entered and left, in managed's notification layout, each
+  shape's collision mask deciding what it hears.
+- **Collision rules**: the project's `CollisionRules` (the JSON managed
+  sends) decide per pair of tag sets whether two shapes collide, trigger
+  or ignore each other, by managed's own rule (the least colliding pair,
+  else the tags' defaults, else collide).
+- **Traces**: rays, and spheres, boxes, capsules, cylinders and cones
+  swept, or a body's own shapes; the nearest hit or all of them, through
+  managed's tag filters (require, any, exclude), its trigger and object-set
+  masks and its filter delegate, with the hit's body, shape, surface, tags
+  and triangle. Also traces against one given shape, and `FindInPhysics`'s
+  sphere, box and frustum queries.
+- **Handles**: bodies and shapes removed free their managed handles, so
+  managed's objects stop being valid with them.
+
+Tested the way managed calls it (`cargo test`): a ball dropped through the
+slots alone falls, lands, is heard moving and falling asleep, touches the
+floor, is traced, queried, filtered past, knocked back up and removed.
+Not yet measured under Sweeper: a sandbox here could not build the s&box
+side.
+
 What the game's components still can't do:
 
-- **Physics.** Bodies, shapes and joints exist and remember what they are
-  told; nothing moves them. About 300 slots; Rapier or Jolt behind them.
+- **Joints.** Made and remembered (102 slots), not simulated yet:
+  Rapier's fixed, spherical, revolute, prismatic and spring joints map
+  onto most of them.
+- **Model physics.** A model's collision (`CreateAggregateInstance`, the
+  hulls and meshes a model carries) waits for the assets step.
 
 ## Reproduce
 
@@ -266,7 +309,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/slots.rs` | generated: 3,578 typed slots, 81 struct layouts, the names |
 | `engine2/src/state.rs` | the properties native objects remember, set by one slot and read by another |
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
-| `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer |
+| `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer, freed |
+| `engine2/src/physics.rs` | physics on Rapier: worlds, bodies, shapes, the step and what touched, collision rules, traces and queries |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
 | `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
@@ -279,9 +323,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 
 ## Next
 
-1. **A server that runs a game.** The handle protocol, then physics, then
-   a real open-source s&box game: its trace is the measured size of "a
-   server", the slots one game needs.
+1. **A server that runs a game.** The handle protocol and physics are
+   here (above); next joints, then a real open-source s&box game: its
+   trace is the measured size of "a server", the slots one game needs.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
    the shard list and the relay are ours now, and a player joins (above).
    Next: lobbies. A relay run for others wants a price, as the stream relay's

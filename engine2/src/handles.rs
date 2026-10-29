@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use crate::slots::M_Sandbox_HandleIndex_RegisterHandle;
+use crate::slots::{M_Sandbox_HandleIndex_FreeHandle, M_Sandbox_HandleIndex_RegisterHandle};
 
 /// MurmurHash2 as Sandbox.System's StringExtensions.MurmurHash2 computes it
 /// (seed 0x31415926, the ASCII bytes, little-endian words).
@@ -50,7 +50,19 @@ fn index() -> &'static Mutex<HashMap<usize, Obj>> {
 /// handle. Known before managed hears of it, because managed's init asks
 /// the new object about itself (its world) inside the registering call.
 pub fn create(slot: usize, ty: &'static str, links: &[usize]) -> i32 {
-    let ptr = crate::trace::object(slot);
+    register(crate::trace::object(slot), ty, links)
+}
+
+/// A fresh object of its own, never handed out again (a stub's may be:
+/// trace::object), for objects that live and die by the thousand.
+pub fn object() -> usize {
+    Box::into_raw(Box::new([0u64; 4])) as usize
+}
+
+/// The object at `ptr`, of the handle type `ty`, made with `links`,
+/// registered with managed: its handle. Whatever managed's init asks of it
+/// must be there to answer before this is called.
+pub fn register(ptr: usize, ty: &'static str, links: &[usize]) -> i32 {
     index().lock().unwrap().insert(ptr, Obj { handle: 0, ty, links: links.iter().copied().filter(|&l| l != 0).collect() });
     let f = crate::managed(M_Sandbox_HandleIndex_RegisterHandle);
     if f == 0 { return 0; }
@@ -58,6 +70,16 @@ pub fn create(slot: usize, ty: &'static str, links: &[usize]) -> i32 {
     let h = register(ptr, murmur2(ty));
     if let Some(o) = index().lock().unwrap().get_mut(&ptr) { o.handle = h; }
     h
+}
+
+/// An object made here is gone: managed lets go of its handle
+/// (HandleIndex.FreeHandle), and its managed object is no longer valid.
+pub fn free(ptr: usize) {
+    let Some(o) = index().lock().unwrap().remove(&ptr) else { return };
+    let f = crate::managed(M_Sandbox_HandleIndex_FreeHandle);
+    if f == 0 || o.handle <= 0 { return; }
+    let free: extern "C" fn(i32) = unsafe { std::mem::transmute(f) };
+    free(o.handle);
 }
 
 /// The handle of an object made here, by its pointer (0 if none).

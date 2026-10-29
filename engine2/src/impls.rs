@@ -486,6 +486,484 @@ pub unsafe fn ISteamUser_BeginAuthSession(_self: usize, player: u64, ticket: usi
 }
 pub unsafe fn ISteamUser_EndAuthSession(_self: usize, player: u64) { crate::steam::end_auth(player) }
 
+// ---- physics: physics.rs, Rapier where s&box's native engine has Box3D.
+// Worlds, bodies and shapes are handle objects of their own (made here,
+// registered with managed, freed when gone); a pointer is one of them.
+
+use crate::physics::{self as phys, Geometry};
+use crate::slots::{S_BBox, S_Capsule, S_PhysicsTrace_Result, S_Rotation, S_Sandbox_Sphere, S_Sandbox_StringToken, S_Transform, S_Vector3};
+
+fn freed(gone: Vec<usize>) {
+    for p in gone { crate::handles::free(p); }
+}
+
+fn b(v: i32) -> bool { v != 0 }
+
+pub unsafe fn g_pPhysicsSystem_NumWorlds() -> i32 { phys::world_count() }
+
+pub unsafe fn g_pPhysicsSystem_CreateWorld() -> i32 {
+    let w = crate::handles::object();
+    phys::create_world(w);
+    crate::handles::register(w, "PhysicsWorld", &[])
+}
+
+pub unsafe fn g_pPhysicsSystem_DestroyWorld(world: usize) { freed(phys::destroy_world(world)) }
+
+// the world
+
+fn add_body(world: usize, s: &phys::BodySettings) -> i32 {
+    let body = crate::handles::object();
+    phys::add_body(world, body, s);
+    crate::handles::register(body, "PhysicsBody", &[world])
+}
+
+pub unsafe fn IPhysicsWorld_AddBody(world: usize) -> i32 { add_body(world, &phys::BodySettings::default()) }
+pub unsafe fn IPhysicsWorld_AddBody_1(world: usize, settings: usize) -> i32 {
+    add_body(world, &unsafe { phys::read::<phys::BodySettings>(settings) })
+}
+pub unsafe fn IPhysicsWorld_RemoveBody(_world: usize, body: usize) { freed(phys::remove_body(body)) }
+pub unsafe fn IPhysicsWorld_GetWorldReferenceBody(world: usize) -> i32 { crate::handles::of(phys::reference_body(world)) }
+pub unsafe fn IPhysicsWorld_SetWorldReferenceBody(world: usize, body: usize) { phys::set_reference_body(world, body) }
+pub unsafe fn IPhysicsWorld_SetGravity(world: usize, g: usize) { phys::set_gravity(world, unsafe { phys::read_vec(g) }) }
+pub unsafe fn IPhysicsWorld_GetGravity(world: usize) -> S_Vector3 { phys::v3(phys::gravity(world)) }
+pub unsafe fn IPhysicsWorld_SetSimulation(world: usize, mode: i64) { phys::set_simulation(world, mode) }
+pub unsafe fn IPhysicsWorld_GetSimulation(world: usize) -> i64 { phys::simulation(world) }
+pub unsafe fn IPhysicsWorld_EnableSleeping(world: usize) { phys::set_sleeping(world, true) }
+pub unsafe fn IPhysicsWorld_DisableSleeping(world: usize) { phys::set_sleeping(world, false) }
+pub unsafe fn IPhysicsWorld_IsSleepingEnabled(world: usize) -> i32 { phys::sleeping(world) as i32 }
+pub unsafe fn IPhysicsWorld_SetMaximumLinearSpeed(world: usize, speed: f32) { phys::set_max_speed(world, speed) }
+pub unsafe fn IPhysicsWorld_SetCollisionRulesFromJson(world: usize, json: usize) { phys::set_rules(world, &unsafe { read(json) }) }
+pub unsafe fn IPhysicsWorld_ManagedObject(world: usize) -> i32 { crate::handles::of(world) }
+
+/// One step, then each body that moved is told to managed
+/// (PhysicsEngine.OnActive): where it is, how fast, whether it fell asleep.
+pub unsafe fn IPhysicsWorld_StepSimulation(world: usize, dt: f32, steps: i32) {
+    let active = phys::step(world, dt, steps);
+    let f = crate::managed(crate::slots::M_SandboxPhysics_PhysicsEngine_OnActive);
+    if f == 0 { return; }
+    let on_active: extern "C" fn(i32, S_Transform, S_Vector3, S_Vector3, i32, i32) = unsafe { std::mem::transmute(f) };
+    for a in active {
+        let h = crate::handles::of(a.body);
+        if h > 0 { on_active(h, a.transform, phys::v3(a.velocity), phys::v3(a.angular_velocity), a.fell_asleep as i32, 0); }
+    }
+}
+
+/// What touched what since last asked, handed to managed's delegate.
+pub unsafe fn IPhysicsWorld_ProcessIntersections(world: usize, f: usize) {
+    let events = phys::take_intersections(world);
+    if f == 0 || events.is_empty() { return; }
+    let deliver: extern "C" fn(*const phys::Intersection, i32) = unsafe { std::mem::transmute(f) };
+    deliver(events.as_ptr(), events.len() as i32);
+}
+
+// queries: the shapes in a sphere, a box, the hull of some points
+
+static QUERIES: Mutex<Vec<(usize, Vec<usize>)>> = Mutex::new(Vec::new());
+
+fn query_into(result: usize, found: Vec<usize>) {
+    let mut q = QUERIES.lock().unwrap();
+    match q.iter_mut().find(|(p, _)| *p == result) {
+        Some((_, v)) => v.extend(found),
+        None => q.push((result, found)),
+    }
+}
+
+/// Managed's sets to include (1 static, 2 dynamic, 4 keyframed) as the ones a trace leaves out.
+fn left_out(sets: u16) -> u16 { !sets & 7 }
+
+pub unsafe fn CQueryResult_Create() -> usize {
+    let p = crate::handles::object();
+    QUERIES.lock().unwrap().push((p, Vec::new()));
+    p
+}
+pub unsafe fn CQueryResult_DeleteThis(result: usize) { QUERIES.lock().unwrap().retain(|(p, _)| *p != result) }
+pub unsafe fn CQueryResult_RemoveAll(result: usize) {
+    if let Some((_, v)) = QUERIES.lock().unwrap().iter_mut().find(|(p, _)| *p == result) { v.clear(); }
+}
+pub unsafe fn CQueryResult_Count(result: usize) -> i32 {
+    QUERIES.lock().unwrap().iter().find(|(p, _)| *p == result).map(|(_, v)| v.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CQueryResult_Element(result: usize, i: i32) -> i32 {
+    let shape = QUERIES.lock().unwrap().iter().find(|(p, _)| *p == result).and_then(|(_, v)| v.get(i as usize).copied()).unwrap_or(0);
+    crate::handles::of(shape)
+}
+
+pub unsafe fn IPhysicsWorld_Query(world: usize, result: usize, center: usize, radius: f32, sets: u16) {
+    let at = rapier3d::math::Pose::from_translation(unsafe { phys::read_vec(center) });
+    query_into(result, phys::query(world, rapier3d::parry::shape::SharedShape::ball(radius.max(0.0)), at, left_out(sets)));
+}
+pub unsafe fn IPhysicsWorld_Query_1(world: usize, result: usize, bounds: usize, sets: u16) {
+    let Some(b) = (bounds != 0).then(|| unsafe { core::ptr::read_unaligned(bounds as *const S_BBox) }) else { return };
+    let (mins, maxs) = (phys::vec(b.f_Mins), phys::vec(b.f_Maxs));
+    let half = ((maxs - mins) * 0.5).abs().max(rapier3d::math::Vector::splat(1e-3));
+    let at = rapier3d::math::Pose::from_translation((mins + maxs) * 0.5);
+    query_into(result, phys::query(world, rapier3d::parry::shape::SharedShape::cuboid(half.x, half.y, half.z), at, left_out(sets)));
+}
+pub unsafe fn IPhysicsWorld_Query_2(world: usize, result: usize, points: usize, n: i32, sets: u16) {
+    let Some(hull) = rapier3d::parry::shape::SharedShape::convex_hull(&unsafe { phys::read_points(points, n) }) else { return };
+    query_into(result, phys::query(world, hull, rapier3d::math::Pose::IDENTITY, left_out(sets)));
+}
+
+// bodies
+
+pub unsafe fn IPhysicsBody_SetGravityScale(body: usize, s: f32) { phys::set_gravity_scale(body, s) }
+pub unsafe fn IPhysicsBody_GetGravityScale(body: usize) -> f32 { phys::with_body(body, |b, _| b.gravity_scale).unwrap_or(1.0) }
+pub unsafe fn IPhysicsBody_IsGravityEnabled(body: usize) -> i32 { phys::with_body(body, |b, _| b.gravity).unwrap_or(true) as i32 }
+pub unsafe fn IPhysicsBody_EnableGravity(body: usize, on: i32) { phys::set_gravity_enabled(body, b(on)) }
+pub unsafe fn IPhysicsBody_SetMass(body: usize, m: f32) { phys::set_mass(body, (m > 0.0).then_some(m)) }
+pub unsafe fn IPhysicsBody_GetMass(body: usize) -> f32 { phys::with_body(body, |_, rb| rb.mass()).unwrap_or(0.0) }
+pub unsafe fn IPhysicsBody_GetMassCenter(body: usize) -> S_Vector3 { phys::v3(phys::with_body(body, |_, rb| rb.center_of_mass()).unwrap_or_default()) }
+pub unsafe fn IPhysicsBody_GetLocalMassCenter(body: usize) -> S_Vector3 { phys::v3(phys::with_body(body, |_, rb| rb.local_center_of_mass()).unwrap_or_default()) }
+pub unsafe fn IPhysicsBody_SetLocalMassCenter(body: usize, c: usize) { phys::set_local_mass_center(body, unsafe { phys::read_vec(c) }) }
+pub unsafe fn IPhysicsBody_SetOverrideMassCenter(body: usize, on: i32) { phys::set_override_mass_center(body, b(on)) }
+pub unsafe fn IPhysicsBody_GetOverrideMassCenter(body: usize) -> i32 { phys::with_body(body, |b, _| b.mass_center.is_some()).unwrap_or(false) as i32 }
+pub unsafe fn IPhysicsBody_SetPosition(body: usize, v: usize) { phys::set_transform(body, Some(unsafe { phys::read_vec(v) }), None) }
+pub unsafe fn IPhysicsBody_GetPosition(body: usize) -> S_Vector3 { phys::v3(phys::with_body(body, |_, rb| rb.translation()).unwrap_or_default()) }
+pub unsafe fn IPhysicsBody_SetOrientation(body: usize, q: usize) { phys::set_transform(body, None, Some(unsafe { phys::read_rot(q) })) }
+pub unsafe fn IPhysicsBody_GetOrientation(body: usize) -> S_Rotation { phys::rot(phys::with_body(body, |_, rb| *rb.rotation()).unwrap_or_default()) }
+pub unsafe fn IPhysicsBody_SetTransform(body: usize, v: usize, q: usize) {
+    phys::set_transform(body, Some(unsafe { phys::read_vec(v) }), Some(unsafe { phys::read_rot(q) }))
+}
+pub unsafe fn IPhysicsBody_GetTransform(body: usize) -> S_Transform {
+    let p = phys::with_body(body, |_, rb| *rb.position()).unwrap_or(rapier3d::math::Pose::IDENTITY);
+    S_Transform { f_Position: phys::v3(p.translation), f_Scale: phys::v3(rapier3d::math::Vector::ONE), f_Rotation: phys::rot(p.rotation) }
+}
+pub unsafe fn IPhysicsBody_SetLinearVelocity(body: usize, v: usize) {
+    let v = unsafe { phys::read_vec(v) };
+    phys::with_body_mut(body, |_, rb| rb.set_linvel(v, true));
+}
+pub unsafe fn IPhysicsBody_GetLinearVelocity(body: usize) -> S_Vector3 { phys::v3(phys::with_body(body, |_, rb| rb.linvel()).unwrap_or_default()) }
+pub unsafe fn IPhysicsBody_GetVelocityAtPoint(body: usize, p: usize) -> S_Vector3 {
+    let p = unsafe { phys::read_vec(p) };
+    phys::v3(phys::with_body(body, |_, rb| rb.velocity_at_point(p)).unwrap_or_default())
+}
+pub unsafe fn IPhysicsBody_AddLinearVelocity(body: usize, v: usize) {
+    let v = unsafe { phys::read_vec(v) };
+    phys::with_body_mut(body, |_, rb| rb.set_linvel(rb.linvel() + v, true));
+}
+pub unsafe fn IPhysicsBody_SetAngularVelocity(body: usize, v: usize) {
+    let v = unsafe { phys::read_vec(v) };
+    phys::with_body_mut(body, |_, rb| rb.set_angvel(v, true));
+}
+pub unsafe fn IPhysicsBody_GetAngularVelocity(body: usize) -> S_Vector3 { phys::v3(phys::with_body(body, |_, rb| rb.angvel()).unwrap_or_default()) }
+pub unsafe fn IPhysicsBody_Wake(body: usize) { phys::set_sleeping_body(body, false) }
+pub unsafe fn IPhysicsBody_Sleep(body: usize) { phys::set_sleeping_body(body, true) }
+pub unsafe fn IPhysicsBody_IsSleeping(body: usize) -> i32 { phys::with_body(body, |_, rb| rb.is_sleeping()).unwrap_or(false) as i32 }
+pub unsafe fn IPhysicsBody_EnableAutoSleeping(body: usize) { phys::set_auto_sleep(body, true) }
+pub unsafe fn IPhysicsBody_DisableAutoSleeping(body: usize) { phys::set_auto_sleep(body, false) }
+pub unsafe fn IPhysicsBody_SetSleepThreshold(body: usize, t: f32) { phys::set_sleep_threshold(body, t) }
+pub unsafe fn IPhysicsBody_GetSleepThreshold(body: usize) -> f32 { phys::with_body(body, |b, _| b.sleep_threshold).unwrap_or(0.0) }
+pub unsafe fn IPhysicsBody_EnableTouchEvents(body: usize) { phys::set_touch_events(body, true) }
+pub unsafe fn IPhysicsBody_DisableTouchEvents(body: usize) { phys::set_touch_events(body, false) }
+pub unsafe fn IPhysicsBody_IsTouchEventEnabled(body: usize) -> i32 { phys::with_body(body, |b, _| b.touch_events).unwrap_or(false) as i32 }
+pub unsafe fn IPhysicsBody_GetType(body: usize) -> i64 { phys::body_kind(body) }
+pub unsafe fn IPhysicsBody_SetType(body: usize, kind: i64) { phys::set_body_kind(body, kind) }
+pub unsafe fn IPhysicsBody_GetShapeCount(body: usize) -> i32 { phys::shapes_of_body(body).len() as i32 }
+pub unsafe fn IPhysicsBody_GetShape(body: usize, i: i32) -> i32 {
+    crate::handles::of(phys::shapes_of_body(body).get(i as usize).copied().unwrap_or(0))
+}
+
+/// A new shape on `body`: its handle, or 0 if it can't be made.
+fn add_shape(body: usize, g: Geometry, settings: usize) -> i32 {
+    let s = unsafe { phys::read::<phys::ShapeSettings>(settings) };
+    let shape = crate::handles::object();
+    if !phys::add_shape(body, shape, &g, &s) { return 0; }
+    crate::handles::register(shape, "PhysicsShape", &[body, phys::world_of_body(body)])
+}
+
+fn pose_of(position: usize, rotation: usize) -> rapier3d::math::Pose {
+    rapier3d::math::Pose::from_parts(unsafe { phys::read_vec(position) }, unsafe { phys::read_rot(rotation) })
+}
+
+/// `n` indices as triangles.
+unsafe fn read_triangles(p: usize, n: i32) -> Vec<[u32; 3]> {
+    if p == 0 || n < 3 { return Vec::new(); }
+    let s = unsafe { core::slice::from_raw_parts(p as *const u32, n as usize) };
+    s.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect()
+}
+
+pub unsafe fn IPhysicsBody_AddSphereShape(body: usize, center: usize, radius: f32, settings: usize) -> i32 {
+    add_shape(body, Geometry::Sphere(unsafe { phys::read_vec(center) }, radius), settings)
+}
+pub unsafe fn IPhysicsBody_AddCapsuleShape(body: usize, a: usize, b: usize, radius: f32, settings: usize) -> i32 {
+    add_shape(body, Geometry::Capsule(unsafe { phys::read_vec(a) }, unsafe { phys::read_vec(b) }, radius), settings)
+}
+pub unsafe fn IPhysicsBody_AddBoxShape(body: usize, position: usize, rotation: usize, extent: usize, settings: usize) -> i32 {
+    add_shape(body, Geometry::Box(pose_of(position, rotation), unsafe { phys::read_vec(extent) }), settings)
+}
+pub unsafe fn IPhysicsBody_AddHullShape(body: usize, position: usize, rotation: usize, n: i32, points: usize, settings: usize) -> i32 {
+    add_shape(body, Geometry::Hull(pose_of(position, rotation), unsafe { phys::read_points(points, n) }), settings)
+}
+pub unsafe fn IPhysicsBody_AddMeshShape(body: usize, nv: i32, vertices: usize, ni: i32, indices: usize, _materials: i32, settings: usize) -> i32 {
+    let g = Geometry::Mesh(rapier3d::math::Pose::IDENTITY, unsafe { phys::read_points(vertices, nv) }, unsafe { read_triangles(indices, ni) });
+    add_shape(body, g, settings)
+}
+pub unsafe fn IPhysicsBody_AddHeightFieldShape(body: usize, heights: usize, _materials: usize, x: i32, y: i32, spacing: f32, scale: f32, _n: i32, settings: usize) -> i32 {
+    if heights == 0 || x < 2 || y < 2 { return 0; }
+    let h = unsafe { core::slice::from_raw_parts(heights as *const u16, (x * y) as usize) }.to_vec();
+    add_shape(body, Geometry::Height(h, x as usize, y as usize, spacing, scale), settings)
+}
+pub unsafe fn IPhysicsBody_RemoveShape(_body: usize, shape: usize) {
+    if phys::remove_shape(shape) { crate::handles::free(shape); }
+}
+pub unsafe fn IPhysicsBody_PurgeShapes(body: usize) {
+    for s in phys::shapes_of_body(body) {
+        if phys::remove_shape(s) { crate::handles::free(s); }
+    }
+}
+pub unsafe fn IPhysicsBody_ApplyLinearImpulse(body: usize, i: usize) {
+    let i = unsafe { phys::read_vec(i) };
+    phys::with_body_mut(body, |_, rb| rb.apply_impulse(i, true));
+}
+pub unsafe fn IPhysicsBody_ApplyLinearImpulseAtWorldSpace(body: usize, i: usize, at: usize) {
+    let (i, at) = (unsafe { phys::read_vec(i) }, unsafe { phys::read_vec(at) });
+    phys::with_body_mut(body, |_, rb| rb.apply_impulse_at_point(i, at, true));
+}
+pub unsafe fn IPhysicsBody_ApplyAngularImpulse(body: usize, i: usize) {
+    let i = unsafe { phys::read_vec(i) };
+    phys::with_body_mut(body, |_, rb| rb.apply_torque_impulse(i, true));
+}
+pub unsafe fn IPhysicsBody_ApplyForce(body: usize, f: usize) {
+    let f = unsafe { phys::read_vec(f) };
+    phys::with_body_mut(body, |_, rb| rb.add_force(f, true));
+}
+pub unsafe fn IPhysicsBody_ApplyForceAt(body: usize, f: usize, at: usize) {
+    let (f, at) = (unsafe { phys::read_vec(f) }, unsafe { phys::read_vec(at) });
+    phys::with_body_mut(body, |_, rb| rb.add_force_at_point(f, at, true));
+}
+pub unsafe fn IPhysicsBody_ApplyTorque(body: usize, t: usize) {
+    let t = unsafe { phys::read_vec(t) };
+    phys::with_body_mut(body, |_, rb| rb.add_torque(t, true));
+}
+pub unsafe fn IPhysicsBody_ClearForces(body: usize) { phys::with_body_mut(body, |_, rb| rb.reset_forces(false)); }
+pub unsafe fn IPhysicsBody_ClearTorque(body: usize) { phys::with_body_mut(body, |_, rb| rb.reset_torques(false)); }
+pub unsafe fn IPhysicsBody_Enable(body: usize) { phys::with_body_mut(body, |_, rb| rb.set_enabled(true)); }
+pub unsafe fn IPhysicsBody_Disable(body: usize) { phys::with_body_mut(body, |_, rb| rb.set_enabled(false)); }
+pub unsafe fn IPhysicsBody_IsEnabled(body: usize) -> i32 { phys::with_body(body, |_, rb| rb.is_enabled()).unwrap_or(false) as i32 }
+pub unsafe fn IPhysicsBody_BuildMass(body: usize) { phys::build_mass(body) }
+pub unsafe fn IPhysicsBody_SetMassUpdatesDeferred(body: usize, defer: i32) -> i32 { phys::defer_mass(body, b(defer)) as i32 }
+pub unsafe fn IPhysicsBody_SetLinearDamping(body: usize, d: f32) { phys::with_body_mut(body, |_, rb| rb.set_linear_damping(d)); }
+pub unsafe fn IPhysicsBody_GetLinearDamping(body: usize) -> f32 { phys::with_body(body, |_, rb| rb.linear_damping()).unwrap_or(0.0) }
+pub unsafe fn IPhysicsBody_SetAngularDamping(body: usize, d: f32) { phys::with_body_mut(body, |_, rb| rb.set_angular_damping(d)); }
+pub unsafe fn IPhysicsBody_GetAngularDamping(body: usize) -> f32 { phys::with_body(body, |_, rb| rb.angular_damping()).unwrap_or(0.0) }
+pub unsafe fn IPhysicsBody_BuildBounds(body: usize) -> S_BBox { phys::body_bounds(body) }
+/// Every shape weighs as water does, kilograms per cubic metre.
+pub unsafe fn IPhysicsBody_GetDensity(_body: usize) -> f32 { 1000.0 }
+pub unsafe fn IPhysicsBody_GetClosestPoint(body: usize, p: usize) -> S_Vector3 { phys::v3(phys::closest_point(body, unsafe { phys::read_vec(p) })) }
+pub unsafe fn IPhysicsBody_SetMaterialIndex(_body: usize, _name: S_Sandbox_StringToken) {}
+pub unsafe fn IPhysicsBody_SetTargetTransform(body: usize, position: usize, rotation: usize, dt: f32) {
+    phys::set_target(body, pose_of(position, rotation), dt)
+}
+pub unsafe fn IPhysicsBody_CheckOverlap(body: usize, other: usize, at: usize) -> i32 {
+    phys::penetration(body, other, unsafe { phys::read_pose(at) }).is_some() as i32
+}
+pub unsafe fn IPhysicsBody_ComputePenetration(body: usize, other: usize, at: usize, direction: usize, distance: usize) -> i32 {
+    let Some((d, depth)) = phys::penetration(body, other, unsafe { phys::read_pose(at) }) else { return 0 };
+    if direction != 0 { unsafe { core::ptr::write_unaligned(direction as *mut S_Vector3, phys::v3(d)) }; }
+    if distance != 0 { unsafe { core::ptr::write_unaligned(distance as *mut f32, depth) }; }
+    1
+}
+pub unsafe fn IPhysicsBody_GetLocalInertiaVector(body: usize) -> S_Vector3 { phys::v3(phys::principal_inertia(body).0) }
+pub unsafe fn IPhysicsBody_GetLocalInertiaOrientation(body: usize) -> S_Rotation { phys::rot(phys::principal_inertia(body).1) }
+pub unsafe fn IPhysicsBody_SetLocalInertia(body: usize, v: usize, q: usize) {
+    phys::set_inertia(body, Some((unsafe { phys::read_vec(v) }, unsafe { phys::read_rot(q) })))
+}
+pub unsafe fn IPhysicsBody_ResetLocalInertia(body: usize) { phys::set_inertia(body, None) }
+pub unsafe fn IPhysicsBody_ScaleInertia(body: usize, s: f32) { phys::scale_inertia(body, s) }
+pub unsafe fn IPhysicsBody_ManagedObject(body: usize) -> i32 { crate::handles::of(body) }
+pub unsafe fn IPhysicsBody_SetMotionLocks(body: usize, x: i32, y: i32, z: i32, pitch: i32, yaw: i32, roll: i32) {
+    let locks = [x, y, z, pitch, yaw, roll].iter().enumerate().fold(0u32, |m, (i, &on)| if on != 0 { m | 1 << i } else { m });
+    phys::set_motion_locks(body, locks)
+}
+pub unsafe fn IPhysicsBody_IsTouching(body: usize, other: usize, triggers: i32) -> i32 { phys::touching_body(body, other, b(triggers)) as i32 }
+pub unsafe fn IPhysicsBody_IsTouching_1(body: usize, shape: usize, triggers: i32) -> i32 { phys::touching_shape(body, shape, b(triggers)) as i32 }
+pub unsafe fn IPhysicsBody_SetBullet(body: usize, on: i32) { phys::with_body_mut(body, |_, rb| rb.enable_ccd(on != 0)); }
+
+// shapes
+
+pub unsafe fn IPhysicsShape_AddCollisionFunctionMask(shape: usize, m: u8) { phys::set_mask(shape, |was| was | m) }
+pub unsafe fn IPhysicsShape_RemoveCollisionFunctionMask(shape: usize, m: u8) { phys::set_mask(shape, |was| was & !m) }
+pub unsafe fn IPhysicsShape_GetCollisionFunctionMask(shape: usize) -> u8 { phys::with_shape(shape, |s, _| s.mask).unwrap_or(0) }
+pub unsafe fn IPhysicsShape_HasTag(shape: usize, tag: u32) -> i32 { phys::shape_tags(shape).contains(&tag) as i32 }
+pub unsafe fn IPhysicsShape_AddTag(shape: usize, tag: u32) -> i32 {
+    phys::edit_tags(shape, |t| !t.contains(&tag) && { t.push(tag); true }) as i32
+}
+pub unsafe fn IPhysicsShape_RemoveTag(shape: usize, tag: u32) -> i32 {
+    phys::edit_tags(shape, |t| {
+        let n = t.len();
+        t.retain(|&x| x != tag);
+        t.len() != n
+    }) as i32
+}
+pub unsafe fn IPhysicsShape_ClearTags(shape: usize) -> i32 {
+    phys::edit_tags(shape, |t| {
+        let had = !t.is_empty();
+        t.clear();
+        had
+    }) as i32
+}
+pub unsafe fn IPhysicsShape_SetSurfaceIndex(shape: usize, part: i32, index: i32) {
+    if part == 0 { phys::with_shape_mut(shape, false, |s, _| s.surface = index); }
+}
+pub unsafe fn IPhysicsShape_GetType(shape: usize) -> i64 { phys::shape_kind(shape) }
+pub unsafe fn IPhysicsShape_UpdateMeshShape(shape: usize, nv: i32, vertices: usize, ni: i32, indices: usize) {
+    phys::update_shape(shape, &Geometry::Mesh(rapier3d::math::Pose::IDENTITY, unsafe { phys::read_points(vertices, nv) }, unsafe { read_triangles(indices, ni) }))
+}
+pub unsafe fn IPhysicsShape_UpdateSphereShape(shape: usize, center: usize, radius: f32) {
+    phys::update_shape(shape, &Geometry::Sphere(unsafe { phys::read_vec(center) }, radius))
+}
+pub unsafe fn IPhysicsShape_UpdateCapsuleShape(shape: usize, a: usize, b: usize, radius: f32) {
+    phys::update_shape(shape, &Geometry::Capsule(unsafe { phys::read_vec(a) }, unsafe { phys::read_vec(b) }, radius))
+}
+pub unsafe fn IPhysicsShape_UpdateHullShape(shape: usize, position: usize, rotation: usize, n: i32, points: usize) {
+    phys::update_shape(shape, &Geometry::Hull(pose_of(position, rotation), unsafe { phys::read_points(points, n) }))
+}
+pub unsafe fn IPhysicsShape_UpdateBoxShape(shape: usize, center: usize, rotation: usize, extents: usize) {
+    phys::update_shape(shape, &Geometry::Box(pose_of(center, rotation), unsafe { phys::read_vec(extents) }))
+}
+pub unsafe fn IPhysicsShape_ManagedObject(shape: usize) -> i32 { crate::handles::of(shape) }
+pub unsafe fn IPhysicsShape_SetTrigger(shape: usize, on: i32) { phys::set_trigger(shape, b(on)) }
+pub unsafe fn IPhysicsShape_IsTrigger(shape: usize) -> i32 { phys::with_shape(shape, |s, _| s.trigger).unwrap_or(false) as i32 }
+pub unsafe fn IPhysicsShape_GetTriangulation(shape: usize, vertices: usize, indices: usize) {
+    let (v, i) = phys::triangulation(shape);
+    vectors_set(vertices, v);
+    indices_set(indices, i);
+}
+pub unsafe fn IPhysicsShape_AsSphere(shape: usize) -> S_Sandbox_Sphere { phys::as_sphere(shape) }
+pub unsafe fn IPhysicsShape_AsCapsule(shape: usize) -> S_Capsule { phys::as_capsule(shape) }
+pub unsafe fn IPhysicsShape_SetFriction(shape: usize, f: f32) { phys::set_friction(shape, f) }
+pub unsafe fn IPhysicsShape_GetFriction(shape: usize) -> f32 { phys::with_shape(shape, |s, _| s.friction).unwrap_or(0.0) }
+pub unsafe fn IPhysicsShape_SetLocalVelocity(shape: usize, v: usize) {
+    let v = unsafe { phys::read_vec(v) };
+    phys::with_shape_mut(shape, false, |s, _| s.local_velocity = v);
+}
+pub unsafe fn IPhysicsShape_GetLocalVelocity(shape: usize) -> S_Vector3 { phys::v3(phys::with_shape(shape, |s, _| s.local_velocity).unwrap_or_default()) }
+pub unsafe fn IPhysicsShape_SetElasticity(shape: usize, e: f32) { phys::with_shape_mut(shape, false, |_, co| co.set_restitution(e.max(0.0))); }
+pub unsafe fn IPhysicsShape_SetIgnoreTraces(shape: usize, on: i32) { phys::with_shape_mut(shape, false, |s, _| s.ignore_traces = on != 0); }
+pub unsafe fn IPhysicsShape_SetHasNoMass(shape: usize, on: i32) { phys::with_shape_mut(shape, true, |s, _| s.no_mass = on != 0); }
+pub unsafe fn IPhysicsShape_BuildBounds(shape: usize) -> S_BBox { phys::shape_bounds(shape, false) }
+pub unsafe fn IPhysicsShape_LocalBounds(shape: usize) -> S_BBox { phys::shape_bounds(shape, true) }
+pub unsafe fn IPhysicsShape_IsTouching(shape: usize, other: usize, triggers: i32) -> i32 { phys::shape_touching(shape, other, b(triggers)) as i32 }
+
+// traces
+
+pub unsafe fn PhysicsTrace_Trace(request: usize) -> S_PhysicsTrace_Result {
+    let r = unsafe { core::ptr::read_unaligned(request as *const phys::TraceRequest) };
+    phys::trace(&r, false)[0]
+}
+
+static TRACE_RESULTS: Mutex<Vec<(usize, Vec<S_PhysicsTrace_Result>)>> = Mutex::new(Vec::new());
+
+pub unsafe fn PhysicsTrace_TraceAll(request: usize, results: usize) {
+    let r = unsafe { core::ptr::read_unaligned(request as *const phys::TraceRequest) };
+    let hits = phys::trace(&r, true);
+    let mut all = TRACE_RESULTS.lock().unwrap();
+    match all.iter_mut().find(|(p, _)| *p == results) {
+        Some((_, v)) => v.extend(hits),
+        None => all.push((results, hits)),
+    }
+}
+
+fn against(request: usize, target: rapier3d::parry::shape::SharedShape, centre: rapier3d::math::Vector, tx: usize) -> S_PhysicsTrace_Result {
+    let r = unsafe { core::ptr::read_unaligned(request as *const phys::TraceRequest) };
+    let at = unsafe { phys::read_pose(tx) } * rapier3d::math::Pose::from_translation(centre);
+    phys::trace_against(&r, target, at)
+}
+
+pub unsafe fn PhysicsTrace_TraceAgainstCapsule(request: usize, capsule: usize, tx: usize) -> S_PhysicsTrace_Result {
+    let c = unsafe { core::ptr::read_unaligned(capsule as *const S_Capsule) };
+    let shape = rapier3d::parry::shape::SharedShape::capsule(phys::vec(c.f_CenterA), phys::vec(c.f_CenterB), c.f_Radius.max(0.0));
+    against(request, shape, rapier3d::math::Vector::ZERO, tx)
+}
+pub unsafe fn PhysicsTrace_TraceAgainstBBox(request: usize, bbox: usize, tx: usize) -> S_PhysicsTrace_Result {
+    let b = unsafe { core::ptr::read_unaligned(bbox as *const S_BBox) };
+    let (mins, maxs) = (phys::vec(b.f_Mins), phys::vec(b.f_Maxs));
+    let half = ((maxs - mins) * 0.5).abs().max(rapier3d::math::Vector::splat(1e-3));
+    against(request, rapier3d::parry::shape::SharedShape::cuboid(half.x, half.y, half.z), (mins + maxs) * 0.5, tx)
+}
+pub unsafe fn PhysicsTrace_TraceAgainstSphere(request: usize, sphere: usize, tx: usize) -> S_PhysicsTrace_Result {
+    let s = unsafe { core::ptr::read_unaligned(sphere as *const S_Sandbox_Sphere) };
+    against(request, rapier3d::parry::shape::SharedShape::ball(s.f_Radius.max(0.0)), phys::vec(s.f_Center), tx)
+}
+
+// CUtlVector<PhysicsTrace.Result>, as TraceAll fills it
+
+pub unsafe fn CtlVctrPhyscsTrc_Result_Create(_grow: i32, _capacity: i32) -> usize {
+    let p = crate::handles::object();
+    TRACE_RESULTS.lock().unwrap().push((p, Vec::new()));
+    p
+}
+pub unsafe fn CtlVctrPhyscsTrc_Result_DeleteThis(v: usize) { TRACE_RESULTS.lock().unwrap().retain(|(p, _)| *p != v) }
+pub unsafe fn CtlVctrPhyscsTrc_Result_Count(v: usize) -> i32 {
+    TRACE_RESULTS.lock().unwrap().iter().find(|(p, _)| *p == v).map(|(_, r)| r.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CtlVctrPhyscsTrc_Result_Element(v: usize, i: i32) -> S_PhysicsTrace_Result {
+    let all = TRACE_RESULTS.lock().unwrap();
+    match all.iter().find(|(p, _)| *p == v).and_then(|(_, r)| r.get(i as usize)) {
+        Some(r) => *r,
+        None => unsafe { core::mem::zeroed() },
+    }
+}
+pub unsafe fn CtlVctrPhyscsTrc_Result_RemoveAll(v: usize) {
+    if let Some((_, r)) = TRACE_RESULTS.lock().unwrap().iter_mut().find(|(p, _)| *p == v) { r.clear(); }
+}
+
+// CUtlVector<Vector> and CUtlVector<uint32>: managed's buffers that native
+// fills (a shape's triangles) or reads
+
+static VECTORS: Mutex<Vec<(usize, Vec<S_Vector3>)>> = Mutex::new(Vec::new());
+static INDICES: Mutex<Vec<(usize, Vec<u32>)>> = Mutex::new(Vec::new());
+
+fn vectors_set(v: usize, to: Vec<rapier3d::math::Vector>) {
+    let to: Vec<S_Vector3> = to.into_iter().map(phys::v3).collect();
+    let mut all = VECTORS.lock().unwrap();
+    match all.iter_mut().find(|(p, _)| *p == v) {
+        Some((_, x)) => *x = to,
+        None => all.push((v, to)),
+    }
+}
+
+fn indices_set(v: usize, to: Vec<u32>) {
+    let mut all = INDICES.lock().unwrap();
+    match all.iter_mut().find(|(p, _)| *p == v) {
+        Some((_, x)) => *x = to,
+        None => all.push((v, to)),
+    }
+}
+
+pub unsafe fn CtlVctrVctr_Create(_grow: i32, _capacity: i32) -> usize {
+    let p = crate::handles::object();
+    VECTORS.lock().unwrap().push((p, Vec::new()));
+    p
+}
+pub unsafe fn CtlVctrVctr_DeleteThis(v: usize) { VECTORS.lock().unwrap().retain(|(p, _)| *p != v) }
+pub unsafe fn CtlVctrVctr_Count(v: usize) -> i32 {
+    VECTORS.lock().unwrap().iter().find(|(p, _)| *p == v).map(|(_, x)| x.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CtlVctrVctr_SetCount(v: usize, n: i32) {
+    if let Some((_, x)) = VECTORS.lock().unwrap().iter_mut().find(|(p, _)| *p == v) {
+        x.resize(n.max(0) as usize, phys::v3(rapier3d::math::Vector::ZERO));
+    }
+}
+pub unsafe fn CtlVctrVctr_Element(v: usize, i: i32) -> S_Vector3 {
+    VECTORS.lock().unwrap().iter().find(|(p, _)| *p == v).and_then(|(_, x)| x.get(i as usize).copied()).unwrap_or(phys::v3(rapier3d::math::Vector::ZERO))
+}
+pub unsafe fn CtlVctrnt32_Create(_grow: i32, _capacity: i32) -> usize {
+    let p = crate::handles::object();
+    INDICES.lock().unwrap().push((p, Vec::new()));
+    p
+}
+pub unsafe fn CtlVctrnt32_DeleteThis(v: usize) { INDICES.lock().unwrap().retain(|(p, _)| *p != v) }
+pub unsafe fn CtlVctrnt32_Count(v: usize) -> i32 {
+    INDICES.lock().unwrap().iter().find(|(p, _)| *p == v).map(|(_, x)| x.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CtlVctrnt32_SetCount(v: usize, n: i32) {
+    if let Some((_, x)) = INDICES.lock().unwrap().iter_mut().find(|(p, _)| *p == v) { x.resize(n.max(0) as usize, 0); }
+}
+pub unsafe fn CtlVctrnt32_Element(v: usize, i: i32) -> u32 {
+    INDICES.lock().unwrap().iter().find(|(p, _)| *p == v).and_then(|(_, x)| x.get(i as usize).copied()).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     //! The slots as managed calls them: a dedicated server logs on, listens,
@@ -550,7 +1028,144 @@ mod tests {
         m[M_SandboxNetwork_SteamNetwork_OnSocketDisconnection] = on_socket_disconnection as extern "C" fn(Socket, Conn) as usize;
         m[M_SandboxNetwork_SteamNetwork_OnDisconnection] = on_disconnection as extern "C" fn(Conn, i32, *const core::ffi::c_char) as usize;
         m[M_Steamworks_Dispatch_OnClientCallback] = on_client_callback as extern "C" fn(i32, *const u8, i32, i32) as usize;
+        m[M_Sandbox_HandleIndex_RegisterHandle] = register_handle as extern "C" fn(usize, u32) -> i32 as usize;
+        m[M_Sandbox_HandleIndex_FreeHandle] = free_handle as extern "C" fn(i32) as usize;
+        m[M_SandboxPhysics_PhysicsEngine_OnActive] = on_active as extern "C" fn(i32, S_Transform, S_Vector3, S_Vector3, i32, i32) as usize;
         let _ = crate::MANAGED.set(m);
+    }
+
+    // managed's HandleIndex, and what PhysicsEngine.OnActive heard
+
+    static HANDLES: Mutex<Vec<(usize, u32, i32)>> = Mutex::new(Vec::new());
+    static FREED: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+    static ACTIVE: Mutex<Vec<(i32, f32, bool)>> = Mutex::new(Vec::new());
+    static TOUCHES: Mutex<Vec<(i32, i32, i32)>> = Mutex::new(Vec::new());
+
+    extern "C" fn register_handle(ptr: usize, ty: u32) -> i32 {
+        let mut h = HANDLES.lock().unwrap();
+        let n = h.len() as i32 + 2;
+        h.push((ptr, ty, n));
+        n
+    }
+    extern "C" fn free_handle(h: i32) { FREED.lock().unwrap().push(h) }
+    extern "C" fn on_active(h: i32, t: S_Transform, _v: S_Vector3, _w: S_Vector3, asleep: i32, _out: i32) {
+        ACTIVE.lock().unwrap().push((h, t.f_Position.f__vec.f_Z, asleep != 0));
+    }
+    extern "C" fn on_intersections(e: *const phys::Intersection, n: i32) {
+        let e = unsafe { core::slice::from_raw_parts(e, n as usize) };
+        TOUCHES.lock().unwrap().extend(e.iter().map(|e| (e.reason, e.left.shape_handle, e.right.shape_handle)));
+    }
+    static IGNORE: AtomicI32 = AtomicI32::new(0);
+    extern "C" fn trace_filter(shape: i32) -> u8 { (shape != IGNORE.load(Ordering::Relaxed)) as u8 }
+
+    fn ptr_of(h: i32) -> usize {
+        HANDLES.lock().unwrap().iter().find(|x| x.2 == h).map(|x| x.0).unwrap()
+    }
+
+    #[test]
+    fn a_ball_dropped_through_the_slots() {
+        managed();
+        unsafe {
+            // Scene.PhysicsWorld: a world, its gravity, its rules
+            let world = ptr_of(g_pPhysicsSystem_CreateWorld());
+            let g = phys::v3(rapier3d::math::Vector::new(0.0, 0.0, -850.0));
+            IPhysicsWorld_SetGravity(world, &g as *const S_Vector3 as usize);
+            assert_eq!(phys::vec(IPhysicsWorld_GetGravity(world)).z, -850.0);
+            let rules = CString::new(r#"{"Defaults":{"solid":"Collide"},"Pairs":[]}"#).unwrap();
+            IPhysicsWorld_SetCollisionRulesFromJson(world, rules.as_ptr() as usize);
+
+            // a BoxCollider on a static object: the floor
+            let floor = IPhysicsWorld_AddBody_1(world, &phys::BodySettings::default() as *const _ as usize);
+            let at = phys::v3(rapier3d::math::Vector::ZERO);
+            let turn = phys::rot(rapier3d::math::Rotation::IDENTITY);
+            let half = phys::v3(rapier3d::math::Vector::new(256.0, 256.0, 8.0));
+            let mut solid = phys::ShapeSettings { flags: 8 | 16 | 32, ..Default::default() };
+            solid.tags[0] = crate::handles::murmur2("solid");
+            let floor_shape = IPhysicsBody_AddBoxShape(ptr_of(floor), &at as *const _ as usize, &turn as *const _ as usize, &half as *const _ as usize, &solid as *const _ as usize);
+            assert!(floor_shape > 0);
+            assert_eq!(IPhysicsShape_GetType(ptr_of(floor_shape)), phys::SHAPE_HULL);
+
+            // a Rigidbody with a SphereCollider, 100 above it
+            let mut s = phys::BodySettings { body_type: phys::DYNAMIC as i32, ..Default::default() };
+            s.position = phys::v3(rapier3d::math::Vector::new(0.0, 0.0, 100.0));
+            let ball = IPhysicsWorld_AddBody_1(world, &s as *const _ as usize);
+            let b = ptr_of(ball);
+            assert_eq!(IPhysicsBody_GetType(b), phys::DYNAMIC);
+            let ball_shape = IPhysicsBody_AddSphereShape(b, &at as *const _ as usize, 6.0, &solid as *const _ as usize);
+            assert_eq!(IPhysicsBody_GetShapeCount(b), 1);
+            assert_eq!(IPhysicsBody_GetShape(b, 0), ball_shape);
+            assert!(IPhysicsBody_GetMass(b) > 0.0);
+            IPhysicsBody_SetMass(b, 10.0);
+            assert_eq!(IPhysicsBody_GetMass(b), 10.0);
+            assert_eq!(phys::vec(IPhysicsBody_GetPosition(b)).z, 100.0);
+
+            // ScenePhysicsSystem: steps, then the intersections
+            for _ in 0..240 {
+                IPhysicsWorld_StepSimulation(world, 1.0 / 60.0, 2);
+                IPhysicsWorld_ProcessIntersections(world, on_intersections as extern "C" fn(*const phys::Intersection, i32) as usize);
+            }
+            let z = phys::vec(IPhysicsBody_GetTransform(b).f_Position).z;
+            assert!((z - 14.0).abs() < 0.5, "at rest on the floor (8) by its radius (6): {z}");
+            let heard: Vec<(i32, f32, bool)> = ACTIVE.lock().unwrap().iter().filter(|a| a.0 == ball).copied().collect();
+            assert!(heard.len() > 20, "OnActive for the falling ball");
+            assert!(heard.first().unwrap().1 < 100.0 && (heard.last().unwrap().1 - 14.0).abs() < 0.5);
+            assert!(heard.iter().any(|a| a.2), "and that it fell asleep");
+            assert!(!ACTIVE.lock().unwrap().iter().any(|a| a.0 == floor), "never the static floor");
+            let touches = TOUCHES.lock().unwrap().clone();
+            assert!(touches.iter().any(|&(r, a, c)| r == phys::TOUCH_BEGIN && [a, c].contains(&ball_shape) && [a, c].contains(&floor_shape)), "{touches:?}");
+
+            // a trace down from above hits the ball, then (filtered past it) the floor
+            let mut r = phys::TraceRequest {
+                world,
+                body: 0,
+                start: phys::v3(rapier3d::math::Vector::new(0.0, 0.0, 200.0)),
+                end: phys::v3(rapier3d::math::Vector::new(0.0, 0.0, -200.0)),
+                tag_require: [0; 8],
+                tag_any: [0; 8],
+                tag_exclude: [0; 8],
+                filter: 0,
+                trigger_filter: 0,
+                object_set_mask: 0,
+                use_hit_position: 0,
+                shape: phys::TraceShape { kind: 0, rotation: turn, mins: at, maxs: at, radius: [0.0; 2] },
+            };
+            let hit = PhysicsTrace_Trace(&r as *const _ as usize);
+            assert_eq!((hit.f_PhysicsBodyHandle, hit.f_PhysicsShapeHandle), (ball, ball_shape));
+            assert!((phys::vec(hit.f_HitPos).z - 20.0).abs() < 0.5);
+            assert_eq!(hit.f_Tags[0], crate::handles::murmur2("solid"));
+            IGNORE.store(ball_shape, Ordering::Relaxed);
+            r.filter = trace_filter as extern "C" fn(i32) -> u8 as usize;
+            let hit = PhysicsTrace_Trace(&r as *const _ as usize);
+            assert_eq!(hit.f_PhysicsBodyHandle, floor);
+            r.filter = 0;
+            let all = CtlVctrPhyscsTrc_Result_Create(32, 32);
+            PhysicsTrace_TraceAll(&r as *const _ as usize, all);
+            assert_eq!(CtlVctrPhyscsTrc_Result_Count(all), 2);
+            assert_eq!(CtlVctrPhyscsTrc_Result_Element(all, 1).f_PhysicsShapeHandle, floor_shape);
+
+            // FindInPhysics: a sphere around the ball finds it (and the floor it rests on)
+            let q = CQueryResult_Create();
+            let centre = phys::v3(rapier3d::math::Vector::new(0.0, 0.0, 14.0));
+            IPhysicsWorld_Query(world, q, &centre as *const _ as usize, 8.0, 7);
+            let found: Vec<i32> = (0..CQueryResult_Count(q)).map(|i| CQueryResult_Element(q, i)).collect();
+            assert!(found.contains(&ball_shape) && found.contains(&floor_shape), "{found:?}");
+            CQueryResult_RemoveAll(q);
+            IPhysicsWorld_Query(world, q, &centre as *const _ as usize, 8.0, 7 & !1);
+            assert_eq!((0..CQueryResult_Count(q)).map(|i| CQueryResult_Element(q, i)).collect::<Vec<_>>(), vec![ball_shape]);
+
+            // an impulse up wakes it and sends it flying
+            let up = phys::v3(rapier3d::math::Vector::new(0.0, 0.0, 5000.0));
+            IPhysicsBody_ApplyLinearImpulse(b, &up as *const _ as usize);
+            assert_eq!(IPhysicsBody_IsSleeping(b), 0);
+            IPhysicsWorld_StepSimulation(world, 1.0 / 60.0, 1);
+            assert!(phys::vec(IPhysicsBody_GetLinearVelocity(b)).z > 400.0);
+
+            // Rigidbody removed: the body and its shape go, and managed lets go of both
+            IPhysicsWorld_RemoveBody(world, b);
+            let freed = FREED.lock().unwrap().clone();
+            assert!(freed.contains(&ball) && freed.contains(&ball_shape), "{freed:?}");
+            assert_eq!(PhysicsTrace_Trace(&r as *const _ as usize).f_PhysicsBodyHandle, floor);
+        }
     }
 
     /// The engine loop, until `done` sees what it waits for.
