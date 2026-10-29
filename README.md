@@ -58,8 +58,8 @@ a handle calls managed's `HandleIndex.RegisterHandle(pointer, type)` with
 StringToken's type token (`engine2/src/handles.rs`), so the physics world
 and the colliders now exist. Casts between classes return the same object.
 
-The way in for players is written. A dedicated server logs on to Steam before it opens
-its sockets; here logging on succeeds without Steam
+The way in for players is written. A dedicated server logs on to Steam
+before it opens its sockets; here logging on succeeds without Steam
 (`ISteamGameServer_LogOn…`, answered with the `SteamServersConnected`
 callback). The server then listens with Facepunch's own networking code
 over our transport (`engine2/src/net.rs`): the 29 `Glue.Networking` slots,
