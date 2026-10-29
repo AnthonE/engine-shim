@@ -18,6 +18,13 @@ public sealed class ShimWatch : Component
 
 	protected override void OnFixedUpdate()
 	{
+		// the arms on their animation graph: each hand's furthest from where it rested
+		if ( _graphRest.HasValue && _target.IsValid() && _target.TryGetBoneTransform( "hand_R", out var r ) && _target.TryGetBoneTransform( "hand_L", out var l ) )
+		{
+			var (dr, dl) = ((r.Position - _graphRest.Value.r).Length, (l.Position - _graphRest.Value.l).Length);
+			_reach = (dr > _reach.r ? dr : _reach.r, dl > _reach.l ? dl : _reach.l);
+		}
+
 		// the step after the blast: how fast each neighbour goes, against what
 		// RadiusDamage's force (1e10 / (d² + 1), for one step) predicts
 		if ( _blew )
@@ -131,6 +138,8 @@ public sealed class ShimWatch : Component
 	const string TargetModel = "models/first_person/v_first_person_arms_human.vmdl";
 	SkinnedModelRenderer _target;
 	Vector3 _rest;
+	(Vector3 r, Vector3 l)? _graphRest;
+	(float r, float l) _reach;
 
 	void Shoot()
 	{
@@ -168,6 +177,24 @@ public sealed class ShimWatch : Component
 			// where the hand rested: its hitbox has gone with it
 			var tr = Scene.Trace.Ray( _rest + Vector3.Forward * 200, _rest - Vector3.Forward * 50 ).UseHitboxes().Run();
 			Log.Info( $"shimwatch punch at {_target.Sequence.TimeNormalized:0.00}: hand_R {(now.Position - _rest).Length:0.0} from rest | where it rested: {(tr.Hit ? $"hit {tr.Hitbox?.Bone?.Name}" : "missed")}" );
+		}
+
+		// on its own animation graph: the weapon's speeds set, then an attack every other second
+		if ( _ticks == 40 && _target.IsValid() )
+		{
+			_target.UseAnimGraph = true;
+			foreach ( var speed in new[] { "speed_deploy", "speed_reload", "speed_ironsights" } ) _target.Set( speed, 1.0f );
+			_target.Set( "b_grounded", true );
+			var g = _target.SceneModel?.AnimationGraph;
+			Log.Info( $"shimwatch graph: {g?.Name} {g?.ParamCount} parameters" );
+		}
+		if ( _ticks == 42 && _target.IsValid() && _target.TryGetBoneTransform( "hand_R", out var hr ) && _target.TryGetBoneTransform( "hand_L", out var hl ) )
+			_graphRest = (hr.Position, hl.Position);
+		if ( _ticks is >= 43 and <= 52 && _graphRest.HasValue )
+		{
+			Log.Info( $"shimwatch graph {_ticks}: hands out right {_reach.r:0.0} left {_reach.l:0.0}{(_ticks % 2 == 1 ? ", attacking" : "")}" );
+			_reach = (0, 0);
+			if ( _ticks % 2 == 1 ) _target.Set( "b_attack", true );
 		}
 
 		if ( _ticks < 5 || _ticks > 17 || !_target.IsValid() ) return;

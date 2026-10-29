@@ -13,6 +13,7 @@ mod elo;
 mod handles;
 mod impls;
 mod animation;
+mod animgraph;
 mod assets;
 mod fs;
 mod models;

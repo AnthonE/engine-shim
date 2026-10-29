@@ -1582,7 +1582,7 @@ use crate::animation::{self, Xf};
 use crate::assets::kv3::Value;
 use crate::assets::model::{HitBox, HitBoxSet, ModelFile};
 use crate::models::Piece;
-use crate::slots::S_Color32;
+use crate::slots::{S_Color32, S_NativeEngine_AnimVariant};
 
 fn file(model: usize) -> Option<&'static ModelFile> { models::file(model) }
 
@@ -1638,7 +1638,8 @@ pub unsafe fn EngineGlue_KeyValues3ToJson(kv: usize) -> usize {
     crate::assets::kv3text::json(unsafe { &*(kv as *const Value) }, &mut s);
     returned(s)
 }
-pub unsafe fn CModel_GetAnimationGraph(_model: usize) -> usize { 0 }
+/// The graph a model names in its key values (`anim_graph_resource`).
+pub unsafe fn CModel_GetAnimationGraph(model: usize) -> usize { file(model).map(crate::animgraph::of_model).unwrap_or(0) }
 pub unsafe fn CModel_MeshTrace(_model: usize, _input: usize, _output: usize) -> i32 { 0 }
 
 // bones
@@ -1959,7 +1960,60 @@ pub unsafe fn CScnnmtblbjct_SetBindPose(obj: usize) { animation::set_bind_pose(o
 pub unsafe fn CScnnmtblbjct_CalculateWorldSpaceBones(obj: usize) { animation::calculate(obj) }
 pub unsafe fn CScnnmtblbjct_FinishUpdate(_obj: usize) {}
 pub unsafe fn CScnnmtblbjct_MergeFrom(obj: usize, from: usize) { animation::merge_from(obj, from) }
-pub unsafe fn CScnnmtblbjct_GetAnimGraph(_obj: usize) -> usize { 0 }
+pub unsafe fn CScnnmtblbjct_GetAnimGraph(obj: usize) -> usize { animation::graph_of(obj) }
+pub unsafe fn CScnnmtblbjct_InitAnimGraph(obj: usize, callback: usize) { animation::init_graph(obj, callback) }
+pub unsafe fn CScnnmtblbjct_SetAnimGraph(obj: usize, name: usize) { animation::set_graph(obj, crate::animgraph::load(&unsafe { read(name) })) }
+pub unsafe fn CScnnmtblbjct_SetAnimGraph_1(obj: usize, graph: usize) {
+    animation::set_graph(obj, if crate::animgraph::graph(graph).is_some() { graph } else { 0 })
+}
+pub unsafe fn CScnnmtblbjct_ResetGraphParameters(obj: usize) { animation::reset_parameters(obj) }
+pub unsafe fn CScnnmtblbjct_GetAnimParameter(obj: usize, name: usize) -> usize { animation::parameter_named(obj, &unsafe { read(name) }) }
+pub unsafe fn CScnnmtblbjct_GetAnimParameter_1(obj: usize, i: i32) -> usize { usize::try_from(i).map(|i| animation::parameter(obj, i)).unwrap_or(0) }
+
+// a graph's parameters on an object (IAnimParameterInstance)
+
+pub unsafe fn nmPrmtrnstnc_GetName(p: usize) -> usize { animation::with_parameter(p, |param, _| param.name.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize) }
+pub unsafe fn nmPrmtrnstnc_GetValue(p: usize) -> S_NativeEngine_AnimVariant {
+    animation::with_parameter(p, |_, v| v.ffi()).unwrap_or(unsafe { core::mem::zeroed() })
+}
+pub unsafe fn nmPrmtrnstnc_GetParameterType(p: usize) -> i64 { animation::with_parameter(p, |param, _| param.kind as i64).unwrap_or(0) }
+pub unsafe fn nmPrmtrnstnc_IsAutoReset(p: usize) -> i32 { animation::with_parameter(p, |param, _| param.auto_reset as i32).unwrap_or(0) }
+pub unsafe fn nmPrmtrnstnc_SetValue(p: usize, v: usize) {
+    if v == 0 { return; }
+    let value = crate::animgraph::Variant::from_ffi(&unsafe { core::ptr::read_unaligned(v as *const S_NativeEngine_AnimVariant) });
+    animation::with_parameter(p, |param, slot| if value.kind == param.kind { *slot = value });
+}
+
+// animation graphs (animgraph.rs): their parameters, and each one's kind,
+// default, range and options (IAnimationGraph, its IAnimParameterList is
+// itself, IAnimParameter)
+
+use crate::animgraph;
+
+pub unsafe fn Glue_Resources_GetAnimationGraph(name: usize, _guid: S_System_Guid) -> usize { animgraph::load(&unsafe { read(name) }) }
+pub unsafe fn IAnimationGraph_IsError(g: usize) -> i32 { animgraph::graph(g).is_none() as i32 }
+pub unsafe fn IAnimationGraph_IsStrongHandleLoaded(g: usize) -> i32 { animgraph::graph(g).is_some() as i32 }
+pub unsafe fn IAnimationGraph_CopyStrongHandle(g: usize) -> usize { g }
+pub unsafe fn IAnimationGraph_GetBindingPtr(g: usize) -> usize { g }
+pub unsafe fn IAnimationGraph_GetResourceName(g: usize) -> usize { animgraph::graph(g).map(|g| g.name.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize) }
+pub unsafe fn IAnimationGraph_GetParameterList(g: usize) -> usize { if animgraph::graph(g).is_some() { g } else { 0 } }
+pub unsafe fn nmPrmtrLst_Count(g: usize) -> i32 { animgraph::graph(g).map(|g| g.params.len() as i32).unwrap_or(0) }
+pub unsafe fn nmPrmtrLst_GetParameter(g: usize, i: i32) -> usize {
+    animgraph::graph(g).and_then(|g| g.params.get(usize::try_from(i).ok()?)).map(|p| p as *const _ as usize).unwrap_or(0)
+}
+pub unsafe fn nmPrmtrLst_GetParameter_1(g: usize, name: usize) -> usize {
+    let name = unsafe { read(name) };
+    animgraph::graph(g).and_then(|g| g.params.iter().find(|p| p.name.to_bytes().eq_ignore_ascii_case(name.as_bytes()))).map(|p| p as *const _ as usize).unwrap_or(0)
+}
+pub unsafe fn IAnimParameter_GetName(p: usize) -> usize { animgraph::param_at(p).map(|p| p.name.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize) }
+pub unsafe fn IAnimParameter_GetParameterType(p: usize) -> i64 { animgraph::param_at(p).map(|p| p.kind as i64).unwrap_or(0) }
+pub unsafe fn IAnimParameter_GetDefaultValue(p: usize) -> S_NativeEngine_AnimVariant { animgraph::param_at(p).map(|p| p.default.ffi()).unwrap_or(unsafe { core::mem::zeroed() }) }
+pub unsafe fn IAnimParameter_GetMinValue(p: usize) -> S_NativeEngine_AnimVariant { animgraph::param_at(p).map(|p| p.min.ffi()).unwrap_or(unsafe { core::mem::zeroed() }) }
+pub unsafe fn IAnimParameter_GetMaxValue(p: usize) -> S_NativeEngine_AnimVariant { animgraph::param_at(p).map(|p| p.max.ffi()).unwrap_or(unsafe { core::mem::zeroed() }) }
+pub unsafe fn IAnimParameter_GetNumOptionNames(p: usize) -> i32 { animgraph::param_at(p).map(|p| p.options.len() as i32).unwrap_or(0) }
+pub unsafe fn IAnimParameter_GetOptionName(p: usize, i: i32) -> usize {
+    animgraph::param_at(p).and_then(|p| p.options.get(usize::try_from(i).ok()?)).map(|o| o.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize)
+}
 
 // sequences played straight (no animation graph runs here)
 

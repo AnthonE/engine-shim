@@ -413,8 +413,9 @@ another doesn't move.
 
 And a model in the scene has a pose (`engine2/src/animation.rs`, the
 `CSceneAnimatableObject` slots `SceneModel` drives): its bones in parent
-space, as the sequence playing leaves them (a SkinnedModelRenderer's
-`Sequence`, played straight, looping or not, at its rate) or in bind pose,
+space, as its animation graph leaves them (below), or the sequence
+playing (a SkinnedModelRenderer's `Sequence`, played straight, looping or
+not, at its rate, when it doesn't use its graph), or in bind pose,
 with the renderer's procedural bones over them; carried to the model's
 space, where a ragdoll's physics bones win; and placed in the world by the
 object's transform. Bone merge too (clothing takes its body's pose). A
@@ -430,9 +431,30 @@ zoo with a `SkinnedModelRenderer` and `ModelHitboxes`. A trace at a bone
 hits that bone's hitbox (`hit hand_R on shimtarget ... after 198.9`) and
 one 300 above it misses; turned a quarter and moved, the hitboxes follow
 (the same shot at the left arm now hits the right one, in front of it);
-playing `Punching_Right_Hit_01` (0.83s, looping), the hand swings 24 to 30
-from where it rested, a shot where it rested misses, and a shot where it
-is hits `hand_R`. A player joins and stands as before.
+playing `Punching_Right_Hit_01` (0.83s, looping), the hand swings out
+from where it rested (9 from its graph's pose, 24 to 30 from its bind
+pose), and a shot where it is hits `hand_R`. A player joins and stands as
+before.
+
+**Animation graphs** (`engine2/src/animgraph.rs`). A model's graph (the
+`.vanmgrph` its key values name, or one managed sets) is read from its
+KV3, the editor's own graph: its parameters, which managed lists and sets
+(`AnimVariant`s, a trigger resetting itself once seen), and its nodes,
+run each step from the root down, each once however many take it:
+sequences and single frames, 1D and 2D blends with their inputs damped,
+adds and subtracts (the additive layers a `_delta` sequence feeds), bone
+masks (the model's weight lists, a bone not named taking its parent's),
+weighted random choices, selectors by bool, enum or int, state machines
+(states, transitions on parameter, time, finished, cycle and tag
+conditions, blended over their duration, resetting what they say), speed
+scale and cycle control. IK, look-at and foot locks pass their input
+through. Measured on the arms' own punching graph (`cargo test`, from the
+download cache): set `b_attack` and it resets itself, a punch the graph
+chooses plays (`Punching_Left_Miss_02`, `Punching_Right_Miss_01`, ...),
+the hand it's for swings out furthest, and both come back to rest. Under
+the real server (the watcher, from tick 40): managed finds the graph (73
+parameters), sets a weapon's speeds and `b_attack` through the shim, and
+each attack swings a hand 9 to 11 out, left or right as the graph picks.
 
 **Maps** (`engine2/src/world.rs`, `assets/vpk.rs`, `assets/entities.rs`).
 A map is a pak (`maps/flatgrass.vpk`, Valve's VPK, read here) of its
@@ -468,10 +490,11 @@ SBOX=../sbox-public sh spike.sh 300 +shimgame $PWD/../sandbox/sandbox.sbproj +sh
 
 What the game's components still can't do:
 
-- **Animation graphs.** A model's `.vanmgrph` isn't run, so a renderer
-  that uses one (the default, and a player's) stays in its bind pose
-  under its procedural bones; only sequences play. Nor do animation
-  events fire, or sequences blend into one another.
+- **Animation graphs' rest.** IK, look-at and foot locks aren't solved
+  (their input passes through), root motion isn't taken out, and neither
+  animation events nor tag events fire for managed. Nobody has compared
+  a pose with Facepunch's engine: a graph runs as its nodes are read
+  here.
 - **Runtime models' rest.** A model built at runtime (`ModelBuilder`)
   keeps its collision, not its bones, hitboxes and meshes.
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
@@ -556,6 +579,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/physics.rs` | physics on Rapier: worlds, bodies, shapes, the step and what touched, collision rules, traces and queries |
 | `engine2/src/surfaces.rs` | surfaces: what shapes are made of, by index and by name, and what each does to them |
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
+| `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
 | `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders (case blind, as managed names them), the game's own, mounted paks |
@@ -578,14 +602,14 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 ## Next
 
 1. **A server that runs a game.** Facepunch's Sandbox hosts on its own map
-   and is joined (above). What a player's model still lacks is its
-   animation graph.
+   and is joined (above), and models run their animation graphs. What's
+   left is fidelity: IK, root motion, animation events.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
    the shard list and the relay are ours now, and a player joins (above).
    Next: lobbies. A relay run for others wants a price, as the stream relay's
    credits do (scry-forge `meter/relay.py`).
 3. **Assets.** Models (collision, bones, hitboxes, sequences, key
-   values), surfaces and maps are read (above). Next animation graphs.
+   values, animation graphs), surfaces and maps are read (above).
    Materials, textures and shaders only matter to a client.
 4. **A client.** Rendering: about 670 scene and render slots onto a renderer
    of our own choosing (Bevy or Godot; see below), then sound and input.

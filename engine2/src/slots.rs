@@ -2293,13 +2293,13 @@ unsafe extern "C" fn s910(_a0: usize, _a1: usize) { hit(910); unsafe { crate::im
 unsafe extern "C" fn s911(_a0: usize) { hit(911); unsafe { crate::impls::CScnnmtblbjct_SetBindPose(_a0) } }
 unsafe extern "C" fn s912(_a0: usize) { hit(912); unsafe { crate::impls::CScnnmtblbjct_CalculateWorldSpaceBones(_a0) } }
 unsafe extern "C" fn s913(_a0: usize) { hit(913); unsafe { crate::impls::CScnnmtblbjct_FinishUpdate(_a0) } }
-unsafe extern "C" fn s914(_a0: usize) { hit(914);  }
+unsafe extern "C" fn s914(_a0: usize) { hit(914); unsafe { crate::impls::CScnnmtblbjct_ResetGraphParameters(_a0) } }
 unsafe extern "C" fn s915(_a0: usize, _a1: i32) -> S_Transform { hit(915); unsafe { crate::impls::CScnnmtblbjct_GetParentSpaceBone(_a0, _a1) } }
 unsafe extern "C" fn s916(_a0: usize, _a1: i32, _a2: usize) { hit(916); unsafe { crate::impls::CScnnmtblbjct_GetParentSpaceBones(_a0, _a1, _a2) } }
 unsafe extern "C" fn s917(_a0: usize, _a1: i32, _a2: usize) { hit(917); unsafe { crate::impls::CScnnmtblbjct_SetParentSpaceBone(_a0, _a1, _a2) } }
-unsafe extern "C" fn s918(_a0: usize, _a1: usize) { hit(918);  }
-unsafe extern "C" fn s919(_a0: usize, _a1: usize) { hit(919);  }
-unsafe extern "C" fn s920(_a0: usize, _a1: usize) { hit(920);  }
+unsafe extern "C" fn s918(_a0: usize, _a1: usize) { hit(918); unsafe { crate::impls::CScnnmtblbjct_InitAnimGraph(_a0, _a1) } }
+unsafe extern "C" fn s919(_a0: usize, _a1: usize) { hit(919); unsafe { crate::impls::CScnnmtblbjct_SetAnimGraph(_a0, _a1) } }
+unsafe extern "C" fn s920(_a0: usize, _a1: usize) { hit(920); unsafe { crate::impls::CScnnmtblbjct_SetAnimGraph_1(_a0, _a1) } }
 unsafe extern "C" fn s921(_a0: usize) -> usize { hit(921); unsafe { crate::impls::CScnnmtblbjct_GetAnimGraph(_a0) } }
 unsafe extern "C" fn s922(_a0: usize, _a1: S_Sandbox_StringToken, _a2: f32, _a3: f32) { hit(922);  }
 unsafe extern "C" fn s923(_a0: usize, _a1: i32, _a2: f32, _a3: f32) { hit(923);  }
@@ -2335,8 +2335,8 @@ unsafe extern "C" fn s952(_a0: usize) { hit(952); unsafe { crate::impls::CScnnmt
 unsafe extern "C" fn s953(_a0: usize, _a1: u16, _a2: usize) { hit(953); unsafe { crate::impls::CScnnmtblbjct_SetPhysicsBone(_a0, _a1, _a2) } }
 unsafe extern "C" fn s954(_a0: usize) -> S_Transform { hit(954); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s955(_a0: usize) -> i32 { hit(955); unsafe { crate::impls::CScnnmtblbjct_HasPhysicsBones(_a0) } }
-unsafe extern "C" fn s956(_a0: usize, _a1: usize) -> usize { hit(956); crate::trace::object(956) }
-unsafe extern "C" fn s957(_a0: usize, _a1: i32) -> usize { hit(957); crate::trace::object(957) }
+unsafe extern "C" fn s956(_a0: usize, _a1: usize) -> usize { hit(956); unsafe { crate::impls::CScnnmtblbjct_GetAnimParameter(_a0, _a1) } }
+unsafe extern "C" fn s957(_a0: usize, _a1: i32) -> usize { hit(957); unsafe { crate::impls::CScnnmtblbjct_GetAnimParameter_1(_a0, _a1) } }
 unsafe extern "C" fn s958(_a0: usize, _a1: i64, _a2: i64) { hit(958);  }
 unsafe extern "C" fn s959(_a0: usize, _a1: i64) { hit(959); crate::state::set(_a0, 31, _a1) }
 unsafe extern "C" fn s960(_a0: usize, _a1: i64) -> i32 { hit(960); unsafe { core::mem::zeroed() } }
@@ -3035,32 +3035,32 @@ unsafe extern "C" fn s1652(_a0: i32, _a1: i32) { hit(1652);  }
 unsafe extern "C" fn s1653(_a0: usize, _a1: S_System_Guid) -> usize { hit(1653); unsafe { crate::impls::Glue_Resources_GetModel(_a0, _a1) } }
 unsafe extern "C" fn s1654(_a0: usize) -> usize { hit(1654); unsafe { crate::impls::Glue_Resources_GetModelResourceName(_a0) } }
 unsafe extern "C" fn s1655(_a0: usize, _a1: S_System_Guid) -> usize { hit(1655); unsafe { crate::impls::Glue_Resources_GetPhysics(_a0, _a1) } }
-unsafe extern "C" fn s1656(_a0: usize, _a1: S_System_Guid) -> usize { hit(1656); crate::trace::object(1656) }
+unsafe extern "C" fn s1656(_a0: usize, _a1: S_System_Guid) -> usize { hit(1656); unsafe { crate::impls::Glue_Resources_GetAnimationGraph(_a0, _a1) } }
 unsafe extern "C" fn s1657(_a0: usize, _a1: S_System_Guid) -> usize { hit(1657); crate::trace::object(1657) }
-unsafe extern "C" fn s1658(_a0: usize) -> usize { hit(1658); crate::trace::object(1658) }
-unsafe extern "C" fn s1659(_a0: usize) -> i64 { hit(1659); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1660(_a0: usize) -> S_NativeEngine_AnimVariant { hit(1660); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1661(_a0: usize) -> S_NativeEngine_AnimVariant { hit(1661); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1662(_a0: usize) -> S_NativeEngine_AnimVariant { hit(1662); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1663(_a0: usize) -> i32 { hit(1663); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1664(_a0: usize, _a1: i32) -> usize { hit(1664); crate::trace::object(1664) }
-unsafe extern "C" fn s1665(_a0: usize) -> usize { hit(1665); crate::trace::object(1665) }
-unsafe extern "C" fn s1666(_a0: usize) -> S_NativeEngine_AnimVariant { hit(1666); crate::state::get::<S_NativeEngine_AnimVariant>(_a0, 152) }
-unsafe extern "C" fn s1667(_a0: usize) -> i64 { hit(1667); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1668(_a0: usize) -> i32 { hit(1668); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1669(_a0: usize, _a1: usize) { hit(1669); unsafe { crate::state::set_from::<S_NativeEngine_AnimVariant>(_a0, 152, _a1) } }
-unsafe extern "C" fn s1670(_a0: usize) -> i32 { hit(1670); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1671(_a0: usize, _a1: i32) -> usize { hit(1671); crate::trace::object(1671) }
-unsafe extern "C" fn s1672(_a0: usize, _a1: usize) -> usize { hit(1672); crate::trace::object(1672) }
+unsafe extern "C" fn s1658(_a0: usize) -> usize { hit(1658); unsafe { crate::impls::IAnimParameter_GetName(_a0) } }
+unsafe extern "C" fn s1659(_a0: usize) -> i64 { hit(1659); unsafe { crate::impls::IAnimParameter_GetParameterType(_a0) } }
+unsafe extern "C" fn s1660(_a0: usize) -> S_NativeEngine_AnimVariant { hit(1660); unsafe { crate::impls::IAnimParameter_GetDefaultValue(_a0) } }
+unsafe extern "C" fn s1661(_a0: usize) -> S_NativeEngine_AnimVariant { hit(1661); unsafe { crate::impls::IAnimParameter_GetMinValue(_a0) } }
+unsafe extern "C" fn s1662(_a0: usize) -> S_NativeEngine_AnimVariant { hit(1662); unsafe { crate::impls::IAnimParameter_GetMaxValue(_a0) } }
+unsafe extern "C" fn s1663(_a0: usize) -> i32 { hit(1663); unsafe { crate::impls::IAnimParameter_GetNumOptionNames(_a0) } }
+unsafe extern "C" fn s1664(_a0: usize, _a1: i32) -> usize { hit(1664); unsafe { crate::impls::IAnimParameter_GetOptionName(_a0, _a1) } }
+unsafe extern "C" fn s1665(_a0: usize) -> usize { hit(1665); unsafe { crate::impls::nmPrmtrnstnc_GetName(_a0) } }
+unsafe extern "C" fn s1666(_a0: usize) -> S_NativeEngine_AnimVariant { hit(1666); unsafe { crate::impls::nmPrmtrnstnc_GetValue(_a0) } }
+unsafe extern "C" fn s1667(_a0: usize) -> i64 { hit(1667); unsafe { crate::impls::nmPrmtrnstnc_GetParameterType(_a0) } }
+unsafe extern "C" fn s1668(_a0: usize) -> i32 { hit(1668); unsafe { crate::impls::nmPrmtrnstnc_IsAutoReset(_a0) } }
+unsafe extern "C" fn s1669(_a0: usize, _a1: usize) { hit(1669); unsafe { crate::impls::nmPrmtrnstnc_SetValue(_a0, _a1) } }
+unsafe extern "C" fn s1670(_a0: usize) -> i32 { hit(1670); unsafe { crate::impls::nmPrmtrLst_Count(_a0) } }
+unsafe extern "C" fn s1671(_a0: usize, _a1: i32) -> usize { hit(1671); unsafe { crate::impls::nmPrmtrLst_GetParameter(_a0, _a1) } }
+unsafe extern "C" fn s1672(_a0: usize, _a1: usize) -> usize { hit(1672); unsafe { crate::impls::nmPrmtrLst_GetParameter_1(_a0, _a1) } }
 unsafe extern "C" fn s1673(_a0: usize) { hit(1673);  }
 unsafe extern "C" fn s1674(_a0: usize) -> i32 { hit(1674); 1 }
-unsafe extern "C" fn s1675(_a0: usize) -> i32 { hit(1675); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1676(_a0: usize) -> i32 { hit(1676); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1677(_a0: usize) -> usize { hit(1677); crate::trace::object(1677) }
-unsafe extern "C" fn s1678(_a0: usize) -> usize { hit(1678); crate::trace::object(1678) }
+unsafe extern "C" fn s1675(_a0: usize) -> i32 { hit(1675); unsafe { crate::impls::IAnimationGraph_IsError(_a0) } }
+unsafe extern "C" fn s1676(_a0: usize) -> i32 { hit(1676); unsafe { crate::impls::IAnimationGraph_IsStrongHandleLoaded(_a0) } }
+unsafe extern "C" fn s1677(_a0: usize) -> usize { hit(1677); unsafe { crate::impls::IAnimationGraph_CopyStrongHandle(_a0) } }
+unsafe extern "C" fn s1678(_a0: usize) -> usize { hit(1678); unsafe { crate::impls::IAnimationGraph_GetBindingPtr(_a0) } }
 unsafe extern "C" fn s1679(_a0: usize) -> S_System_Guid { hit(1679); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1680(_a0: usize) -> usize { hit(1680); crate::trace::object(1680) }
-unsafe extern "C" fn s1681(_a0: usize) -> usize { hit(1681); crate::trace::object(1681) }
+unsafe extern "C" fn s1680(_a0: usize) -> usize { hit(1680); unsafe { crate::impls::IAnimationGraph_GetResourceName(_a0) } }
+unsafe extern "C" fn s1681(_a0: usize) -> usize { hit(1681); unsafe { crate::impls::IAnimationGraph_GetParameterList(_a0) } }
 unsafe extern "C" fn s1682(_a0: usize) -> usize { hit(1682); crate::trace::object(1682) }
 unsafe extern "C" fn s1683(_a0: usize) -> usize { hit(1683); crate::trace::object(1683) }
 unsafe extern "C" fn s1684(_a0: usize) -> i64 { hit(1684); unsafe { core::mem::zeroed() } }

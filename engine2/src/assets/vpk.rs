@@ -75,10 +75,6 @@ impl Vpk {
         Ok(Vpk { path: path.to_path_buf(), data: end as u64, entries })
     }
 
-    pub fn contains(&self, path: &str) -> bool {
-        self.entries.contains_key(&crate::fs::normal(path))
-    }
-
     pub fn len(&self) -> usize {
         self.entries.len()
     }
