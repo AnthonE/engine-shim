@@ -7,7 +7,7 @@
 //! The launcher writes the message with its own clock, so the server does
 //! not rebuild it: it verifies the signature over the bytes as sent, then
 //! reads each field it relies on and checks it against what it knows.
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
 use tiny_keccak::{Hasher, Keccak};
 
 /// A ticket's first line when it carries a proof.
@@ -49,6 +49,11 @@ pub fn hex(b: &[u8]) -> String {
     s
 }
 
+/// A secret key as 64 hex digits (`0x` optional).
+pub fn parse_secret(s: &str) -> Option<SigningKey> {
+    SigningKey::from_slice(&unhex(s)?).ok()
+}
+
 /// `0x` and 40 hex digits, either case.
 pub fn parse_address(s: &str) -> Option<Address> {
     unhex(s.trim())?.try_into().ok()
@@ -58,6 +63,20 @@ pub fn parse_address(s: &str) -> Option<Address> {
 /// so an operator can read one off the other.
 pub fn id_of(a: &Address) -> u64 {
     u64::from_be_bytes(a[..8].try_into().unwrap())
+}
+
+/// `message` signed as `personal_sign` signs it: r‖s‖v, v 27 or 28.
+pub fn sign(sk: &SigningKey, message: &str) -> [u8; 65] {
+    let (sig, rec) = sk.sign_prehash_recoverable(&digest(message.as_bytes())).expect("a 32-byte digest");
+    let mut b = [0u8; 65];
+    b[..64].copy_from_slice(&sig.to_bytes());
+    b[64] = 27 + rec.to_byte();
+    b
+}
+
+/// A key's address.
+pub fn address_of_key(sk: &SigningKey) -> Address {
+    address_of(sk.verifying_key())
 }
 
 /// Who signed `message` (a 65-byte r‖s‖v signature, v 27/28 or 0/1).
@@ -165,10 +184,7 @@ mod tests {
     }
 
     pub fn sign(sk: &SigningKey, message: &str) -> String {
-        let (sig, rec) = sk.sign_prehash_recoverable(&digest(message.as_bytes())).unwrap();
-        let mut b = sig.to_bytes().to_vec();
-        b.push(27 + rec.to_byte());
-        hex(&b)
+        hex(&super::sign(sk, message))
     }
 
     pub fn message(domain: &str, address: &str, nonce: &str, issued: &str) -> String {

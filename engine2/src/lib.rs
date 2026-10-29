@@ -13,6 +13,7 @@ mod elo;
 mod handles;
 mod impls;
 mod net;
+pub mod relay;
 mod siwe;
 mod slots;
 mod steam;

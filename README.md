@@ -121,6 +121,33 @@ curl -s 127.0.0.1:27016/status.json
 (cd engine2 && ENGINE2_PROBE=127.0.0.1:27015 cargo test --release -- --ignored probe --nocapture)
 ```
 
+Players can also reach a server by its identity rather than its address,
+through the relay (`engine2/src/relay.rs`, the `relay` binary): a server
+behind a NAT, or one hiding its address, registers there, and s&box's own
+`ConnectToSteamId` finds it. A server proves its identity with its host
+key, so nobody can register as someone else's server; the relay pipes each
+player's stream to the server untouched, so the handshake, the nonce and
+the sign-in run end to end, and it reads none of it. Measured: the real
+server, registered through the relay with a host key it made, takes the
+probe dialling it by identity, and sends the same first message.
+
+| | |
+| --- | --- |
+| `ENGINE2_RELAY` | `host:port` of a relay. A server registers its identity socket there; a player's `ConnectToSteamId` goes through it |
+| `ENGINE2_HOST_KEY` | a server's key file (64 hex digits, made on first start, 0600): its identity across restarts, proven to the relay |
+| `ENGINE2_RELAY_PORT` | the `relay` binary's port (default 27080, udp); its certificate is a server's (`ENGINE2_TLS_CERT`/`KEY`, or self-signed and pinned) |
+
+```sh
+cargo build --release && ENGINE2_RELAY_PORT=27080 ./target/release/relay &
+ENGINE2_RELAY=127.0.0.1:27080 ENGINE2_HOST_KEY=$PWD/host.key \
+  SBOX=../sbox-public sh spike.sh 90 +shimgame $PWD/../sbox-public/game/samples/sweeper/.sbproj +shimhost
+# its identity is the SteamID "Server started!" prints:
+(cd engine2 && ENGINE2_PROBE=127.0.0.1:27080 ENGINE2_PROBE_ID=<identity> cargo test --release -- --ignored probe --nocapture)
+```
+
+A sign-in through a relay names the relay's address, so a server behind
+one lists the relay's name in `ENGINE2_SIWE_DOMAINS`.
+
 The rest is tested the way managed calls it (`cargo test`): a proof a
 stand-in launcher signed, a player without a copy refused at the door by a
 stand-in origin, a kicked one hearing why.
@@ -194,6 +221,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
+| `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
 | `engine2/src/elo.rs` | the store's side of a server: the shard-list row, `status.json`, copies checked at join and on a sweep |
 | `engine2/src/siwe.rs` | Sign-In With Ethereum, checked: the signer recovered, the message's fields read |
 | `engine2/src/elo_overlay.rs` | the Elo Pros launcher's client, vendored as its SDK asks (elo-pros-launcher `sdk/rust/elo_overlay.rs`) |
@@ -206,12 +234,11 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 1. **A server that runs a game.** The handle protocol, then physics, then
    a real open-source s&box game: its trace is the measured size of "a
    server", the slots one game needs.
-2. **Steam's part.** Connections, a server's logon and the Elo Pros
-   sign-in are ours now (above). Next is our relay behind
-   `ConnectToSteamId` and the identity socket (`CreateSocket`), so a player
-   reaches a server by identity rather than address; the relay carries
-   `net.rs`'s session as it is. Then lobbies. (The server list is the
-   launcher's shard list now, above.)
+2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
+   the shard list and the relay are ours now (above). Next: a client that
+   answers the server's handshake (the server speaks first and waits), then
+   lobbies. A relay run for others wants a price, as the stream relay's
+   credits do (scry-forge `meter/relay.py`).
 3. **Assets.** Games ship compiled Source 2 resources. ValveResourceFormat
    (MIT) reads models, materials, textures and maps. A server needs maps
    and collision first; shaders only matter to a client.

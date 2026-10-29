@@ -160,7 +160,7 @@ pub unsafe fn message_bytes<'a>(m: *mut Message) -> &'a [u8] {
 
 // ---- frames
 
-fn frame(kind: u8, body: &[u8]) -> Vec<u8> {
+pub(crate) fn frame(kind: u8, body: &[u8]) -> Vec<u8> {
     let mut f = Vec::with_capacity(5 + body.len());
     f.extend_from_slice(&(body.len() as u32 + 1).to_le_bytes());
     f.push(kind);
@@ -195,7 +195,7 @@ fn close(reason: i32, text: &str) -> Vec<u8> {
     frame(CLOSE, &b)
 }
 
-async fn read_frame(r: &mut RecvStream) -> Result<(u8, Vec<u8>), String> {
+pub(crate) async fn read_frame(r: &mut RecvStream) -> Result<(u8, Vec<u8>), String> {
     let mut len = [0u8; 4];
     r.read_exact(&mut len).await.map_err(|e| e.to_string())?;
     let len = u32::from_le_bytes(len) as usize;
@@ -208,12 +208,13 @@ async fn read_frame(r: &mut RecvStream) -> Result<(u8, Vec<u8>), String> {
     Ok((kind, body))
 }
 
-fn le_i32(b: &[u8], at: usize) -> i32 { b.get(at..at + 4).map(|s| i32::from_le_bytes(s.try_into().unwrap())).unwrap_or(0) }
+pub(crate) fn le_i32(b: &[u8], at: usize) -> i32 { b.get(at..at + 4).map(|s| i32::from_le_bytes(s.try_into().unwrap())).unwrap_or(0) }
 fn le_u16(b: &[u8], at: usize) -> u16 { b.get(at..at + 2).map(|s| u16::from_le_bytes(s.try_into().unwrap())).unwrap_or(0) }
-fn le_u64(b: &[u8], at: usize) -> u64 { b.get(at..at + 8).map(|s| u64::from_le_bytes(s.try_into().unwrap())).unwrap_or(0) }
+pub(crate) fn le_u32(b: &[u8], at: usize) -> u32 { b.get(at..at + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap())).unwrap_or(0) }
+pub(crate) fn le_u64(b: &[u8], at: usize) -> u64 { b.get(at..at + 8).map(|s| u64::from_le_bytes(s.try_into().unwrap())).unwrap_or(0) }
 
 /// The I/O's runtime: two threads, made on first use.
-fn rt() -> &'static tokio::runtime::Runtime {
+pub(crate) fn rt() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("engine2 net").enable_all().build().expect("net: a runtime")
@@ -230,6 +231,37 @@ enum Out {
     Unreliable(Vec<u8>),
     /// The last frame: then the connection closes.
     Close(Vec<u8>),
+}
+
+/// Where a connection's datagrams go and how it ends: a session of its own,
+/// or a player's share of a relay's session, tagged (relay.rs).
+#[derive(Clone)]
+enum Link {
+    Own(Connection),
+    Relayed { session: Connection, tag: u32 },
+}
+
+impl Link {
+    fn max_datagram(&self) -> Option<usize> {
+        match self {
+            Link::Own(c) => c.max_datagram_size(),
+            Link::Relayed { session, .. } => session.max_datagram_size().map(|m| m.saturating_sub(4)),
+        }
+    }
+    fn send_datagram(&self, d: Vec<u8>) {
+        match self {
+            Link::Own(c) => { let _ = c.send_datagram(d); }
+            Link::Relayed { session, tag } => {
+                let mut t = tag.to_le_bytes().to_vec();
+                t.extend_from_slice(&d);
+                let _ = session.send_datagram(t);
+            }
+        }
+    }
+    /// The end of this connection, not of a relay's session.
+    fn close(&self) {
+        if let Link::Own(c) = self { c.close(0u32.into(), b""); }
+    }
 }
 
 struct Listen {
@@ -306,19 +338,7 @@ impl Net {
     /// A listen socket on `port` (all interfaces, v4 and v6; 0 picks one):
     /// its handle, 0 if the port can't be had.
     pub fn listen_ip(&self, port: u16) -> u32 {
-        // v4 and v6, or v4 alone on a host without v6
-        let bind = |on: IpBindConfig| {
-            let config = ServerConfig::builder()
-                .with_bind_config(on, port)
-                .with_identity(server_identity()?)
-                .keep_alive_interval(Some(KEEP_ALIVE))
-                .max_idle_timeout(Some(IDLE_TIMEOUT))
-                .map_err(|e| e.to_string())?
-                .build();
-            let _rt = rt().enter();
-            Endpoint::server(config).map_err(|e| e.to_string())
-        };
-        let endpoint = bind(IpBindConfig::InAddrAnyDual).or_else(|_| bind(IpBindConfig::InAddrAnyV4));
+        let endpoint = server_endpoint(port);
         let endpoint = match endpoint {
             Ok(e) => e,
             Err(e) => {
@@ -350,11 +370,22 @@ impl Net {
     }
 
     /// A listen socket peers reach by our identity, not an address: it has
-    /// no address of its own; a relay brings it connections.
+    /// no address of its own; a relay brings it connections (`listen_relay`).
     pub fn listen_id(&self, _vport: i32) -> u32 {
         let mut s = self.state.lock().unwrap();
         let id = s.id();
         s.listens.insert(id, Listen { addr: None, stop: None, conns: HashSet::new() });
+        id
+    }
+
+    /// A listen socket reached by our identity through the relay at `relay`:
+    /// registered there, proven with `key` (whose identity must be ours), and
+    /// registered again whenever the relay drops us.
+    pub fn listen_relay(&self, vport: i32, relay: &str, key: k256::ecdsa::SigningKey) -> u32 {
+        let id = self.listen_id(vport);
+        let stop = Arc::new(Notify::new());
+        self.state.lock().unwrap().listens.get_mut(&id).unwrap().stop = Some(stop.clone());
+        rt().spawn(host(self.state.clone(), id, relay.to_string(), vport, self.identity, key, stop));
         id
     }
 
@@ -364,6 +395,7 @@ impl Net {
     }
 
     /// The port a listen socket has (0 if none).
+    #[cfg(test)]
     pub fn socket_port(&self, socket: u32) -> u16 {
         let s = self.state.lock().unwrap();
         s.listens.get(&socket).and_then(|l| l.addr).map(|a| a.port()).unwrap_or(0)
@@ -384,6 +416,15 @@ impl Net {
     /// A connection to `address` ("host:port"), opened in the background:
     /// connecting until the server welcomes it. What's sent meanwhile waits.
     pub fn connect(&self, address: &str, vport: i32) -> u32 {
+        self.connect_at(address, "", vport)
+    }
+
+    /// A server by its identity, through the relay at `relay` (relay.rs).
+    pub fn connect_via(&self, relay: &str, server: u64, vport: i32) -> u32 {
+        self.connect_at(relay, &format!("/to/{server}/{vport}"), vport)
+    }
+
+    fn connect_at(&self, address: &str, path: &str, vport: i32) -> u32 {
         let (out, queued) = unbounded_channel();
         let id = {
             let mut s = self.state.lock().unwrap();
@@ -391,7 +432,7 @@ impl Net {
             s.conns.insert(id, Conn::new(0, STATE_CONNECTING, 0, address.to_string(), out));
             id
         };
-        rt().spawn(dial(self.state.clone(), id, address.to_string(), vport, self.identity, queued));
+        rt().spawn(dial(self.state.clone(), id, address.to_string(), path.to_string(), vport, self.identity, queued));
         id
     }
 
@@ -566,7 +607,7 @@ fn ended(state: &Mutex<State>, conn: u32, reason: i32, text: &str) {
 
 /// The server's certificate: `ENGINE2_TLS_CERT`/`ENGINE2_TLS_KEY`, or a
 /// self-signed one, made once, whose hash players pin.
-fn server_identity() -> Result<Identity, String> {
+pub(crate) fn server_identity() -> Result<Identity, String> {
     static SELF_SIGNED: OnceLock<Result<Identity, String>> = OnceLock::new();
     if let (Ok(cert), Ok(key)) = (std::env::var("ENGINE2_TLS_CERT"), std::env::var("ENGINE2_TLS_KEY")) {
         return rt().block_on(Identity::load_pemfiles(&cert, &key)).map_err(|e| format!("{cert}, {key}: {e}"));
@@ -597,6 +638,28 @@ fn client_config(address: &str, on: IpBindConfig) -> Result<ClientConfig, String
     Ok(b.keep_alive_interval(Some(KEEP_ALIVE)).max_idle_timeout(Some(IDLE_TIMEOUT)).map_err(|e| e.to_string())?.build())
 }
 
+/// A server's endpoint on `port`: v4 and v6, or v4 alone on a host without v6.
+pub(crate) fn server_endpoint(port: u16) -> Result<Endpoint<wtransport::endpoint::endpoint_side::Server>, String> {
+    let bind = |on: IpBindConfig| {
+        let config = ServerConfig::builder()
+            .with_bind_config(on, port)
+            .with_identity(server_identity()?)
+            .keep_alive_interval(Some(KEEP_ALIVE))
+            .max_idle_timeout(Some(IDLE_TIMEOUT))
+            .map_err(|e| e.to_string())?
+            .build();
+        let _rt = rt().enter();
+        Endpoint::server(config).map_err(|e| e.to_string())
+    };
+    bind(IpBindConfig::InAddrAnyDual).or_else(|_| bind(IpBindConfig::InAddrAnyV4))
+}
+
+/// An endpoint to dial `address` from: v4 and v6, or v4 alone.
+pub(crate) fn client_endpoint(address: &str) -> Result<Endpoint<wtransport::endpoint::endpoint_side::Client>, String> {
+    Endpoint::client(client_config(address, IpBindConfig::InAddrAnyDual)?)
+        .or_else(|_| Endpoint::client(client_config(address, IpBindConfig::InAddrAnyV4)?).map_err(|e| e.to_string()))
+}
+
 fn loopback(address: &str) -> bool {
     let host = address.rsplit_once(':').map(|(h, _)| h).unwrap_or(address).trim_matches(|c| c == '[' || c == ']');
     host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
@@ -619,37 +682,115 @@ async fn accept(state: Arc<Mutex<State>>, socket: u32, incoming: IncomingSession
         Ok(Err(e)) => return crate::trace::note(&format!("net: a player didn't get in: {e}")),
         Err(_) => return crate::trace::note("net: a player didn't say hello in time"),
     };
-    if kind != HELLO || le_u16(&body, 0) != VERSION {
+    let Some((id, queued)) = admit(&state, socket, kind, &body, from.to_string(), &mut send).await else { return };
+    run(state, id, Link::Own(conn), send, recv, queued).await;
+}
+
+/// A player's hello on a listen socket: their connection, waiting for
+/// managed to take it. None, and told why, if the hello isn't ours.
+async fn admit(state: &Mutex<State>, socket: u32, kind: u8, hello: &[u8], from: String, send: &mut SendStream) -> Option<(u32, UnboundedReceiver<Out>)> {
+    if kind != HELLO || le_u16(hello, 0) != VERSION {
         let _ = send.write_all(&close(END_MISC_GENERIC, "engine-shim: a different protocol version")).await;
         let _ = send.finish().await;
-        return;
+        return None;
     }
     let (out, queued) = unbounded_channel();
-    let id = {
-        let mut s = state.lock().unwrap();
-        if !s.listens.contains_key(&socket) { return; }
-        let id = s.id();
-        s.conns.insert(id, Conn::new(socket, STATE_CONNECTING, le_u64(&body, 6), from.to_string(), out));
-        s.listens.get_mut(&socket).unwrap().conns.insert(id);
-        s.events.push_back(Event::Incoming(socket, id));
-        id
+    let mut s = state.lock().unwrap();
+    if !s.listens.contains_key(&socket) { return None; }
+    let id = s.id();
+    s.conns.insert(id, Conn::new(socket, STATE_CONNECTING, le_u64(hello, 6), from, out));
+    s.listens.get_mut(&socket).unwrap().conns.insert(id);
+    s.events.push_back(Event::Incoming(socket, id));
+    Some((id, queued))
+}
+
+// ---- through a relay (relay.rs): the server's side
+
+/// Registered at the relay until the socket closes, again after each drop.
+async fn host(state: Arc<Mutex<State>>, socket: u32, relay: String, vport: i32, me: u64, key: k256::ecdsa::SigningKey, stop: Arc<Notify>) {
+    let mut wait = Duration::from_secs(1);
+    loop {
+        tokio::select! {
+            r = host_once(&state, socket, &relay, vport, me, &key) => {
+                crate::trace::note(&format!("net: the relay at {relay}: {}", r.err().unwrap_or_else(|| "dropped".into())));
+            }
+            _ = stop.notified() => return,
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = stop.notified() => return,
+        }
+        wait = (wait * 2).min(Duration::from_secs(30));
+    }
+}
+
+async fn host_once(state: &Arc<Mutex<State>>, socket: u32, relay: &str, vport: i32, me: u64, key: &k256::ecdsa::SigningKey) -> Result<(), String> {
+    use crate::relay::{host_text, CHALLENGE, HOSTING, PROOF, READY};
+    let endpoint = client_endpoint(relay)?;
+    let session = endpoint.connect(format!("https://{relay}/host")).await.map_err(|e| e.to_string())?;
+    let (mut send, mut recv) = session.open_bi().await.map_err(|e| e.to_string())?.await.map_err(|e| e.to_string())?;
+    let mut hosting = me.to_le_bytes().to_vec();
+    hosting.extend_from_slice(&vport.to_le_bytes());
+    send.write_all(&frame(HOSTING, &hosting)).await.map_err(|e| e.to_string())?;
+    let (k, nonce) = read_frame(&mut recv).await?;
+    if k != CHALLENGE { return Err("the relay didn't ask who we are".into()); }
+    let proof = crate::siwe::sign(key, &host_text(me, vport, &String::from_utf8_lossy(&nonce)));
+    send.write_all(&frame(PROOF, &proof)).await.map_err(|e| e.to_string())?;
+    let (k, why) = read_frame(&mut recv).await?;
+    if k != READY { return Err(format!("refused: {}", String::from_utf8_lossy(&why))); }
+    crate::trace::note(&format!("net: reachable as {me}:{vport} through the relay at {relay}"));
+    // each player's datagrams carry the tag the relay gave them
+    let tags: Arc<Mutex<HashMap<u32, u32>>> = Arc::default();
+    let dgrams = {
+        let (state, tags, session) = (state.clone(), tags.clone(), session.clone());
+        rt().spawn(async move {
+            while let Ok(d) = session.receive_datagram().await {
+                let tag = le_u32(&d, 0);
+                let conn = tags.lock().unwrap().get(&tag).copied();
+                if let (Some(conn), Some(&MESSAGE)) = (conn, d.get(4)) { deliver(&state, conn, &d[5..]); }
+            }
+        })
     };
-    run(state, id, conn, send, recv, queued).await;
+    // each player is a stream the relay opens: its tag, then our frames
+    let lost = loop {
+        let (send, recv) = match session.accept_bi().await {
+            Ok(s) => s,
+            Err(e) => break e.to_string(),
+        };
+        rt().spawn(relayed(state.clone(), socket, session.clone(), tags.clone(), send, recv));
+    };
+    dgrams.abort();
+    drop(endpoint);
+    Err(lost)
+}
+
+/// A player the relay brought: as `accept`, on a stream of its session.
+async fn relayed(state: Arc<Mutex<State>>, socket: u32, session: Connection, tags: Arc<Mutex<HashMap<u32, u32>>>, mut send: SendStream, mut recv: RecvStream) {
+    let opened = tokio::time::timeout(HANDSHAKE, async {
+        let mut tag = [0u8; 4];
+        recv.read_exact(&mut tag).await.map_err(|e| e.to_string())?;
+        let (kind, body) = read_frame(&mut recv).await?;
+        Ok::<_, String>((u32::from_le_bytes(tag), kind, body))
+    });
+    let Ok(Ok((tag, kind, body))) = opened.await else { return };
+    let Some((id, queued)) = admit(&state, socket, kind, &body, format!("relay #{tag}"), &mut send).await else { return };
+    tags.lock().unwrap().insert(tag, id);
+    run(state, id, Link::Relayed { session, tag }, send, recv, queued).await;
+    tags.lock().unwrap().remove(&tag);
 }
 
 /// A connection we open: dial, say hello, then as any other.
-async fn dial(state: Arc<Mutex<State>>, id: u32, address: String, vport: i32, me: u64, queued: UnboundedReceiver<Out>) {
+async fn dial(state: Arc<Mutex<State>>, id: u32, address: String, path: String, vport: i32, me: u64, queued: UnboundedReceiver<Out>) {
     let opened = tokio::time::timeout(HANDSHAKE, async {
-        let endpoint = Endpoint::client(client_config(&address, IpBindConfig::InAddrAnyDual)?)
-            .or_else(|_| Endpoint::client(client_config(&address, IpBindConfig::InAddrAnyV4)?).map_err(|e| e.to_string()))?;
-        let conn = endpoint.connect(format!("https://{address}")).await.map_err(|e| e.to_string())?;
+        let endpoint = client_endpoint(&address)?;
+        let conn = endpoint.connect(format!("https://{address}{path}")).await.map_err(|e| e.to_string())?;
         let (mut send, recv) = conn.open_bi().await.map_err(|e| e.to_string())?.await.map_err(|e| e.to_string())?;
         send.write_all(&hello(vport, me)).await.map_err(|e| e.to_string())?;
         Ok::<_, String>((endpoint, conn, send, recv))
     });
     match opened.await {
         Ok(Ok((endpoint, conn, send, recv))) => {
-            run(state, id, conn, send, recv, queued).await;
+            run(state, id, Link::Own(conn), send, recv, queued).await;
             drop(endpoint);
         }
         Ok(Err(e)) => ended(&state, id, END_MISC_TIMEOUT, &format!("couldn't reach {address}: {e}")),
@@ -659,9 +800,13 @@ async fn dial(state: Arc<Mutex<State>>, id: u32, address: String, vport: i32, me
 
 /// A connection, open: its writes, its datagrams and its stream, until the
 /// stream ends.
-async fn run(state: Arc<Mutex<State>>, id: u32, conn: Connection, send: SendStream, mut recv: RecvStream, queued: UnboundedReceiver<Out>) {
-    let writer = rt().spawn(write(conn.clone(), send, queued));
-    let datagrams = rt().spawn(datagrams(state.clone(), id, conn.clone()));
+async fn run(state: Arc<Mutex<State>>, id: u32, link: Link, send: SendStream, mut recv: RecvStream, queued: UnboundedReceiver<Out>) {
+    let writer = rt().spawn(write(link.clone(), send, queued));
+    // a relayed player's datagrams come through its relay's session (`host`)
+    let datagrams = match &link {
+        Link::Own(conn) => Some(rt().spawn(datagrams(state.clone(), id, conn.clone()))),
+        Link::Relayed { .. } => None,
+    };
     loop {
         match read_frame(&mut recv).await {
             Ok((MESSAGE, body)) => deliver(&state, id, &body),
@@ -686,10 +831,10 @@ async fn run(state: Arc<Mutex<State>>, id: u32, conn: Connection, send: SendStre
             }
         }
     }
-    datagrams.abort();
+    if let Some(d) = datagrams { d.abort(); }
     // the writer ends with the close frame, or when the connection goes
     let _ = writer.await;
-    conn.close(0u32.into(), b"");
+    link.close();
 }
 
 /// A message, from the stream or a datagram (flags, then bytes), into the inbox.
@@ -710,7 +855,7 @@ async fn datagrams(state: Arc<Mutex<State>>, id: u32, conn: Connection) {
 /// messages as datagrams (or on the stream, too big for one), until the
 /// close frame. A datagram the path can't take now is dropped, never waited
 /// for (NETCODE.md §2.1).
-async fn write(conn: Connection, mut send: SendStream, mut queued: UnboundedReceiver<Out>) {
+async fn write(link: Link, mut send: SendStream, mut queued: UnboundedReceiver<Out>) {
     while let Some(o) = queued.recv().await {
         let written = match o {
             Out::Reliable(f) => send.write_all(&f).await.is_ok(),
@@ -718,8 +863,8 @@ async fn write(conn: Connection, mut send: SendStream, mut queued: UnboundedRece
                 let mut d = Vec::with_capacity(1 + body.len());
                 d.push(MESSAGE);
                 d.extend_from_slice(&body);
-                if conn.max_datagram_size().is_some_and(|max| d.len() <= max) {
-                    let _ = conn.send_datagram(d);
+                if link.max_datagram().is_some_and(|max| d.len() <= max) {
+                    link.send_datagram(d);
                     true
                 } else {
                     send.write_all(&frame(MESSAGE, &body)).await.is_ok()
@@ -731,17 +876,17 @@ async fn write(conn: Connection, mut send: SendStream, mut queued: UnboundedRece
                     // it once it has, or we do when the linger runs out
                     let _ = tokio::time::timeout(LINGER, async {
                         let _ = send.finish().await;
-                        conn.closed().await
+                        if let Link::Own(conn) = &link { conn.closed().await; }
                     }).await;
                 }
-                conn.close(0u32.into(), b"");
+                link.close();
                 return;
             }
         };
         if !written { return; }
     }
     // dropped without a close: the connection is done with
-    conn.close(0u32.into(), b"");
+    link.close();
 }
 
 #[cfg(test)]
@@ -786,14 +931,19 @@ mod tests {
     }
 
     /// A player at a running server (`ENGINE2_PROBE=host:port`): connects,
-    /// and prints what the server sends for a few seconds.
+    /// and prints what the server sends for a few seconds. With
+    /// `ENGINE2_PROBE_ID=<identity>`, `host:port` is a relay and the server
+    /// is reached through it by identity (virtual port 77, s&box's).
     /// `ENGINE2_PROBE=127.0.0.1:27015 cargo test --release -- --ignored probe --nocapture`
     #[test]
     #[ignore]
     fn probe() {
         let addr = std::env::var("ENGINE2_PROBE").expect("ENGINE2_PROBE=host:port");
         let (client, clog) = (Net::new(0x0110_0001_0000_0777), Log::default());
-        let c = client.connect(&addr, 0);
+        let c = match std::env::var("ENGINE2_PROBE_ID").ok().and_then(|id| id.parse().ok()) {
+            Some(id) => client.connect_via(&addr, id, 77),
+            None => client.connect(&addr, 0),
+        };
         until(&[(&client, &clog)], || client.state(c) != STATE_CONNECTING);
         println!("probe: state {} ({:?}), the server is {}, nonce {:?}", client.state(c), clog.take(), client.peer(c), client.challenge());
         let t = Instant::now();
@@ -880,6 +1030,71 @@ mod tests {
         until(&[(&server, &slog)], || server.state(sc) == STATE_NONE);
         assert_eq!(slog.take(), [format!("gone {socket} {sc}")]);
         assert_eq!(client.send(c, 8, b"late"), 3);
+        server.close_socket(socket);
+    }
+
+    #[test]
+    fn a_player_reaches_a_server_by_identity_through_the_relay() {
+        let endpoint = server_endpoint(0).unwrap();
+        let relay = format!("127.0.0.1:{}", endpoint.local_addr().unwrap().port());
+        rt().spawn(crate::relay::serve(endpoint));
+
+        let (key, address) = crate::siwe::test_key(21);
+        let sid = crate::siwe::id_of(&address);
+        let (server, slog) = (Net::new(sid), Log::default());
+        let socket = server.listen_relay(77, &relay, key);
+        let group = server.create_group();
+
+        // dialled until the server has registered
+        let (client, clog) = (Net::new(0x0110_0001_0000_0099), Log::default());
+        let t = Instant::now();
+        let c = loop {
+            let c = client.connect_via(&relay, sid, 77);
+            until(&[(&server, &slog), (&client, &clog)], || client.state(c) != STATE_CONNECTING);
+            if client.state(c) == STATE_CONNECTED { break c; }
+            // not registered yet: told so, then again
+            until(&[(&client, &clog)], || client.state(c) == STATE_NONE);
+            clog.take();
+            assert!(t.elapsed() < Duration::from_secs(15), "never got through");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let log = slog.take();
+        let sc: u32 = log.last().unwrap().rsplit(' ').next().unwrap().parse().unwrap();
+        assert_eq!(log.last().unwrap(), &format!("connected {socket} {sc}"));
+        assert_eq!(server.peer(sc), 0x0110_0001_0000_0099);
+        assert_eq!(client.peer(c), sid);
+        // the nonce came through for the relay's address: what a sign-in names
+        assert_eq!(client.challenge().unwrap().0, relay);
+        server.set_group(sc, group);
+
+        // both ways, reliable and as datagrams
+        client.send(c, SEND_RELIABLE, b"up");
+        client.send(c, 0, b"up, quick");
+        server.send(sc, SEND_RELIABLE, b"down");
+        server.send(sc, 0, b"down, quick");
+        let (mut up, mut down) = (Vec::new(), Vec::new());
+        until(&[], || {
+            up.extend(texts(server.receive_group(group, 16)));
+            down.extend(texts(client.receive(c, 16)));
+            up.len() == 2 && down.len() == 2
+        });
+        up.sort();
+        down.sort();
+        assert_eq!((up, down), (vec!["up".to_string(), "up, quick".into()], vec!["down".to_string(), "down, quick".into()]));
+
+        // a kick reaches them through it
+        server.kick(0x0110_0001_0000_0099, 1000, "no copy");
+        until(&[(&server, &slog), (&client, &clog)], || client.state(c) == STATE_NONE);
+        assert_eq!(clog.take(), [format!("ended {c} 1000 no copy")]);
+        assert_eq!(slog.take(), [format!("gone {socket} {sc}")]);
+
+        // someone else's key can't register as this server
+        let (wrong, _) = crate::siwe::test_key(22);
+        let r = rt().block_on(host_once(&Arc::default(), 1, &relay, 77, sid, &wrong));
+        assert!(r.as_ref().is_err_and(|e| e.starts_with("refused")), "{r:?}");
+        // nor can anyone reach a server that isn't there
+        let c = client.connect_via(&relay, sid + 1, 77);
+        until(&[(&client, &clog)], || client.state(c) == STATE_NONE);
         server.close_socket(socket);
     }
 

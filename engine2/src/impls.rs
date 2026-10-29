@@ -312,7 +312,21 @@ const AVAILABLE: i64 = 100;
 pub unsafe fn Glue_Networking_RunCallbacks() { net().run_callbacks(&SteamNetwork) }
 pub unsafe fn Glue_Networking_GetAuthenticationStatus(_debug: usize) -> i64 { AVAILABLE }
 pub unsafe fn Glue_Networking_GetRelayNetworkStatus(_debug: usize) -> i64 { AVAILABLE }
-pub unsafe fn Glue_Networking_CreateSocket(vport: i32) -> Socket { Socket { f_Id: net().listen_id(vport) } }
+/// A socket players reach by our identity: through the relay at
+/// `ENGINE2_RELAY`, proven with our host key (`ENGINE2_HOST_KEY`). Without
+/// both, it waits for connections nothing can bring.
+pub unsafe fn Glue_Networking_CreateSocket(vport: i32) -> Socket {
+    let relay = std::env::var("ENGINE2_RELAY").ok().filter(|r| !r.is_empty());
+    let f_Id = match (relay, crate::steam::host_key()) {
+        (Some(relay), Some(key)) if crate::siwe::id_of(&crate::siwe::address_of_key(key)) == net().identity() => net().listen_relay(vport, &relay, key.clone()),
+        (Some(_), _) => {
+            crate::trace::note("net: ENGINE2_RELAY needs our identity to be our host key's (ENGINE2_HOST_KEY, and no ENGINE2_IDENTITY)");
+            net().listen_id(vport)
+        }
+        _ => net().listen_id(vport),
+    };
+    Socket { f_Id }
+}
 pub unsafe fn Glue_Networking_CreateIpBasedSocket(port: i32, _hide_address: i32) -> Socket {
     Socket { f_Id: net().listen_ip(port.clamp(0, 65535) as u16) }
 }
@@ -341,10 +355,15 @@ pub unsafe fn Glue_Networking_GetConnectionMessages(conn: Conn, out: usize, max:
     unsafe { hand_over(net().receive(conn.f_Id, max as usize), out) }
 }
 
-/// A peer by identity alone: Steam's relay finds it. Ours is to come.
+/// A peer by identity alone, through the relay at `ENGINE2_RELAY`.
 pub unsafe fn Glue_Networking_ConnectToSteamId(id: u64, vport: i32) -> Conn {
-    crate::trace::note(&format!("net: no relay yet to reach {id}:{vport}"));
-    Conn { f_Id: 0 }
+    match std::env::var("ENGINE2_RELAY").ok().filter(|r| !r.is_empty()) {
+        Some(relay) => Conn { f_Id: net().connect_via(&relay, id, vport) },
+        None => {
+            crate::trace::note(&format!("net: no ENGINE2_RELAY to reach {id}:{vport} through"));
+            Conn { f_Id: 0 }
+        }
+    }
 }
 pub unsafe fn Glue_Networking_ConnectToIpAddress(address: usize) -> Conn {
     Conn { f_Id: net().connect(&unsafe { read(address) }, 0) }

@@ -57,6 +57,11 @@ pub fn identity() -> u64 {
         if let Some(id) = std::env::var("ENGINE2_IDENTITY").ok().and_then(|v| v.trim().parse().ok()) {
             return id;
         }
+        if let Some(k) = host_key() {
+            let a = siwe::address_of_key(k);
+            crate::trace::note(&format!("steam: we are {}, our host key's", siwe::hex(&a)));
+            return siwe::id_of(&a);
+        }
         let address = launcher().and_then(|mut l| l.address());
         if let Some(a) = address.as_deref().and_then(|a| siwe::parse_address(a)) {
             crate::trace::note(&format!("steam: we are {}", siwe::hex(&a)));
@@ -68,6 +73,51 @@ pub fn identity() -> u64 {
         let r = (t.as_nanos() as u64 ^ ((std::process::id() as u64) << 20)) & 0xffff_ffff;
         0x0110_0001_0000_0000 | r.max(1)
     })
+}
+
+/// A server's own key, at `ENGINE2_HOST_KEY` (64 hex digits; made there on
+/// first start, 0600): its identity across restarts, which it proves to the
+/// relay (relay.rs). Never a player's: a player's key is in their launcher.
+pub fn host_key() -> Option<&'static k256::ecdsa::SigningKey> {
+    static K: OnceLock<Option<k256::ecdsa::SigningKey>> = OnceLock::new();
+    K.get_or_init(|| {
+        let path = std::env::var("ENGINE2_HOST_KEY").ok().filter(|p| !p.is_empty())?;
+        let read = std::fs::read_to_string(&path).ok().and_then(|t| siwe::parse_secret(t.trim()));
+        if let Some(k) = read { return Some(k); }
+        use std::io::{Read, Write};
+        // the OS's randomness; where there is no /dev/urandom, the hashed kind
+        let k = loop {
+            let mut b = [0u8; 32];
+            let fresh = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b)).map(|_| siwe::hex(&b));
+            if let Some(k) = siwe::parse_secret(&fresh.unwrap_or_else(|_| format!("{}{}", random_hex(), random_hex()))) { break k; }
+        };
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        match o.open(&path).and_then(|mut f| f.write_all(siwe::hex(&k.to_bytes())[2..].as_bytes())) {
+            Ok(()) => crate::trace::note(&format!("steam: a new host key at {path}")),
+            Err(e) => { crate::trace::note(&format!("steam: can't keep a host key at {path}: {e}")); return None; }
+        }
+        Some(k)
+    }).as_ref()
+}
+
+/// 128 bits, as 32 hex digits, nobody outside this process can predict.
+pub fn random_hex() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    static N: AtomicU32 = AtomicU32::new(0);
+    // SipHash under keys the OS chose for this process: unpredictable outside it
+    let s = std::collections::hash_map::RandomState::new();
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let half = |salt: u8| {
+        let mut h = s.build_hasher();
+        h.write_u32(n);
+        h.write_u8(salt);
+        h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+        h.finish()
+    };
+    format!("{:016x}{:016x}", half(0), half(1))
 }
 
 /// A ticket for the server that sent `challenge` (the address we dialled,
@@ -185,19 +235,7 @@ fn challenges() -> &'static Mutex<HashMap<String, Challenge>> {
 /// A fresh nonce for the player `peer` says it is: 32 hex digits, which
 /// EIP-4361's alphabet takes.
 pub fn challenge(peer: u64) -> String {
-    use std::hash::{BuildHasher, Hasher};
-    static N: AtomicU32 = AtomicU32::new(0);
-    // SipHash under keys the OS chose for this process: unpredictable outside it
-    let s = std::collections::hash_map::RandomState::new();
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let half = |salt: u8| {
-        let mut h = s.build_hasher();
-        h.write_u32(n);
-        h.write_u8(salt);
-        h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
-        h.finish()
-    };
-    let nonce = format!("{:016x}{:016x}", half(0), half(1));
+    let nonce = random_hex();
     let mut c = challenges().lock().unwrap();
     c.retain(|_, ch| ch.at.elapsed() < CHALLENGE_LIFE);
     c.insert(nonce.clone(), Challenge { peer, at: Instant::now() });
