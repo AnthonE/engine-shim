@@ -205,12 +205,28 @@ the result vectors they fill:
 - **Bodies**: static, keyframed (sent to a target each step) and dynamic;
   position, rotation, velocities, impulses and forces (spent each step, as
   Box3D's are), damping, gravity and its scale, motion locks, sleep, CCD.
-  Mass comes from the shapes at water's density, unless managed sets a
-  mass, a centre or an inertia over it; mass updates defer while a
+  Mass comes from the shapes at their surfaces' densities, unless managed
+  sets a mass, a centre or an inertia over it; mass updates defer while a
   collider builds its shapes.
 - **Shapes**: spheres, capsules, boxes, hulls, triangle meshes and height
   fields, each with its tags, its surface, friction, elasticity, and
   whether it is a trigger, ignores traces or weighs nothing.
+- **Surfaces** (`engine2/src/surfaces.rs`): each `.surface` the game
+  loads (`Sandbox.Surface`: core's wood, metal, rubber... and a project's
+  own) is added by name and given its friction, elasticity and density;
+  managed keeps the index it gets. A shape is made of one (by index or by
+  name; none named is the default, `surfaces/default.surface`'s 0.8, 0.05
+  and 2,000 kg/m³) and takes its friction and elasticity unless managed
+  sets its own, and weighs its volume at its density. Two shapes touching
+  mix as Box3D's do: friction the geometric mean, elasticity the greater.
+  A mesh's or height field's triangles can each be of their own surface
+  (a model's collision mesh, a terrain's painted materials): a contact
+  takes the touching triangle's friction and elasticity, and a trace or a
+  touch reports its surface. Nothing bounces off a contact slower than
+  its surfaces' bounce threshold (Box3D's restitution threshold), so
+  things come to rest. A surface reloaded reaches the shapes made of it,
+  and their mass. A model file's shapes name their surfaces by hash,
+  found by name when managed asks.
 - **The step**: `StepSimulation` steps, then tells managed each body that
   moved (`PhysicsEngine.OnActive`: where, how fast, whether it fell
   asleep), which is how a `Rigidbody` follows its body.
@@ -273,7 +289,36 @@ grep jointrig target/spike/server.log
 Also tested the way managed calls it (`cargo test`): a ball dropped
 through the slots alone falls, lands, is heard moving and falling asleep,
 touches the floor, is traced, queried, filtered past, knocked back up and
-removed.
+removed. And surfaces: a ball of elasticity 0.9 dropped 182 comes back up
+over 100 while the default's barely leaves the floor; a box pushed at 300
+slides over 400 on ice (friction 0.01) and under 100 on the default; a
+box of wood weighs 540 kg/m³ and twice that once the surface reloads; a
+floor mesh half glue and half ice holds one box and lets the other slide,
+traces and touches naming each half's surface; a height field's painted
+cell traces as its own; a rubber ball set down gently doesn't bounce.
+
+Measured under the real server with core's surfaces compiled (`sh
+tools/compile.sh <sbox-public>/game/core surface`) and `tools/surfacerig.sh`'s
+rig, made of s&box's own colliders on a floor of the default surface:
+
+| | measured | predicted |
+| --- | --- | --- |
+| a ball dropped 180: default (0.05), rubber (0.4), metal sheet (0.25) | 0.2, 28.2, 10.8 | 0.45, 28.8, 11.25 (e²h) |
+| a box pushed at 300: default, slippy_wheels, slippy_wheels with `Friction = 1` | 65.8, 591.5, 58.6 | 66.2, 592, 59.2 (v²/2μg, μ the geometric mean) |
+| a 20 cube's `Rigidbody.Mass`: default, wood, metal, fabric | 262.2, 183.5, 354.0, 22.3 | the same (volume × density) |
+
+and a trace down onto each box names its surface. In Sandbox's zoo the
+props' model files name theirs: the office chair is rubber, plastic,
+metal, fabric and slippy_wheels; the car seat fabric and metal sheet. All
+18 bodies are asleep within two seconds, a player joins and stands, and
+the cubes and joints above measure as they did.
+
+```sh
+sh tools/compile.sh ../sbox-public/game/core surface
+sh tools/surfacerig.sh ../sbox-public /tmp/surfacerig
+SBOX=../sbox-public sh spike.sh 20 +shimgame /tmp/surfacerig/.sbproj
+grep surfacerig target/spike/server.log
+```
 
 ## A real game: Facepunch's Sandbox
 
@@ -301,6 +346,7 @@ adds a watcher. Measured (`grep shimwatch target/spike/server.log`):
   player controller's ground traces run on this library's physics.
 
 ```sh
+sh tools/compile.sh ../sbox-public/game/core surface prefab sound decal
 git clone https://github.com/Facepunch/sandbox ../sandbox
 sh tools/sandbox.sh ../sandbox
 SBOX=../sbox-public sh spike.sh 120 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
@@ -348,10 +394,28 @@ and compressed positions, rotations and scales). That is the 70 `CModel_*`,
 as the file says. Every model in the cache reads (185: 656 meshes, 1,227
 bones, 1,409 playable sequences).
 
+**A model's key values** (`engine2/src/assets/kv3text.rs`): what its
+author set on it, kept as KV3 text in the model (`m_keyValueText`): its
+`prop_data` (a prop's health, whether it explodes and how hard) and its
+`break_list` (the gibs it breaks into). Read into KV3 values, handed to
+managed by name (`FindModelSubKey`) and written as the JSON it
+deserializes them from (`KeyValues3ToJson`). All 52 cached models that
+have any read (38 with `prop_data`, 87 break pieces). Measured in the zoo:
+the TV has 15 health and six gibs, the explosive oil drum 100 and four;
+killed, the TV is gone and its six gibs fall and sleep within three
+seconds. Set off, the oil drum breaks into its gibs and spawns core's
+explosion (`prefabs/engine/explosion_med.prefab`: compile core's
+prefabs, sounds and decals too), whose `RadiusDamage` finds its
+neighbours, traces its line of sight to each and pushes them for one
+step: on the next, an unshadowed gib of 1 kg 128 away goes 11,916 in/s,
+the 11,945 its force predicts (1e10/(d²+1) × dt / m); a body behind
+another doesn't move.
+
 And a model in the scene has a pose (`engine2/src/animation.rs`, the
 `CSceneAnimatableObject` slots `SceneModel` drives): its bones in parent
-space, as the sequence playing leaves them (a SkinnedModelRenderer's
-`Sequence`, played straight, looping or not, at its rate) or in bind pose,
+space, as its animation graph leaves them (below), or the sequence
+playing (a SkinnedModelRenderer's `Sequence`, played straight, looping or
+not, at its rate, when it doesn't use its graph), or in bind pose,
 with the renderer's procedural bones over them; carried to the model's
 space, where a ragdoll's physics bones win; and placed in the world by the
 object's transform. Bone merge too (clothing takes its body's pose). A
@@ -367,21 +431,78 @@ zoo with a `SkinnedModelRenderer` and `ModelHitboxes`. A trace at a bone
 hits that bone's hitbox (`hit hand_R on shimtarget ... after 198.9`) and
 one 300 above it misses; turned a quarter and moved, the hitboxes follow
 (the same shot at the left arm now hits the right one, in front of it);
-playing `Punching_Right_Hit_01` (0.83s, looping), the hand swings 24 to 30
-from where it rested, a shot where it rested misses, and a shot where it
-is hits `hand_R`. A player joins and stands as before.
+playing `Punching_Right_Hit_01` (0.83s, looping), the hand swings out
+from where it rested (9 from its graph's pose, 24 to 30 from its bind
+pose), and a shot where it is hits `hand_R`. A player joins and stands as
+before.
+
+**Animation graphs** (`engine2/src/animgraph.rs`). A model's graph (the
+`.vanmgrph` its key values name, or one managed sets) is read from its
+KV3, the editor's own graph: its parameters, which managed lists and sets
+(`AnimVariant`s, a trigger resetting itself once seen), and its nodes,
+run each step from the root down, each once however many take it:
+sequences and single frames, 1D and 2D blends with their inputs damped,
+adds and subtracts (the additive layers a `_delta` sequence feeds), bone
+masks (the model's weight lists, a bone not named taking its parent's),
+weighted random choices, selectors by bool, enum or int, state machines
+(states, transitions on parameter, time, finished, cycle and tag
+conditions, blended over their duration, resetting what they say), speed
+scale and cycle control. IK, look-at and foot locks pass their input
+through. Measured on the arms' own punching graph (`cargo test`, from the
+download cache): set `b_attack` and it resets itself, a punch the graph
+chooses plays (`Punching_Left_Miss_02`, `Punching_Right_Miss_01`, ...),
+the hand it's for swings out furthest, and both come back to rest. Under
+the real server (the watcher, from tick 40): managed finds the graph (73
+parameters), sets a weapon's speeds and `b_attack` through the shim, and
+each attack swings a hand 9 to 11 out, left or right as the graph picks.
+
+**Maps** (`engine2/src/world.rs`, `assets/vpk.rs`, `assets/entities.rs`).
+A map is a pak (`maps/flatgrass.vpk`, Valve's VPK, read here) of its
+world: its collision (`world_physics.vphys`), its entities
+(`entities/default_ents.vents_c`) and its game objects (`world.scene`).
+`CreateWorld` mounts the pak, so the engine's files find what's in it;
+the world answers its folder and its entity lumps, each entity's keys
+(Source 2's entity blob: keys by StringToken hash, typed values) as the
+text managed converts; the collision is a physics resource managed loads
+by name, made into shapes as a model's is, with the collision attributes
+(tags) its shapes name. Sandbox's own map, Facepunch's flatgrass, is a
+Steam workshop item now, which needs Steam; its last revision on
+sbox.game's CDN is fetched with `tools/map.sh` into the project, and
+`tools/sandbox.sh` points Sandbox's map at it. Measured: flatgrass's 249
+entities (190 spawn points, lights, fog, soundscapes) and its collision
+(1,246 hulls and two meshes over 12 surfaces) load; traces from above
+land on grass at z 0 and on the spawn building's roof at 382; a player
+joins, spawns on the roof and stands there.
+
+A player runs its own copy of the world, and the map's too. A player of
+a local project's map gets the game's code from the server but not its
+pak: `ENGINE2_CONTENT` names folders it looks in for files (the pak
+`tools/map.sh` fetched). Without it a player has no collision and falls,
+as the server sees.
+
+```sh
+sh tools/map.sh facepunch.flatgrass ../sandbox/Assets
+sh tools/sandbox.sh ../sandbox scenes/sandbox.scene
+SBOX=../sbox-public sh spike.sh 300 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
+# once "Server started!":
+(cd ../sbox-public/game && ENGINE2_CONTENT=$PWD/../../sandbox/Assets ./sbox-server +shimclient 127.0.0.1:27015 +instanceid 2)
+```
 
 What the game's components still can't do:
 
-- **Animation graphs.** A model's `.vanmgrph` isn't run, so a renderer
-  that uses one (the default, and a player's) stays in its bind pose
-  under its procedural bones; only sequences play. Nor do animation
-  events fire, or sequences blend into one another.
-- **Model data.** A model's key values (`prop_data`: a prop's health,
-  its gibs) aren't made into KeyValues3 yet; nor are a runtime model's
-  bones, hitboxes and meshes (`ModelBuilder`) kept.
-- **Surfaces.** Every shape has the default friction and density; the
-  project's surfaces (`.surface`) aren't read into physics yet.
+- **Animation graphs' rest.** IK, look-at and foot locks aren't solved
+  (their input passes through), root motion isn't taken out, and neither
+  animation events nor tag events fire for managed. Nobody has compared
+  a pose with Facepunch's engine: a graph runs as its nodes are read
+  here.
+- **Runtime models' rest.** A model built at runtime (`ModelBuilder`)
+  keeps its collision, not its bones, hitboxes and meshes.
+- **Rolling resistance.** A surface's is kept but not simulated: Rapier
+  has none.
+- **Workshop maps.** A map that's only on Steam's workshop needs Steam
+  to download; `tools/map.sh` takes the newest revision sbox.game's CDN
+  still holds. A player sees each map's spawn points twice (380 to the
+  server's 190): not looked into yet.
 
 ## Reproduce
 
@@ -436,7 +557,10 @@ first.
   These are fixes upstream could take.
 
 `tools/compile.sh` copies a project's scenes and prefabs to their `_c`
-names, which is all a JSON resource needs here. Models, materials and
+names, which is all a JSON resource needs here. A GameResource s&box
+compiled (a package's sounds, clothing and prefabs from sbox.game) is a
+resource container, read for its `DATA` block, the same JSON; its other
+blocks are found by name for managed (a GameResource's binary blob). Models, materials and
 textures are Source 2's binary formats and wait for the assets step.
 
 No EULA binary is used: the checkout's `game/bin` holds only text files,
@@ -453,10 +577,13 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer, freed |
 | `engine2/src/physics.rs` | physics on Rapier: worlds, bodies, shapes, the step and what touched, collision rules, traces and queries |
+| `engine2/src/surfaces.rs` | surfaces: what shapes are made of, by index and by name, and what each does to them |
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
+| `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
-| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`) and binary KeyValues 3 (`kv3.rs`) |
-| `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders, the game's own |
+| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
+| `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders (case blind, as managed names them), the game's own, mounted paks |
+| `engine2/src/world.rs` | maps: worlds from a map's pak, their folder and entity lumps |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
 | `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
@@ -468,20 +595,22 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
 | `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
 | `tools/jointrig.sh`, `tools/jointrig/` | five rigs of s&box's joint components, and what each does |
+| `tools/map.sh` | a map package's paks from sbox.game, into a project |
+| `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
 
-1. **A server that runs a game.** Facepunch's Sandbox hosts and is joined
-   (above). What its world still lacks is model files: the assets step.
+1. **A server that runs a game.** Facepunch's Sandbox hosts on its own map
+   and is joined (above), and models run their animation graphs. What's
+   left is fidelity: IK, root motion, animation events.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
    the shard list and the relay are ours now, and a player joins (above).
    Next: lobbies. A relay run for others wants a price, as the stream relay's
    credits do (scry-forge `meter/relay.py`).
-3. **Assets.** A model's collision is read from its file (above). Next a
-   model's bones and hitboxes (a server's hit detection), then maps
-   (`.vmap_c`: a world's collision and entities). Materials, textures and
-   shaders only matter to a client.
+3. **Assets.** Models (collision, bones, hitboxes, sequences, key
+   values, animation graphs), surfaces and maps are read (above).
+   Materials, textures and shaders only matter to a client.
 4. **A client.** Rendering: about 670 scene and render slots onto a renderer
    of our own choosing (Bevy or Godot; see below), then sound and input.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large

@@ -525,7 +525,7 @@ mod tests {
         add_body(w, anchor, &BodySettings::default());
         let b = ptr();
         add_body(w, b, &BodySettings { body_type: DYNAMIC as i32, position: v3(at), ..Default::default() });
-        assert!(add_shape(b, ptr(), &Geometry::Box(Pose::IDENTITY, Vector::splat(5.0)), &ShapeSettings::default()));
+        assert!(add_shape(b, ptr(), &Geometry::Box(Pose::IDENTITY, Vector::splat(5.0)), &ShapeSettings::default(), &[]));
         (w, anchor, b)
     }
 

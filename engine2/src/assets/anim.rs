@@ -94,6 +94,9 @@ pub struct Animations {
     segments: Vec<Option<Segment>>,
     pub clips: Vec<Clip>,
     pub sequences: Vec<Sequence>,
+    /// bone masks (weight lists): the weight each bone is named with, by
+    /// the model's bone index (one not named takes its parent's)
+    pub masks: Vec<(String, Vec<Option<f32>>)>,
 }
 
 fn f32_at(b: &[u8], i: usize) -> f32 {
@@ -182,6 +185,7 @@ fn flag(v: &Value, name: &str) -> bool {
 pub fn read(r: &Resource, bones: &[String]) -> Animations {
     let (Some(Ok(anim)), Some(Ok(group))) = (r.kv3("ANIM"), r.kv3("AGRP")) else { return Animations::default() };
     let mut a = Animations::default();
+    let mut masks: Vec<(String, Vec<Option<f32>>)> = Vec::new();
 
     // each data channel: its elements' bones in the model's skeleton
     let by_name: HashMap<String, usize> = bones.iter().enumerate().rev().map(|(i, n)| (n.to_ascii_lowercase(), i)).collect();
@@ -257,6 +261,17 @@ pub fn read(r: &Resource, bones: &[String]) -> Animations {
     // first stands in for it), or the clip another sequence plays
     let clip_of: HashMap<String, usize> = a.clips.iter().enumerate().map(|(i, c)| (c.name.to_ascii_lowercase(), i)).collect();
     if let Some(Ok(seq)) = r.kv3("ASEQ") {
+        let bone_names = names(seq.get("m_localBoneNameArray"));
+        for m in seq.get("m_localBoneMaskArray").map(Value::as_array).unwrap_or(&[]) {
+            let Some(name) = m.get("m_sName").and_then(Value::as_str) else { continue };
+            let mut named: Vec<Option<f32>> = vec![None; bones.len()];
+            let weights = m.get("m_flBoneWeightArray").map(Value::floats).unwrap_or_default();
+            for (k, i) in m.get("m_nLocalBoneArray").map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_i64).enumerate() {
+                let bone = bone_names.get(i.max(0) as usize).and_then(|n| by_name.get(&n.to_ascii_lowercase()));
+                if let (Some(&b), Some(&w)) = (bone, weights.get(k)) { named[b] = Some(w); }
+            }
+            masks.push((name.to_string(), named));
+        }
         let local = names(seq.get("m_localSequenceNameArray"));
         let descs = seq.get("m_localS1SeqDescArray").map(Value::as_array).unwrap_or(&[]);
         let first = |d: &Value| d.get("m_fetch").and_then(|f| f.get("m_localReferenceArray")).and_then(|r| r.as_array().first()).and_then(Value::as_i64).and_then(|i| local.get(i.max(0) as usize)).map(|n| n.to_ascii_lowercase());
@@ -269,6 +284,7 @@ pub fn read(r: &Resource, bones: &[String]) -> Animations {
             a.sequences.push(Sequence { name: name.to_string(), clip, looping: flag(d, "m_bLooping") || a.clips[clip].looping });
         }
     }
+    a.masks = masks;
     a
 }
 

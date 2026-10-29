@@ -22,14 +22,11 @@ use rapier3d::prelude::*;
 pub mod joints;
 
 use crate::handles::murmur2;
+use crate::surfaces::{self, Props};
 use crate::slots::{S_BBox, S_Capsule, S_PhysicsTrace_Result, S_Rotation, S_Sandbox_Sphere, S_Transform, S_Vector3};
 
 /// Inches in a metre: s&box's length unit, for Rapier's tolerances.
 const INCHES_PER_METRE: f32 = 39.37;
-/// A shape's density with no surface to say otherwise: water's, 1000 kg/m³,
-/// in kilograms per cubic inch.
-const DEFAULT_DENSITY: f32 = 1000.0 / 61_023.75;
-const DEFAULT_FRICTION: f32 = 0.5;
 /// A new world's gravity, s&box's default project's (managed sets its own).
 const DEFAULT_GRAVITY: Vector = Vector::new(0.0, 0.0, -850.0);
 
@@ -358,8 +355,16 @@ pub struct Shape {
     pub trigger: bool,
     pub ignore_traces: bool,
     pub no_mass: bool,
+    /// the surface it is made of (surfaces.rs; -1: none named, the default)
     pub surface: i32,
-    pub friction: f32,
+    /// the surfaces a mesh's or height field's triangles name, by their material
+    pub parts: Vec<i32>,
+    /// each triangle's material (by parry's triangle id), if they have their own
+    pub materials: Vec<u8>,
+    /// friction, elasticity and rolling resistance set over its surface's
+    pub own_friction: Option<f32>,
+    pub own_elasticity: Option<f32>,
+    pub own_rolling_resistance: Option<f32>,
     pub local_velocity: Vector,
     /// a sphere's or capsule's own description, for AsSphere/AsCapsule
     pub ends: (Vector, Vector, f32),
@@ -386,8 +391,55 @@ pub struct Body {
 #[derive(Default)]
 struct Meta {
     rules: Rules,
+    /// the surfaces, as of the last change: the step reads them, and may not
+    /// wait on surfaces.rs's lock
+    surfaces: Vec<Props>,
     shapes: HashMap<usize, Shape>,
     by_collider: HashMap<ColliderHandle, usize>,
+}
+
+impl Shape {
+    /// The surface at `triangle` (-1: anywhere): its material's, if it has one.
+    pub fn surface_at(&self, triangle: i32) -> i32 {
+        if let Ok(t) = usize::try_from(triangle) {
+            if !self.materials.is_empty() {
+                // past the count: the same triangle's back face
+                let m = self.materials[t % self.materials.len()];
+                if let Some(&s) = self.parts.get(m as usize).filter(|&&s| s >= 0) { return s; }
+            }
+        }
+        self.surface
+    }
+
+    pub fn friction(&self, t: &[Props], triangle: i32) -> f32 {
+        self.own_friction.unwrap_or_else(|| surface_props(t, self.surface_at(triangle)).friction)
+    }
+
+    pub fn elasticity(&self, t: &[Props], triangle: i32) -> f32 {
+        self.own_elasticity.unwrap_or_else(|| surface_props(t, self.surface_at(triangle)).elasticity)
+    }
+
+    /// The speed it must be hit at to bounce.
+    pub fn bounce_threshold(&self, t: &[Props], triangle: i32) -> f32 {
+        surface_props(t, self.surface_at(triangle)).bounce_threshold
+    }
+
+    /// Its friction and elasticity on its collider, as Box3D mixes them:
+    /// friction the geometric mean of two shapes', elasticity the greater.
+    /// The contact hook has the rest: a triangle's own surface, and the
+    /// bounce threshold.
+    fn apply(&self, t: &[Props], co: &mut Collider) {
+        co.set_friction(self.friction(t, -1));
+        co.set_restitution(self.elasticity(t, -1).max(0.0));
+        co.set_friction_combine_rule(CoefficientCombineRule::GeometricMean);
+        co.set_restitution_combine_rule(CoefficientCombineRule::Max);
+        co.set_active_hooks(ActiveHooks::FILTER_CONTACT_PAIRS | ActiveHooks::FILTER_INTERSECTION_PAIR | ActiveHooks::MODIFY_SOLVER_CONTACTS);
+    }
+}
+
+/// Surface `i`'s props from a world's copy of the table (the default's for -1).
+fn surface_props(t: &[Props], i: i32) -> Props {
+    usize::try_from(i).ok().and_then(|i| t.get(i)).or(t.first()).copied().unwrap_or(surfaces::DEFAULT)
 }
 
 impl Meta {
@@ -408,6 +460,28 @@ impl PhysicsHooks for Meta {
     fn filter_intersection_pair(&self, cx: &PairFilterContext) -> bool {
         let (Some(a), Some(b)) = (self.shape(cx.collider1), self.shape(cx.collider2)) else { return true };
         a.body != b.body && !(a.trigger && b.trigger) && self.rules.between(&a.tags, &b.tags) != RULE_IGNORE
+    }
+
+    /// A contact's friction and elasticity: the touching triangle's, where a
+    /// mesh's or height field's triangles have surfaces of their own. And no
+    /// bounce at all below the surfaces' bounce threshold (the greater of the
+    /// two), as Box3D's restitution threshold: things come to rest.
+    fn modify_solver_contacts(&self, cx: &mut ContactModificationContext) {
+        let (c1, c2, b1, b2, bodies) = (cx.collider1, cx.collider2, cx.rigid_body1, cx.rigid_body2, cx.bodies);
+        let Some(m) = cx.rigid_mut() else { return };
+        let t = &self.surfaces;
+        let side = |c: ColliderHandle, tri: u32| self.shape(c).map(|s| (s.friction(t, tri as i32), s.elasticity(t, tri as i32), s.bounce_threshold(t, tri as i32)));
+        let (Some((f1, e1, t1)), Some((f2, e2, t2))) = (side(c1, m.manifold.subshape1), side(c2, m.manifold.subshape2)) else { return };
+        *m.friction = (f1.max(0.0) * f2.max(0.0)).sqrt();
+        let mut restitution = e1.max(e2).max(0.0);
+        if restitution > 0.0 {
+            // how fast they meet: the second's velocity towards the first along the normal (1 to 2)
+            let at = |b: Option<RigidBodyHandle>, p: Vector| b.and_then(|h| bodies.get(h)).map(|rb| rb.velocity_at_point(p)).unwrap_or(Vector::ZERO);
+            let normal = *m.normal;
+            let approach = m.solver_contacts.iter().map(|c| (at(b1, c.anchor1) - at(b2, c.anchor2)).dot(normal)).fold(0.0f32, f32::max);
+            if approach < t1.max(t2) { restitution = 0.0; }
+        }
+        *m.restitution = restitution;
     }
 }
 
@@ -651,13 +725,15 @@ fn pair(a: ColliderHandle, b: ColliderHandle) -> (ColliderHandle, ColliderHandle
     if a.into_raw_parts() <= b.into_raw_parts() { (a, b) } else { (b, a) }
 }
 
-fn side(w: &World, c: ColliderHandle) -> Option<Side> {
+/// One shape of a touch, `triangle` the one it touches at (-1: unknown).
+fn side(w: &World, c: ColliderHandle, triangle: i32) -> Option<Side> {
     let s = *w.meta.by_collider.get(&c)?;
     let shape = w.meta.shapes.get(&s)?;
     Some(Side {
         shape: s,
         body: shape.body,
-        surface: shape.surface,
+        // every shape is made of something: none named is the default
+        surface: shape.surface_at(triangle).max(0),
         shape_handle: crate::handles::of(s),
         body_handle: crate::handles::of(shape.body),
     })
@@ -676,7 +752,8 @@ fn collect_intersections(w: &mut World) {
         let mask = a.mask | b.mask;
         let reason = if !w.touching.contains(&key) { TOUCH_BEGIN } else if mask & TOUCH_PERSISTS != 0 { TOUCH_PERSISTS_EVENT } else { continue };
         if mask & TOUCH_EVENT == 0 { continue; }
-        let (Some(left), Some(right)) = (side(w, cp.collider1), side(w, cp.collider2)) else { continue };
+        let deepest = cp.find_deepest_contact().map(|(m, _)| (m.subshape1 as i32, m.subshape2 as i32)).unwrap_or((-1, -1));
+        let (Some(left), Some(right)) = (side(w, cp.collider1, deepest.0), side(w, cp.collider2, deepest.1)) else { continue };
         let mut e = Intersection { reason, left, right, impulse: cp.total_impulse_magnitude(), ..Default::default() };
         if let (Some((m, c)), Some(co)) = (cp.find_deepest_contact(), w.sim.colliders.get(cp.collider1)) {
             let point = co.position().transform_point(c.local_p1);
@@ -694,7 +771,7 @@ fn collect_intersections(w: &mut World) {
     for &(c1, c2) in w.touching.difference(&touching) {
         let (Some(a), Some(b)) = (w.meta.shape(c1), w.meta.shape(c2)) else { continue };
         if (a.mask | b.mask) & TOUCH_EVENT == 0 { continue; }
-        let (Some(left), Some(right)) = (side(w, c1), side(w, c2)) else { continue };
+        let (Some(left), Some(right)) = (side(w, c1, -1), side(w, c2, -1)) else { continue };
         events.push(Intersection { reason: TOUCH_END, left, right, ..Default::default() });
     }
     let mut triggering = HashSet::new();
@@ -703,11 +780,11 @@ fn collect_intersections(w: &mut World) {
         let key = pair(c1, c2);
         triggering.insert(key);
         if w.triggering.contains(&key) { continue; }
-        let (Some(left), Some(right)) = (side(w, c1), side(w, c2)) else { continue };
+        let (Some(left), Some(right)) = (side(w, c1, -1), side(w, c2, -1)) else { continue };
         events.push(Intersection { reason: TRIGGER_BEGIN, left, right, ..Default::default() });
     }
     for &(c1, c2) in w.triggering.difference(&triggering) {
-        let (Some(left), Some(right)) = (side(w, c1), side(w, c2)) else { continue };
+        let (Some(left), Some(right)) = (side(w, c1, -1), side(w, c2, -1)) else { continue };
         events.push(Intersection { reason: TRIGGER_END, left, right, ..Default::default() });
     }
     w.touching = touching;
@@ -1008,7 +1085,8 @@ fn rebuild_mass(w: &mut World, ptr: usize) {
         if shape.no_mass || shape.trigger { continue; }
         let Some(co) = w.sim.colliders.get(shape.collider) else { continue };
         let local = co.position_wrt_parent().copied().unwrap_or(Pose::IDENTITY);
-        let m = co.shape().mass_properties(DEFAULT_DENSITY).transform_by(&local);
+        let density = surface_props(&w.meta.surfaces, shape.surface).density_per_cubic_inch();
+        let m = co.shape().mass_properties(density).transform_by(&local);
         props = Some(match props { Some(p) => p + m, None => m });
     }
     let mut props = props.unwrap_or_else(|| MassProperties::new(Vector::ZERO, 0.0, Vector::ZERO));
@@ -1206,9 +1284,39 @@ impl Geometry {
     }
 }
 
+/// Each triangle's material by parry's triangle id: a mesh's are its
+/// triangles' own, in order; a height field's are its samples' (`x` by `y`,
+/// row-major), each cell taking its first corner's.
+fn triangle_materials(g: &Geometry, materials: &[u8]) -> Vec<u8> {
+    match g {
+        Geometry::Mesh(_, _, triangles) if materials.len() >= triangles.len() && !triangles.is_empty() => materials[..triangles.len()].to_vec(),
+        &Geometry::Height(_, nx, ny, ..) if nx >= 2 && ny >= 2 && materials.len() >= nx * ny => {
+            // build()'s field: its rows run backwards along s&box's y, its
+            // columns along x; a cell's two triangles are `id` and `id + half`
+            let (rows, cols) = (ny - 1, nx - 1);
+            let half = rows * cols;
+            let mut out = vec![0u8; half * 2];
+            for c in 0..cols {
+                for r in 0..rows {
+                    let (x, y) = (c, ny - 2 - r);
+                    let m = materials[y * nx + x];
+                    let id = c * rows + r;
+                    out[id] = m;
+                    out[id + half] = m;
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// A new shape at `ptr` on `body`: false if the body is unknown or the
-/// shape can't be made (a hull of too few points).
-pub fn add_shape(body: usize, ptr: usize, g: &Geometry, s: &ShapeSettings) -> bool {
+/// shape can't be made (a hull of too few points). `materials` are its
+/// triangles' (a mesh's) or samples' (a height field's), naming the
+/// surfaces its settings list.
+pub fn add_shape(body: usize, ptr: usize, g: &Geometry, s: &ShapeSettings, materials: &[u8]) -> bool {
+    let table = surfaces::table();
     let mut p = physics();
     let Some(w) = p.body_world.get(&body).copied() else { return false };
     let Some(world) = p.worlds.get_mut(&w) else { return false };
@@ -1217,23 +1325,23 @@ pub fn add_shape(body: usize, ptr: usize, g: &Geometry, s: &ShapeSettings) -> bo
     let Some((shape, at)) = g.build() else { return false };
     let flags = s.flags;
     let trigger = flags & SHAPE_SENSOR != 0;
-    let friction = if s.friction >= 0.0 { s.friction } else { DEFAULT_FRICTION };
-    let co = ColliderBuilder::new(shape)
+    let mut co = ColliderBuilder::new(shape)
         .position(at)
         .density(0.0)
-        .friction(friction)
-        .restitution(s.elasticity.max(0.0))
         .sensor(trigger)
-        .active_hooks(ActiveHooks::FILTER_CONTACT_PAIRS | ActiveHooks::FILTER_INTERSECTION_PAIR)
         .active_collision_types(if trigger { ActiveCollisionTypes::all() } else { ActiveCollisionTypes::default() })
         .build();
-    let collider = world.sim.insert_collider(co, Some(bh));
     let mut tags: Vec<u32> = if flags & SHAPE_TAGS != 0 { s.tags.iter().copied().filter(|&t| t != 0).collect() } else { Vec::new() };
     if flags & SHAPE_DEFAULT_SOLID_TAG != 0 && tags.is_empty() { tags.push(murmur2("solid")); }
-    world.meta.by_collider.insert(collider, ptr);
-    world.meta.shapes.insert(ptr, Shape {
+    let parts = if s.surface_indices != 0 && s.surface_count > 0 {
+        unsafe { core::slice::from_raw_parts(s.surface_indices as *const i32, s.surface_count as usize) }.to_vec()
+    } else {
+        Vec::new()
+    };
+    let own = |v: f32| (v >= 0.0).then_some(v);
+    let shape = Shape {
         body,
-        collider,
+        collider: ColliderHandle::invalid(),
         kind: g.kind(),
         tags,
         mask: s.collision_function_mask as u8,
@@ -1241,10 +1349,19 @@ pub fn add_shape(body: usize, ptr: usize, g: &Geometry, s: &ShapeSettings) -> bo
         ignore_traces: flags & SHAPE_IGNORE_TRACES != 0,
         no_mass: flags & SHAPE_NO_MASS != 0,
         surface: s.surface_index,
-        friction,
+        parts,
+        materials: triangle_materials(g, materials),
+        own_friction: own(s.friction),
+        own_elasticity: own(s.elasticity),
+        own_rolling_resistance: own(s.rolling_resistance),
         local_velocity: vec(s.surface_velocity),
         ends: g.ends(),
-    });
+    };
+    world.meta.surfaces = table;
+    shape.apply(&world.meta.surfaces, &mut co);
+    let collider = world.sim.insert_collider(co, Some(bh));
+    world.meta.by_collider.insert(collider, ptr);
+    world.meta.shapes.insert(ptr, Shape { collider, ..shape });
     if let Some(b) = world.bodies.get_mut(&body) { b.shapes.push(ptr); }
     world.stale.insert(bh);
     rebuild_mass(world, body);
@@ -1260,6 +1377,8 @@ pub fn update_shape(ptr: usize, g: &Geometry) {
     let Some(s) = w.meta.shapes.get_mut(&ptr) else { return };
     s.kind = g.kind();
     s.ends = g.ends();
+    // new triangles: the old ones' materials don't fit them
+    s.materials.clear();
     let (c, body) = (s.collider, s.body);
     if let Some(co) = w.sim.colliders.get_mut(c) {
         co.set_shape(shape);
@@ -1343,9 +1462,88 @@ pub fn set_trigger(ptr: usize, on: bool) {
 
 pub fn set_friction(ptr: usize, f: f32) {
     with_shape_mut(ptr, false, |s, co| {
-        s.friction = f;
+        s.own_friction = Some(f);
         co.set_friction(f);
     });
+}
+
+pub fn set_elasticity(ptr: usize, e: f32) {
+    with_shape_mut(ptr, false, |s, co| {
+        s.own_elasticity = Some(e);
+        co.set_restitution(e.max(0.0));
+    });
+}
+
+pub fn set_rolling_resistance(ptr: usize, r: f32) {
+    with_shape_mut(ptr, false, |s, _| s.own_rolling_resistance = Some(r));
+}
+
+/// A shape's friction: its own, or its surface's.
+pub fn friction(ptr: usize) -> f32 {
+    let mut p = physics();
+    let Some((w, _)) = p.shape(ptr) else { return 0.0 };
+    w.meta.shapes.get(&ptr).map(|s| s.friction(&w.meta.surfaces, -1)).unwrap_or(0.0)
+}
+
+/// A shape is made of surface `index` now (-1: the default): `part` 0 of a
+/// shape whose triangles have no materials, otherwise the surface its
+/// triangles of material `part` are.
+pub fn set_surface(ptr: usize, part: i32, index: i32) {
+    let table = surfaces::table();
+    let mut p = physics();
+    let Some((w, _)) = p.shape(ptr) else { return };
+    w.meta.surfaces = table;
+    let Some(s) = w.meta.shapes.get_mut(&ptr) else { return };
+    if let Ok(k) = usize::try_from(part) {
+        if s.parts.len() <= k { s.parts.resize(k + 1, -1); }
+        s.parts[k] = index;
+    }
+    if part < 0 || (part == 0 && s.materials.is_empty()) { s.surface = index; }
+    let body = s.body;
+    if let Some(co) = w.sim.colliders.get_mut(s.collider) { s.apply(&w.meta.surfaces, co); }
+    rebuild_mass(w, body);
+}
+
+/// The surface each of a body's shapes is made of now.
+pub fn set_body_surface(body: usize, index: i32) {
+    for s in shapes_of_body(body) { set_surface(s, -1, index); }
+}
+
+/// A shape's surface (-1: none named).
+pub fn surface(ptr: usize) -> i32 {
+    with_shape(ptr, |s, _| s.surface).unwrap_or(-1)
+}
+
+/// A body's mass over its volume: kilograms per cubic metre.
+pub fn body_density(ptr: usize) -> f32 {
+    let mut p = physics();
+    let Some((w, body)) = p.body(ptr) else { return 0.0 };
+    let (mut mass, mut volume) = (0.0, 0.0);
+    for s in &body.shapes {
+        let Some(shape) = w.meta.shapes.get(s) else { continue };
+        if shape.no_mass || shape.trigger { continue; }
+        let Some(co) = w.sim.colliders.get(shape.collider) else { continue };
+        let v = co.shape().mass_properties(1.0).mass();
+        volume += v;
+        mass += v * surface_props(&w.meta.surfaces, shape.surface).density_per_cubic_inch();
+    }
+    if volume > 0.0 { mass / volume * surfaces::CUBIC_INCHES_PER_CUBIC_METRE } else { 0.0 }
+}
+
+/// A surface changed (or was added): every shape takes its friction and
+/// elasticity again, and bodies their mass.
+pub fn surfaces_changed() {
+    let table = surfaces::table();
+    let mut p = physics();
+    for w in p.worlds.values_mut() {
+        w.meta.surfaces = table.clone();
+        let mut bodies = HashSet::new();
+        for s in w.meta.shapes.values() {
+            if let Some(co) = w.sim.colliders.get_mut(s.collider) { s.apply(&w.meta.surfaces, co); }
+            bodies.insert(s.body);
+        }
+        for b in bodies { rebuild_mass(w, b); }
+    }
 }
 
 pub fn shape_bounds(ptr: usize, local: bool) -> S_BBox {
@@ -1483,14 +1681,18 @@ fn hit_result(w: &World, r: &TraceRequest, shape: usize, fraction: f32, point: V
     if let Some(s) = w.meta.shapes.get(&shape) {
         out.f_PhysicsShapeHandle = crate::handles::of(shape);
         out.f_PhysicsBodyHandle = crate::handles::of(s.body);
-        out.f_SurfaceProperty = s.surface;
+        out.f_SurfaceProperty = s.surface_at(triangle).max(0);
         for (i, t) in s.tags.iter().take(16).enumerate() { out.f_Tags[i] = *t; }
     }
     out
 }
 
-fn triangle_of(f: FeatureId) -> i32 {
-    match f {
+/// The triangle a ray met: a mesh's or height field's own (the hit's
+/// sub-shape; its feature is then the triangle's own face), else the face's.
+fn triangle_of(w: &World, c: ColliderHandle, hit: &RayIntersection) -> i32 {
+    let composite = w.sim.colliders.get(c).is_some_and(|co| matches!(co.shape().shape_type(), ShapeType::TriMesh | ShapeType::HeightField));
+    match hit.feature {
+        _ if composite => hit.subshape as i32,
         FeatureId::Face(i) => i as i32,
         _ => -1,
     }
@@ -1572,11 +1774,11 @@ fn sweep(w: &mut World, r: &TraceRequest, many: bool) -> Vec<(i32, S_PhysicsTrac
             if many {
                 for (c, _, hit) in w.sim.intersect_ray(ray, max, true, filter) {
                     let point = ray.point_at(hit.time_of_impact);
-                    out.push((hit.time_of_impact, c, if len > 0.0 { hit.time_of_impact / len } else { 0.0 }, point, hit.normal, triangle_of(hit.feature)));
+                    out.push((hit.time_of_impact, c, if len > 0.0 { hit.time_of_impact / len } else { 0.0 }, point, hit.normal, triangle_of(w, c, &hit)));
                 }
             } else if let Some((c, hit)) = w.sim.cast_ray_and_get_normal(&ray, max, true, filter) {
                 let point = ray.point_at(hit.time_of_impact);
-                out.push((hit.time_of_impact, c, if len > 0.0 { hit.time_of_impact / len } else { 0.0 }, point, hit.normal, triangle_of(hit.feature)));
+                out.push((hit.time_of_impact, c, if len > 0.0 { hit.time_of_impact / len } else { 0.0 }, point, hit.normal, triangle_of(w, c, &hit)));
             }
         }
         Some((shape, from)) => {
@@ -1675,12 +1877,12 @@ mod tests {
         create_world(w);
         let ground = ptr();
         add_body(w, ground, &BodySettings::default());
-        assert!(add_shape(ground, ptr(), &Geometry::Box(Pose::IDENTITY, Vector::new(500.0, 500.0, 10.0)), &ShapeSettings::default()));
+        assert!(add_shape(ground, ptr(), &Geometry::Box(Pose::IDENTITY, Vector::new(500.0, 500.0, 10.0)), &ShapeSettings::default(), &[]));
         let ball = ptr();
         let mut s = BodySettings { body_type: DYNAMIC as i32, ..Default::default() };
         s.position = v3(Vector::new(0.0, 0.0, 200.0));
         add_body(w, ball, &s);
-        assert!(add_shape(ball, ptr(), &Geometry::Sphere(Vector::ZERO, 8.0), &ShapeSettings::default()));
+        assert!(add_shape(ball, ptr(), &Geometry::Sphere(Vector::ZERO, 8.0), &ShapeSettings::default(), &[]));
         (w, ground, ball)
     }
 
@@ -1699,9 +1901,9 @@ mod tests {
         assert!((z - 18.0).abs() < 1.0, "resting on the ground's top (10) by its radius (8): {z}");
         assert!(moved > 10, "managed heard it move");
         assert!(slept, "and fall asleep");
-        // a sphere of radius 8 in at water's density
+        // a sphere of radius 8 in at the default surface's density
         let m = with_body(ball, |_, rb| rb.mass()).unwrap();
-        let expected = 4.0 / 3.0 * core::f32::consts::PI * 512.0 * DEFAULT_DENSITY;
+        let expected = 4.0 / 3.0 * core::f32::consts::PI * 512.0 * surfaces::DEFAULT.density_per_cubic_inch();
         assert!((m - expected).abs() < 1e-3 * expected, "{m} vs {expected}");
     }
 
@@ -1709,10 +1911,10 @@ mod tests {
     fn mass_set_by_managed_wins_over_the_shapes() {
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let (_, _, ball) = ground_and_ball();
-        set_mass(ball, Some(50.0));
-        assert_eq!(with_body(ball, |_, rb| rb.mass()).unwrap(), 50.0);
+        set_mass(ball, Some(500.0));
+        assert!((with_body(ball, |_, rb| rb.mass()).unwrap() - 500.0).abs() < 1e-3);
         set_mass(ball, None);
-        assert!(with_body(ball, |_, rb| rb.mass()).unwrap() < 50.0);
+        assert!(with_body(ball, |_, rb| rb.mass()).unwrap() < 500.0);
     }
 
     fn ray(world: usize, from: Vector, to: Vector) -> TraceRequest {
@@ -1781,7 +1983,7 @@ mod tests {
         tagged.tags[0] = murmur2("world");
         tagged.tags[1] = murmur2("ghostfloor");
         let floor = ptr();
-        assert!(add_shape(ground, floor, &Geometry::Box(Pose::IDENTITY, Vector::new(500.0, 500.0, 10.0)), &tagged));
+        assert!(add_shape(ground, floor, &Geometry::Box(Pose::IDENTITY, Vector::new(500.0, 500.0, 10.0)), &tagged, &[]));
         // a trace that must hit "player" finds nothing; one that excludes "world" too
         let mut r = ray(w, Vector::new(0.0, 0.0, 100.0), Vector::new(0.0, 0.0, -100.0));
         r.tag_require[0] = murmur2("player");
@@ -1802,7 +2004,7 @@ mod tests {
         add_body(w, ball, &s);
         let mut ghost = ShapeSettings { flags: SHAPE_TAGS | 16, ..Default::default() };
         ghost.tags[0] = murmur2("ghost");
-        assert!(add_shape(ball, ptr(), &Geometry::Sphere(Vector::ZERO, 8.0), &ghost));
+        assert!(add_shape(ball, ptr(), &Geometry::Sphere(Vector::ZERO, 8.0), &ghost, &[]));
         for _ in 0..60 { step(w, 1.0 / 60.0, 1); }
         assert!(with_body(ball, |_, rb| rb.translation().z).unwrap() < -50.0);
     }
@@ -1816,7 +2018,7 @@ mod tests {
         add_body(w, zone, &BodySettings::default());
         let trigger = ShapeSettings { flags: SHAPE_SENSOR | 16, collision_function_mask: 2, ..Default::default() };
         let volume = ptr();
-        assert!(add_shape(zone, volume, &Geometry::Box(Pose::from_translation(Vector::new(0.0, 0.0, 100.0)), Vector::splat(20.0)), &trigger));
+        assert!(add_shape(zone, volume, &Geometry::Box(Pose::from_translation(Vector::new(0.0, 0.0, 100.0)), Vector::splat(20.0)), &trigger, &[]));
         let mut seen = Vec::new();
         for _ in 0..300 {
             step(w, 1.0 / 60.0, 1);
@@ -1840,7 +2042,7 @@ mod tests {
         create_world(w);
         let k = ptr();
         add_body(w, k, &BodySettings { body_type: KEYFRAMED as i32, ..Default::default() });
-        add_shape(k, ptr(), &Geometry::Box(Pose::IDENTITY, Vector::splat(5.0)), &ShapeSettings::default());
+        add_shape(k, ptr(), &Geometry::Box(Pose::IDENTITY, Vector::splat(5.0)), &ShapeSettings::default(), &[]);
         set_target(k, Pose::from_translation(Vector::new(10.0, 0.0, 0.0)), 1.0 / 60.0);
         let active = step(w, 1.0 / 60.0, 1).active;
         assert!(active.iter().any(|a| a.body == k && (vec(a.transform.f_Position).x - 10.0).abs() < 1e-3));
@@ -1856,5 +2058,172 @@ mod tests {
         assert_eq!(r.between(&[ladder], &[clip]), RULE_IGNORE);
         assert_eq!(r.between(&[trigger], &[murmur2("other")]), RULE_TRIGGER);
         assert_eq!(r.between(&[], &[]), RULE_COLLIDE);
+    }
+
+    /// A surface of its own for a test (the list is the process's): its index.
+    fn surface(name: &str, friction: f32, elasticity: f32, density: f32) -> i32 {
+        let p = surfaces::add(name, "default", "");
+        surfaces::update(p, Props { friction, elasticity, density, rolling_resistance: 0.0, bounce_threshold: 35.0 }).unwrap()
+    }
+
+    fn made_of(surface: i32) -> ShapeSettings {
+        ShapeSettings { surface_index: surface, ..Default::default() }
+    }
+
+    /// A body at `at` with one shape: the body.
+    fn body(w: usize, kind: i64, at: Vector, g: Geometry, s: &ShapeSettings) -> usize {
+        let b = ptr();
+        add_body(w, b, &BodySettings { body_type: kind as i32, position: v3(at), ..Default::default() });
+        assert!(add_shape(b, ptr(), &g, s, &[]));
+        b
+    }
+
+    #[test]
+    fn a_ball_bounces_as_its_surface_does() {
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let rubber = surface("test_superball", 0.8, 0.9, 1200.0);
+        // the highest each ball comes back up to after its first bounce
+        let peak = |surface: i32| {
+            let w = ptr();
+            create_world(w);
+            body(w, STATIC, Vector::ZERO, Geometry::Box(Pose::IDENTITY, Vector::new(500.0, 500.0, 10.0)), &made_of(-1));
+            let ball = body(w, DYNAMIC, Vector::new(0.0, 0.0, 200.0), Geometry::Sphere(Vector::ZERO, 8.0), &made_of(surface));
+            let (mut bounced, mut top) = (false, 0.0f32);
+            for _ in 0..180 {
+                step(w, 1.0 / 60.0, 4);
+                let (z, vz) = with_body(ball, |_, rb| (rb.translation().z, rb.linvel().z)).unwrap();
+                bounced |= vz > 0.0;
+                if bounced { top = top.max(z); }
+            }
+            top - 18.0
+        };
+        // elasticity: the greater of the two (the ground's default is 0.05)
+        let (high, low) = (peak(rubber), peak(-1));
+        assert!(high > 100.0, "0.9 of its speed back: most of its 182 drop ({high})");
+        assert!(low < 10.0, "the default barely bounces ({low})");
+    }
+
+    #[test]
+    fn a_box_slides_as_far_as_its_surface_lets_it() {
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let ice = surface("test_ice", 0.01, 0.0, 900.0);
+        let slide = |surface: i32| {
+            let w = ptr();
+            create_world(w);
+            body(w, STATIC, Vector::ZERO, Geometry::Box(Pose::IDENTITY, Vector::new(5000.0, 500.0, 10.0)), &made_of(-1));
+            let b = body(w, DYNAMIC, Vector::new(0.0, 0.0, 15.0), Geometry::Box(Pose::IDENTITY, Vector::splat(5.0)), &made_of(surface));
+            with_body_mut(b, |_, rb| rb.set_linvel(Vector::new(300.0, 0.0, 0.0), true));
+            for _ in 0..180 { step(w, 1.0 / 60.0, 4); }
+            with_body(b, |_, rb| rb.translation().x).unwrap()
+        };
+        // friction: the geometric mean, sqrt(0.01 * 0.8) on ice against the
+        // default's 0.8: v²/2μg, 595 and 66
+        let (far, near) = (slide(ice), slide(-1));
+        assert!(far > 400.0, "on ice ({far})");
+        assert!(near < 100.0 && near > 30.0, "on the default ({near})");
+    }
+
+    #[test]
+    fn a_shape_weighs_what_its_surface_does_and_follows_it() {
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let wood = surface("test_wood", 0.8, 0.05, 540.0);
+        let w = ptr();
+        create_world(w);
+        let b = body(w, DYNAMIC, Vector::ZERO, Geometry::Box(Pose::IDENTITY, Vector::splat(5.0)), &made_of(wood));
+        let mass = || with_body(b, |_, rb| rb.mass()).unwrap();
+        // a thousand cubic inches of wood
+        let expected = 1000.0 * 540.0 / surfaces::CUBIC_INCHES_PER_CUBIC_METRE;
+        assert!((mass() - expected).abs() < 1e-3 * expected, "{} vs {expected}", mass());
+        assert!((body_density(b) - 540.0).abs() < 0.5, "{}", body_density(b));
+        // the surface reloaded heavier: the shapes made of it follow
+        surfaces::update(surfaces::object(wood), Props { friction: 0.6, elasticity: 0.05, density: 1080.0, rolling_resistance: 0.0, bounce_threshold: 35.0 });
+        surfaces_changed();
+        assert!((mass() - 2.0 * expected).abs() < 1e-3 * expected, "{}", mass());
+        let shape = shapes_of_body(b)[0];
+        assert_eq!(friction(shape), 0.6);
+        // a friction of its own wins over its surface's, and stays
+        set_friction(shape, 0.3);
+        surfaces_changed();
+        assert_eq!(friction(shape), 0.3);
+        // made of another by name
+        set_body_surface(b, -1);
+        assert_eq!(super::surface(shape), -1);
+        assert!((body_density(b) - 2000.0).abs() < 1.0, "the default's: {}", body_density(b));
+    }
+
+    #[test]
+    fn a_mesh_is_made_of_what_each_triangle_names() {
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let (glue, ice) = (surface("test_glue", 1.0, 0.0, 1000.0), surface("test_black_ice", 0.0, 0.0, 1000.0));
+        let w = ptr();
+        create_world(w);
+        // a floor of two halves: x < 0 material 0 (glue), x > 0 material 1 (ice)
+        let v = [(-1000.0, -500.0), (0.0, -500.0), (0.0, 500.0), (-1000.0, 500.0), (1000.0, -500.0), (1000.0, 500.0)].map(|(x, y)| Vector::new(x, y, 0.0)).to_vec();
+        let t = vec![[0, 1, 2], [0, 2, 3], [1, 4, 5], [1, 5, 2]];
+        let parts = [glue, ice];
+        let settings = ShapeSettings { surface_indices: parts.as_ptr() as usize, surface_count: 2, ..Default::default() };
+        let floor = ptr();
+        add_body(w, floor, &BodySettings::default());
+        assert!(add_shape(floor, ptr(), &Geometry::Mesh(Pose::IDENTITY, v, t), &settings, &[0, 0, 1, 1]));
+        // a trace tells which
+        let at = |x: f32| trace(&ray(w, Vector::new(x, 0.0, 50.0), Vector::new(x, 0.0, -50.0)), false)[0];
+        assert_eq!(at(-300.0).f_SurfaceProperty, glue);
+        assert_eq!(at(300.0).f_SurfaceProperty, ice);
+        // and a box slides on one and not the other
+        let a = body(w, DYNAMIC, Vector::new(-500.0, 0.0, 5.0), Geometry::Box(Pose::IDENTITY, Vector::splat(5.0)), &made_of(-1));
+        let b = body(w, DYNAMIC, Vector::new(500.0, 0.0, 5.0), Geometry::Box(Pose::IDENTITY, Vector::splat(5.0)), &made_of(-1));
+        for x in [a, b] { with_body_mut(x, |_, rb| rb.set_linvel(Vector::new(0.0, 200.0, 0.0), true)); }
+        let mut touched = Vec::new();
+        for _ in 0..60 {
+            step(w, 1.0 / 60.0, 4);
+            touched.extend(take_intersections(w).into_iter().filter(|e| e.reason == TOUCH_BEGIN));
+        }
+        let y = |x: usize| with_body(x, |_, rb| rb.translation().y).unwrap();
+        assert!(y(a) < 40.0, "held on glue ({})", y(a));
+        assert!(y(b) > 150.0, "slid on ice ({})", y(b));
+        // and a touch says which it began on
+        let on = |body: usize| touched.iter().find_map(|e| [(e.left, e.right), (e.right, e.left)].into_iter().find(|(me, _)| me.body == body).map(|(_, floor)| floor.surface));
+        assert_eq!(on(a), Some(glue));
+        assert_eq!(on(b), Some(ice));
+    }
+
+    #[test]
+    fn a_height_field_is_made_of_what_each_sample_names() {
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let (grass, rock) = (surface("test_grass", 0.8, 0.0, 1000.0), surface("test_rock", 0.8, 0.0, 1000.0));
+        let w = ptr();
+        create_world(w);
+        // 3 by 3 samples, 100 apart, flat: the lower-left cell (x 0..100, y 0..100) rock, the rest grass
+        let mut materials = [0u8; 9];
+        materials[0] = 1;
+        let parts = [grass, rock];
+        let settings = ShapeSettings { surface_indices: parts.as_ptr() as usize, surface_count: 2, ..Default::default() };
+        let ground = ptr();
+        add_body(w, ground, &BodySettings::default());
+        assert!(add_shape(ground, ptr(), &Geometry::Height(vec![0; 9], 3, 3, 100.0, 1.0), &settings, &materials));
+        let at = |x: f32, y: f32| trace(&ray(w, Vector::new(x, y, 50.0), Vector::new(x, y, -50.0)), false)[0];
+        for (x, y, s) in [(30.0, 20.0, rock), (70.0, 80.0, rock), (150.0, 30.0, grass), (40.0, 160.0, grass), (150.0, 150.0, grass)] {
+            let hit = at(x, y);
+            assert!(hit.f_Fraction < 1.0, "the ground is at ({x}, {y})");
+            assert_eq!(hit.f_SurfaceProperty, s, "at ({x}, {y})");
+        }
+    }
+
+    #[test]
+    fn a_ball_set_down_gently_does_not_bounce() {
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let rubber = surface("test_gentle_superball", 0.8, 0.9, 1200.0);
+        let w = ptr();
+        create_world(w);
+        body(w, STATIC, Vector::ZERO, Geometry::Box(Pose::IDENTITY, Vector::new(500.0, 500.0, 10.0)), &made_of(-1));
+        // half an inch up: it lands at 29 in/s, under the threshold (35)
+        let ball = body(w, DYNAMIC, Vector::new(0.0, 0.0, 18.5), Geometry::Sphere(Vector::ZERO, 8.0), &made_of(rubber));
+        let (mut up, mut slept) = (0.0f32, false);
+        for _ in 0..300 {
+            slept |= step(w, 1.0 / 60.0, 4).active.iter().any(|a| a.body == ball && a.fell_asleep);
+            up = up.max(with_body(ball, |_, rb| rb.linvel().z).unwrap());
+        }
+        assert!(up < 5.0, "no bounce back up ({up})");
+        assert!(slept, "and it rests");
     }
 }

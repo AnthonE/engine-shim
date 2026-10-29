@@ -13,6 +13,7 @@ mod elo;
 mod handles;
 mod impls;
 mod animation;
+mod animgraph;
 mod assets;
 mod fs;
 mod models;
@@ -23,7 +24,9 @@ mod siwe;
 mod state;
 mod slots;
 mod steam;
+mod surfaces;
 mod trace;
+mod world;
 
 use std::sync::OnceLock;
 

@@ -117,6 +117,8 @@ pub struct ModelFile {
     pub animations: Vec<CString>,
     /// the animations decoded, for playing
     pub anim: super::anim::Animations,
+    /// its key values (`prop_data`, `break_list`...), if it has any
+    pub key_values: Option<Value>,
 }
 
 impl ModelFile {
@@ -293,6 +295,14 @@ fn body_parts(groups: &[CString]) -> Vec<BodyPart> {
 
 /// A compiled model, read. `read_compiled` finds the meshes it refers to
 /// by name.
+/// A model's key values: KV3 text in its info (`m_keyValueText`), or
+/// already an object (`m_keyValues`).
+fn key_values(info: &Value) -> Option<Value> {
+    if let Some(v @ Value::Object(_)) = info.get("m_keyValues") { return Some(v.clone()); }
+    let text = info.get("m_keyValueText")?.as_str().filter(|t| !t.trim().is_empty())?;
+    super::kv3text::read(text).ok()
+}
+
 pub fn read(r: &Resource, read_compiled: impl Fn(&str) -> Option<Vec<u8>>) -> Result<ModelFile, String> {
     let data = r.kv3("DATA").ok_or("no DATA")?.map_err(|e| e.to_string())?;
     let mut m = ModelFile {
@@ -306,6 +316,7 @@ pub fn read(r: &Resource, read_compiled: impl Fn(&str) -> Option<Vec<u8>>) -> Re
         ..Default::default()
     };
     m.body_parts = body_parts(&m.mesh_groups);
+    m.key_values = data.get("m_modelInfo").and_then(key_values);
 
     // meshes: by name from files, or embedded (their index says which slot)
     let refs = data.get("m_refMeshes").map(Value::as_array).unwrap_or(&[]);

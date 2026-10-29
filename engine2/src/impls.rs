@@ -154,8 +154,8 @@ pub unsafe fn g_pRenderDevice_GetRenderDeviceAPI() -> i64 { RENDER_DEVICE_API_EM
 
 // ---- compiled resources: a game's JSON resources (scenes, prefabs, its own
 // GameResource types) are read as `<name>_c`. Ours is the JSON itself, as
-// tools/compile.sh writes it; Source 2's own container (a header and named
-// blocks) is not read yet.
+// tools/compile.sh writes it; one compiled by s&box (a package downloaded
+// from sbox.game) is Source 2's container, its JSON the DATA block.
 
 thread_local! {
     /// The last JSON handed back, kept until the next call on this thread
@@ -163,25 +163,62 @@ thread_local! {
     static LAST_JSON: std::cell::RefCell<CString> = std::cell::RefCell::new(CString::default());
 }
 
-pub unsafe fn EngineGlue_ReadCompiledResourceFileJson(data: usize, len: i32) -> usize {
-    if data == 0 || len <= 0 { return 0; }
-    let bytes = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
-    let start = bytes.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(bytes.len());
-    if !matches!(bytes.get(start), Some(b'{') | Some(b'[')) {
-        crate::trace::note("ReadCompiledResourceFileJson: a Source 2 container, not plain JSON: not read yet");
-        return 0;
+/// The JSON in a compiled resource: the file itself, or its container's DATA block.
+fn resource_json(bytes: &[u8]) -> Option<&[u8]> {
+    fn json(b: &[u8]) -> Option<&[u8]> {
+        let start = b.iter().position(|c| !c.is_ascii_whitespace())?;
+        let end = b.iter().rposition(|&c| c != 0 && !c.is_ascii_whitespace())? + 1;
+        matches!(b[start], b'{' | b'[').then(|| &b[start..end])
     }
-    let Ok(s) = CString::new(&bytes[start..]) else { return 0 };
+    json(bytes).or_else(|| json(resource_block(bytes, b"DATA")?))
+}
+
+/// The block of a compiled resource's container by its tag (DATA, a
+/// GameResource's binary blob...): none in plain JSON or anything else.
+fn resource_block<'a>(bytes: &'a [u8], tag: &[u8; 4]) -> Option<&'a [u8]> {
+    let u32_at = |at: usize| bytes.get(at..at + 4).map(|x| u32::from_le_bytes(x.try_into().unwrap()) as usize);
+    // the header: the file's size, a 12-byte header, a version, then the block list
+    if bytes.get(4..6) != Some(&12u16.to_le_bytes()[..]) || u32_at(0)? > bytes.len() { return None; }
+    let (list, count) = (8 + u32_at(8)?, u32_at(12)?);
+    (0..count.min(64)).find_map(|i| {
+        let at = list + 12 * i;
+        if bytes.get(at..at + 4)? != tag { return None; }
+        let start = at + 4 + u32_at(at + 4)?;
+        bytes.get(start..start + u32_at(at + 8)?)
+    })
+}
+
+fn json_returned(json: &[u8]) -> usize {
+    let Ok(s) = CString::new(json) else { return 0 };
     LAST_JSON.with(|l| {
         *l.borrow_mut() = s;
         l.borrow().as_ptr() as usize
     })
 }
 
-/// A named binary block inside a compiled resource: plain JSON has none.
-pub unsafe fn EngineGlue_ReadCompiledResourceFileBlock(_name: usize, _data: usize, _len: i32, size: usize) -> usize {
+pub unsafe fn EngineGlue_ReadCompiledResourceFileJson(data: usize, len: i32) -> usize {
+    if data == 0 || len <= 0 { return 0; }
+    let bytes = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
+    resource_json(bytes).map(json_returned).unwrap_or(0)
+}
+
+/// As above, the file found by the engine's file system.
+pub unsafe fn EngineGlue_ReadCompiledResourceFileJsonFromFilesystem(name: usize) -> usize {
+    let name = unsafe { read(name) };
+    crate::fs::read_compiled(&name).and_then(|b| resource_json(&b).map(json_returned)).unwrap_or(0)
+}
+
+/// A named block inside a compiled resource, where it lies in managed's
+/// buffer (which managed copies from before letting go).
+pub unsafe fn EngineGlue_ReadCompiledResourceFileBlock(name: usize, data: usize, len: i32, size: usize) -> usize {
     if size != 0 { unsafe { *(size as *mut i32) = 0 }; }
-    0
+    if data == 0 || len <= 0 { return 0; }
+    let name = unsafe { read(name) };
+    let Ok(tag) = <[u8; 4]>::try_from(name.as_bytes().get(..4).unwrap_or_default()) else { return 0 };
+    let bytes = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
+    let Some(block) = resource_block(bytes, &tag) else { return 0 };
+    if size != 0 { unsafe { *(size as *mut i32) = block.len() as i32 }; }
+    block.as_ptr() as usize
 }
 
 /// A string returned to managed, kept until the next on this thread
@@ -681,9 +718,14 @@ pub unsafe fn IPhysicsBody_GetShape(body: usize, i: i32) -> i32 {
 
 /// A new shape on `body`: its handle, or 0 if it can't be made.
 fn add_shape(body: usize, g: Geometry, settings: usize) -> i32 {
+    add_shape_of(body, g, &[], settings)
+}
+
+/// A shape whose triangles (or a height field's samples) have materials.
+fn add_shape_of(body: usize, g: Geometry, materials: &[u8], settings: usize) -> i32 {
     let s = unsafe { phys::read::<phys::ShapeSettings>(settings) };
     let shape = crate::handles::object();
-    if !phys::add_shape(body, shape, &g, &s) { return 0; }
+    if !phys::add_shape(body, shape, &g, &s, materials) { return 0; }
     crate::handles::register(shape, "PhysicsShape", &[body, phys::world_of_body(body)])
 }
 
@@ -714,10 +756,11 @@ pub unsafe fn IPhysicsBody_AddMeshShape(body: usize, nv: i32, vertices: usize, n
     let g = Geometry::Mesh(rapier3d::math::Pose::IDENTITY, unsafe { phys::read_points(vertices, nv) }, unsafe { read_triangles(indices, ni) });
     add_shape(body, g, settings)
 }
-pub unsafe fn IPhysicsBody_AddHeightFieldShape(body: usize, heights: usize, _materials: usize, x: i32, y: i32, spacing: f32, scale: f32, _n: i32, settings: usize) -> i32 {
+pub unsafe fn IPhysicsBody_AddHeightFieldShape(body: usize, heights: usize, materials: usize, x: i32, y: i32, spacing: f32, scale: f32, _n: i32, settings: usize) -> i32 {
     if heights == 0 || x < 2 || y < 2 { return 0; }
     let h = unsafe { core::slice::from_raw_parts(heights as *const u16, (x * y) as usize) }.to_vec();
-    add_shape(body, Geometry::Height(h, x as usize, y as usize, spacing, scale), settings)
+    let m = if materials == 0 { &[][..] } else { unsafe { core::slice::from_raw_parts(materials as *const u8, (x * y) as usize) } };
+    add_shape_of(body, Geometry::Height(h, x as usize, y as usize, spacing, scale), m, settings)
 }
 pub unsafe fn IPhysicsBody_RemoveShape(_body: usize, shape: usize) {
     if phys::remove_shape(shape) { crate::handles::free(shape); }
@@ -763,10 +806,10 @@ pub unsafe fn IPhysicsBody_GetLinearDamping(body: usize) -> f32 { phys::with_bod
 pub unsafe fn IPhysicsBody_SetAngularDamping(body: usize, d: f32) { phys::with_body_mut(body, |_, rb| rb.set_angular_damping(d)); }
 pub unsafe fn IPhysicsBody_GetAngularDamping(body: usize) -> f32 { phys::with_body(body, |_, rb| rb.angular_damping()).unwrap_or(0.0) }
 pub unsafe fn IPhysicsBody_BuildBounds(body: usize) -> S_BBox { phys::body_bounds(body) }
-/// Every shape weighs as water does, kilograms per cubic metre.
-pub unsafe fn IPhysicsBody_GetDensity(_body: usize) -> f32 { 1000.0 }
+/// What its shapes weigh for their volume, kilograms per cubic metre.
+pub unsafe fn IPhysicsBody_GetDensity(body: usize) -> f32 { phys::body_density(body) }
 pub unsafe fn IPhysicsBody_GetClosestPoint(body: usize, p: usize) -> S_Vector3 { phys::v3(phys::closest_point(body, unsafe { phys::read_vec(p) })) }
-pub unsafe fn IPhysicsBody_SetMaterialIndex(_body: usize, _name: S_Sandbox_StringToken) {}
+pub unsafe fn IPhysicsBody_SetMaterialIndex(body: usize, name: S_Sandbox_StringToken) { phys::set_body_surface(body, surface_named(name)) }
 pub unsafe fn IPhysicsBody_SetTargetTransform(body: usize, position: usize, rotation: usize, dt: f32) {
     phys::set_target(body, pose_of(position, rotation), dt)
 }
@@ -795,6 +838,33 @@ pub unsafe fn IPhysicsBody_IsTouching(body: usize, other: usize, triggers: i32) 
 pub unsafe fn IPhysicsBody_IsTouching_1(body: usize, shape: usize, triggers: i32) -> i32 { phys::touching_shape(body, shape, b(triggers)) as i32 }
 pub unsafe fn IPhysicsBody_SetBullet(body: usize, on: i32) { phys::with_body_mut(body, |_, rb| rb.enable_ccd(on != 0)); }
 
+// surfaces (surfaces.rs): the controller is the one list of them
+
+use crate::surfaces;
+
+/// The surface a StringToken names: none (-1, the default) for a name no
+/// surface has.
+fn surface_named(name: S_Sandbox_StringToken) -> i32 {
+    if name.f_Value == 0 { -1 } else { surfaces::by_hash(name.f_Value).unwrap_or(-1) }
+}
+
+static SURFACE_CONTROLLER: u64 = 0;
+
+pub unsafe fn g_pPhysicsSystem_GetSurfacePropertyController() -> usize { &SURFACE_CONTROLLER as *const u64 as usize }
+pub unsafe fn PhysSrfcPrprtyCn_GetSurfacePropCount(_c: usize) -> i32 { surfaces::count() }
+pub unsafe fn PhysSrfcPrprtyCn_GetSurfaceProperty(_c: usize, i: i32) -> usize { surfaces::object(i) }
+pub unsafe fn PhysSrfcPrprtyCn_AddProperty(_c: usize, name: usize, base: usize, description: usize) -> usize {
+    surfaces::add(&unsafe { read(name) }, &unsafe { read(base) }, &unsafe { read(description) })
+}
+/// A surface's values: the shapes made of it take them at once.
+pub unsafe fn CPhysSrfcPrprts_UpdatePhysics(p: usize, friction: f32, elasticity: f32, density: f32, rolling_resistance: f32, bounce_threshold: f32) {
+    let props = surfaces::Props { friction, elasticity, density, rolling_resistance, bounce_threshold };
+    if surfaces::update(p, props).is_some() { phys::surfaces_changed(); }
+}
+pub unsafe fn g_pPhysicsSystem_UpdateSurfaceProperties(_p: usize) { phys::surfaces_changed() }
+pub unsafe fn Get__CPhysSrfcPrprts_m_name(p: usize) -> usize { surfaces::name_of(p) }
+pub unsafe fn Get__CPhysSrfcPrprts_m_description(p: usize) -> usize { surfaces::description(p) }
+
 // shapes
 
 pub unsafe fn IPhysicsShape_AddCollisionFunctionMask(shape: usize, m: u8) { phys::set_mask(shape, |was| was | m) }
@@ -818,9 +888,9 @@ pub unsafe fn IPhysicsShape_ClearTags(shape: usize) -> i32 {
         had
     }) as i32
 }
-pub unsafe fn IPhysicsShape_SetSurfaceIndex(shape: usize, part: i32, index: i32) {
-    if part == 0 { phys::with_shape_mut(shape, false, |s, _| s.surface = index); }
-}
+pub unsafe fn IPhysicsShape_SetSurfaceIndex(shape: usize, index: i32, part: i32) { phys::set_surface(shape, part.max(0), index) }
+pub unsafe fn IPhysicsShape_SetMaterialIndex(shape: usize, name: S_Sandbox_StringToken) { phys::set_surface(shape, -1, surface_named(name)) }
+pub unsafe fn IPhysicsShape_GetMaterialName(shape: usize) -> usize { surfaces::name(phys::surface(shape)) }
 pub unsafe fn IPhysicsShape_GetType(shape: usize) -> i64 { phys::shape_kind(shape) }
 pub unsafe fn IPhysicsShape_UpdateMeshShape(shape: usize, nv: i32, vertices: usize, ni: i32, indices: usize) {
     phys::update_shape(shape, &Geometry::Mesh(rapier3d::math::Pose::IDENTITY, unsafe { phys::read_points(vertices, nv) }, unsafe { read_triangles(indices, ni) }))
@@ -848,13 +918,14 @@ pub unsafe fn IPhysicsShape_GetTriangulation(shape: usize, vertices: usize, indi
 pub unsafe fn IPhysicsShape_AsSphere(shape: usize) -> S_Sandbox_Sphere { phys::as_sphere(shape) }
 pub unsafe fn IPhysicsShape_AsCapsule(shape: usize) -> S_Capsule { phys::as_capsule(shape) }
 pub unsafe fn IPhysicsShape_SetFriction(shape: usize, f: f32) { phys::set_friction(shape, f) }
-pub unsafe fn IPhysicsShape_GetFriction(shape: usize) -> f32 { phys::with_shape(shape, |s, _| s.friction).unwrap_or(0.0) }
+pub unsafe fn IPhysicsShape_GetFriction(shape: usize) -> f32 { phys::friction(shape) }
 pub unsafe fn IPhysicsShape_SetLocalVelocity(shape: usize, v: usize) {
     let v = unsafe { phys::read_vec(v) };
     phys::with_shape_mut(shape, false, |s, _| s.local_velocity = v);
 }
 pub unsafe fn IPhysicsShape_GetLocalVelocity(shape: usize) -> S_Vector3 { phys::v3(phys::with_shape(shape, |s, _| s.local_velocity).unwrap_or_default()) }
-pub unsafe fn IPhysicsShape_SetElasticity(shape: usize, e: f32) { phys::with_shape_mut(shape, false, |_, co| co.set_restitution(e.max(0.0))); }
+pub unsafe fn IPhysicsShape_SetElasticity(shape: usize, e: f32) { phys::set_elasticity(shape, e) }
+pub unsafe fn IPhysicsShape_SetRollingResistance(shape: usize, r: f32) { phys::set_rolling_resistance(shape, r) }
 pub unsafe fn IPhysicsShape_SetIgnoreTraces(shape: usize, on: i32) { phys::with_shape_mut(shape, false, |s, _| s.ignore_traces = on != 0); }
 pub unsafe fn IPhysicsShape_SetHasNoMass(shape: usize, on: i32) { phys::with_shape_mut(shape, true, |s, _| s.no_mass = on != 0); }
 pub unsafe fn IPhysicsShape_BuildBounds(shape: usize) -> S_BBox { phys::shape_bounds(shape, false) }
@@ -1154,6 +1225,36 @@ pub unsafe fn CPhysBdyDscrry_AddSurface(bodies: usize, surface: i32) {
 }
 
 pub unsafe fn CPhysicsData_GetBindingPtr(physics: usize) -> usize { physics }
+/// The surfaces a model's shapes name by index: a built one's, or a model
+/// file's, found by name (none yet: null, which managed reads as "default").
+pub unsafe fn CPhysicsData_GetSurfacePropertiesCount(physics: usize) -> i32 {
+    models::models().bodies(physics).map(|b| b.surfaces.len().max(b.surface_hashes.len()) as i32).unwrap_or(0)
+}
+/// The collision attributes its shapes name: each one's tags.
+pub unsafe fn CPhysicsData_GetCollisionAttributeCount(physics: usize) -> i32 {
+    models::models().bodies(physics).map(|b| b.attributes.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CPhysicsData_GetTagCount(physics: usize, a: i32) -> i32 {
+    models::models().bodies(physics).and_then(|b| b.attributes.get(a as usize).map(|t| t.len() as i32)).unwrap_or(0)
+}
+pub unsafe fn CPhysicsData_GetTag(physics: usize, a: i32, i: i32) -> usize {
+    // the container lives as long as its model: its strings are where they are
+    models::models().bodies(physics).and_then(|b| b.attributes.get(a as usize)?.get(i as usize).map(|t| t.as_ptr() as usize)).unwrap_or(c"".as_ptr() as usize)
+}
+/// Each of a part's shapes' collision attribute, in the order managed adds them.
+pub unsafe fn VPhysXBodyPart_t_GetCollisionAttributeCount(p: usize) -> i32 { part(p, |x| x.collision_attributes.len() as i32) }
+pub unsafe fn VPhysXBodyPart_t_GetCollisionAttributeIndex(p: usize, i: i32) -> u16 { part(p, |x| x.collision_attributes.get(i as usize).copied().unwrap_or(0)) }
+/// A physics resource by name (a map's collision).
+pub unsafe fn Glue_Resources_GetPhysics(name: usize, _guid: S_System_Guid) -> usize { models::load_physics(&unsafe { read(name) }) }
+
+pub unsafe fn CPhysicsData_GetSurfaceProperties(physics: usize, i: i32) -> usize {
+    let Ok(i) = usize::try_from(i) else { return 0 };
+    let index = models::models().bodies(physics).and_then(|b| match b.surfaces.get(i) {
+        Some(&s) => Some(s),
+        None => b.surface_hashes.get(i).and_then(|&h| surfaces::by_hash(h)),
+    });
+    index.map(surfaces::object).unwrap_or(0)
+}
 pub unsafe fn CPhysicsData_GetPartCount(physics: usize) -> i32 {
     models::models().bodies(physics).map(|b| b.parts.len() as i32).unwrap_or(0)
 }
@@ -1349,9 +1450,9 @@ pub unsafe fn IPhysicsBody_AddHullShape_2(body: usize, m: usize, tx: usize, sett
     add_shape(body, Geometry::Hull(at, points), settings)
 }
 pub unsafe fn IPhysicsBody_AddMeshShape_1(body: usize, m: usize, tx: usize, _materials: i32, settings: usize) -> i32 {
-    let (vertices, triangles) = mesh(m, |m| (m.vertices.clone(), m.triangles.clone()));
+    let (vertices, triangles, materials) = mesh(m, |m| (m.vertices.clone(), m.triangles.clone(), m.materials.clone()));
     let (at, vertices) = unsafe { placed(tx, vertices) };
-    add_shape(body, Geometry::Mesh(at, vertices, triangles), settings)
+    add_shape_of(body, Geometry::Mesh(at, vertices, triangles), &materials, settings)
 }
 
 // traces
@@ -1478,9 +1579,10 @@ pub unsafe fn CtlVctrnt32_Element(v: usize, i: i32) -> u32 {
 // carry, its sequences. A model built at runtime has none of these yet.
 
 use crate::animation::{self, Xf};
+use crate::assets::kv3::Value;
 use crate::assets::model::{HitBox, HitBoxSet, ModelFile};
 use crate::models::Piece;
-use crate::slots::S_Color32;
+use crate::slots::{S_Color32, S_NativeEngine_AnimVariant};
 
 fn file(model: usize) -> Option<&'static ModelFile> { models::file(model) }
 
@@ -1515,9 +1617,29 @@ pub unsafe fn CModel_HasPhysics(model: usize) -> i32 {
     let physics = m.physics_of(model);
     m.bodies(physics).is_some_and(|b| !b.parts.is_empty()) as i32
 }
-/// Model data (KeyValues3) isn't made here yet: none.
-pub unsafe fn CModel_FindModelSubKey(_model: usize, _name: usize) -> usize { 0 }
-pub unsafe fn CModel_GetAnimationGraph(_model: usize) -> usize { 0 }
+/// A model's key values under `name` (its `prop_data`, its `break_list`):
+/// the value in the model file, where managed holds it until it asks for
+/// it as JSON.
+pub unsafe fn CModel_FindModelSubKey(model: usize, name: usize) -> usize {
+    let name = unsafe { read(name) };
+    let Some(v) = file(model).and_then(|f| f.key_values.as_ref()).and_then(|kv| kv.get(&name)) else { return 0 };
+    let p = v as *const Value as usize;
+    KEY_VALUES.lock().unwrap().insert(p);
+    p
+}
+
+/// The KeyValues3 handed to managed (a model file's, which live for good):
+/// only these are read back.
+static KEY_VALUES: Mutex<std::collections::BTreeSet<usize>> = Mutex::new(std::collections::BTreeSet::new());
+
+pub unsafe fn EngineGlue_KeyValues3ToJson(kv: usize) -> usize {
+    if !KEY_VALUES.lock().unwrap().contains(&kv) { return 0; }
+    let mut s = String::new();
+    crate::assets::kv3text::json(unsafe { &*(kv as *const Value) }, &mut s);
+    returned(s)
+}
+/// The graph a model names in its key values (`anim_graph_resource`).
+pub unsafe fn CModel_GetAnimationGraph(model: usize) -> usize { file(model).map(crate::animgraph::of_model).unwrap_or(0) }
 pub unsafe fn CModel_MeshTrace(_model: usize, _input: usize, _output: usize) -> i32 { 0 }
 
 // bones
@@ -1838,7 +1960,60 @@ pub unsafe fn CScnnmtblbjct_SetBindPose(obj: usize) { animation::set_bind_pose(o
 pub unsafe fn CScnnmtblbjct_CalculateWorldSpaceBones(obj: usize) { animation::calculate(obj) }
 pub unsafe fn CScnnmtblbjct_FinishUpdate(_obj: usize) {}
 pub unsafe fn CScnnmtblbjct_MergeFrom(obj: usize, from: usize) { animation::merge_from(obj, from) }
-pub unsafe fn CScnnmtblbjct_GetAnimGraph(_obj: usize) -> usize { 0 }
+pub unsafe fn CScnnmtblbjct_GetAnimGraph(obj: usize) -> usize { animation::graph_of(obj) }
+pub unsafe fn CScnnmtblbjct_InitAnimGraph(obj: usize, callback: usize) { animation::init_graph(obj, callback) }
+pub unsafe fn CScnnmtblbjct_SetAnimGraph(obj: usize, name: usize) { animation::set_graph(obj, crate::animgraph::load(&unsafe { read(name) })) }
+pub unsafe fn CScnnmtblbjct_SetAnimGraph_1(obj: usize, graph: usize) {
+    animation::set_graph(obj, if crate::animgraph::graph(graph).is_some() { graph } else { 0 })
+}
+pub unsafe fn CScnnmtblbjct_ResetGraphParameters(obj: usize) { animation::reset_parameters(obj) }
+pub unsafe fn CScnnmtblbjct_GetAnimParameter(obj: usize, name: usize) -> usize { animation::parameter_named(obj, &unsafe { read(name) }) }
+pub unsafe fn CScnnmtblbjct_GetAnimParameter_1(obj: usize, i: i32) -> usize { usize::try_from(i).map(|i| animation::parameter(obj, i)).unwrap_or(0) }
+
+// a graph's parameters on an object (IAnimParameterInstance)
+
+pub unsafe fn nmPrmtrnstnc_GetName(p: usize) -> usize { animation::with_parameter(p, |param, _| param.name.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize) }
+pub unsafe fn nmPrmtrnstnc_GetValue(p: usize) -> S_NativeEngine_AnimVariant {
+    animation::with_parameter(p, |_, v| v.ffi()).unwrap_or(unsafe { core::mem::zeroed() })
+}
+pub unsafe fn nmPrmtrnstnc_GetParameterType(p: usize) -> i64 { animation::with_parameter(p, |param, _| param.kind as i64).unwrap_or(0) }
+pub unsafe fn nmPrmtrnstnc_IsAutoReset(p: usize) -> i32 { animation::with_parameter(p, |param, _| param.auto_reset as i32).unwrap_or(0) }
+pub unsafe fn nmPrmtrnstnc_SetValue(p: usize, v: usize) {
+    if v == 0 { return; }
+    let value = crate::animgraph::Variant::from_ffi(&unsafe { core::ptr::read_unaligned(v as *const S_NativeEngine_AnimVariant) });
+    animation::with_parameter(p, |param, slot| if value.kind == param.kind { *slot = value });
+}
+
+// animation graphs (animgraph.rs): their parameters, and each one's kind,
+// default, range and options (IAnimationGraph, its IAnimParameterList is
+// itself, IAnimParameter)
+
+use crate::animgraph;
+
+pub unsafe fn Glue_Resources_GetAnimationGraph(name: usize, _guid: S_System_Guid) -> usize { animgraph::load(&unsafe { read(name) }) }
+pub unsafe fn IAnimationGraph_IsError(g: usize) -> i32 { animgraph::graph(g).is_none() as i32 }
+pub unsafe fn IAnimationGraph_IsStrongHandleLoaded(g: usize) -> i32 { animgraph::graph(g).is_some() as i32 }
+pub unsafe fn IAnimationGraph_CopyStrongHandle(g: usize) -> usize { g }
+pub unsafe fn IAnimationGraph_GetBindingPtr(g: usize) -> usize { g }
+pub unsafe fn IAnimationGraph_GetResourceName(g: usize) -> usize { animgraph::graph(g).map(|g| g.name.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize) }
+pub unsafe fn IAnimationGraph_GetParameterList(g: usize) -> usize { if animgraph::graph(g).is_some() { g } else { 0 } }
+pub unsafe fn nmPrmtrLst_Count(g: usize) -> i32 { animgraph::graph(g).map(|g| g.params.len() as i32).unwrap_or(0) }
+pub unsafe fn nmPrmtrLst_GetParameter(g: usize, i: i32) -> usize {
+    animgraph::graph(g).and_then(|g| g.params.get(usize::try_from(i).ok()?)).map(|p| p as *const _ as usize).unwrap_or(0)
+}
+pub unsafe fn nmPrmtrLst_GetParameter_1(g: usize, name: usize) -> usize {
+    let name = unsafe { read(name) };
+    animgraph::graph(g).and_then(|g| g.params.iter().find(|p| p.name.to_bytes().eq_ignore_ascii_case(name.as_bytes()))).map(|p| p as *const _ as usize).unwrap_or(0)
+}
+pub unsafe fn IAnimParameter_GetName(p: usize) -> usize { animgraph::param_at(p).map(|p| p.name.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize) }
+pub unsafe fn IAnimParameter_GetParameterType(p: usize) -> i64 { animgraph::param_at(p).map(|p| p.kind as i64).unwrap_or(0) }
+pub unsafe fn IAnimParameter_GetDefaultValue(p: usize) -> S_NativeEngine_AnimVariant { animgraph::param_at(p).map(|p| p.default.ffi()).unwrap_or(unsafe { core::mem::zeroed() }) }
+pub unsafe fn IAnimParameter_GetMinValue(p: usize) -> S_NativeEngine_AnimVariant { animgraph::param_at(p).map(|p| p.min.ffi()).unwrap_or(unsafe { core::mem::zeroed() }) }
+pub unsafe fn IAnimParameter_GetMaxValue(p: usize) -> S_NativeEngine_AnimVariant { animgraph::param_at(p).map(|p| p.max.ffi()).unwrap_or(unsafe { core::mem::zeroed() }) }
+pub unsafe fn IAnimParameter_GetNumOptionNames(p: usize) -> i32 { animgraph::param_at(p).map(|p| p.options.len() as i32).unwrap_or(0) }
+pub unsafe fn IAnimParameter_GetOptionName(p: usize, i: i32) -> usize {
+    animgraph::param_at(p).and_then(|p| p.options.get(usize::try_from(i).ok()?)).map(|o| o.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize)
+}
 
 // sequences played straight (no animation graph runs here)
 
@@ -1892,6 +2067,50 @@ pub unsafe fn CScnnmtblbjct_SBox_GetAttachment(obj: usize, name: S_Sandbox_Strin
 mod tests {
     //! The slots as managed calls them: a dedicated server logs on, listens,
     //! takes a player, checks their ticket, and they talk.
+
+    /// A container as s&box compiles a GameResource: the header, a block
+    /// list, and the JSON in DATA (ended with a NUL).
+    fn container(blocks: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+        let list = 16;
+        let mut data_at = list + 12 * blocks.len();
+        let mut out = vec![0u8; data_at];
+        out[4..6].copy_from_slice(&12u16.to_le_bytes());
+        out[8..12].copy_from_slice(&8u32.to_le_bytes());
+        out[12..16].copy_from_slice(&(blocks.len() as u32).to_le_bytes());
+        for (i, (tag, body)) in blocks.iter().enumerate() {
+            let at = list + 12 * i;
+            out[at..at + 4].copy_from_slice(&tag[..]);
+            out[at + 4..at + 8].copy_from_slice(&((data_at - (at + 4)) as u32).to_le_bytes());
+            out[at + 8..at + 12].copy_from_slice(&(body.len() as u32).to_le_bytes());
+            out.extend_from_slice(body);
+            data_at += body.len();
+        }
+        let n = out.len() as u32;
+        out[0..4].copy_from_slice(&n.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn a_compiled_resource_reads_as_its_json() {
+        let read = |b: &[u8]| {
+            let p = unsafe { EngineGlue_ReadCompiledResourceFileJson(b.as_ptr() as usize, b.len() as i32) };
+            (p != 0).then(|| unsafe { CStr::from_ptr(p as *const core::ffi::c_char) }.to_str().unwrap().to_string())
+        };
+        // ours: the JSON itself
+        assert_eq!(read(b"  {\"Volume\":1}\n").as_deref(), Some("{\"Volume\":1}"));
+        // s&box's: its DATA block, past the references and the edit info
+        let c = container(&[(b"RERL", b"\x0c\0\0\0refs"), (b"REDI", &[0u8; 20]), (b"DATA", b"{\"Volume\":2}\0"), (b"BLOB", b"\x01\x02\x03")]);
+        assert_eq!(read(&c).as_deref(), Some("{\"Volume\":2}"));
+        assert_eq!(read(b"\x03VKV not json"), None);
+        // and a block of it by name, where it lies
+        let mut size = 0i32;
+        let name = c"BLOB";
+        let p = unsafe { EngineGlue_ReadCompiledResourceFileBlock(name.as_ptr() as usize, c.as_ptr() as usize, c.len() as i32, &mut size as *mut i32 as usize) };
+        assert_eq!(unsafe { core::slice::from_raw_parts(p as *const u8, size as usize) }, b"\x01\x02\x03");
+        let p = unsafe { EngineGlue_ReadCompiledResourceFileBlock(c"MDAT".as_ptr() as usize, c.as_ptr() as usize, c.len() as i32, &mut size as *mut i32 as usize) };
+        assert_eq!((p, size), (0, 0), "no such block");
+    }
+
     #[test]
     fn lz4_round_trips_blocks_and_frames() {
         unsafe {
@@ -2314,5 +2533,39 @@ mod scene_models {
             assert!((CScnnmtblbjct_GetSequenceCycle(obj) - 0.1).abs() < 1e-3);
             assert_eq!(CScnnmtblbjct_IsSequenceFinished(obj), 0);
         }
+    }
+}
+
+// ---- maps (world.rs): a world from a map's pak, its folder and its entities
+
+use crate::world;
+
+pub unsafe fn g_pWrldRndrrMgr_CreateWorld(map: usize, scene_world: usize, _async: i32, _ignore_existing: i32, _vis: i32, _precache: i32, _group: S_Sandbox_StringToken, _tx: usize) -> usize {
+    world::create(&unsafe { read(map) }, scene_world).unwrap_or(0)
+}
+pub unsafe fn g_pWrldRndrrMgr_MountWorldVPK(name: usize, path: usize) -> i32 {
+    crate::fs::mount(&unsafe { read(name) }, &unsafe { read(path) }).is_ok() as i32
+}
+pub unsafe fn g_pWrldRndrrMgr_UnmountWorldVPK(name: usize) -> i32 { crate::fs::unmount(&unsafe { read(name) }) as i32 }
+pub unsafe fn IWorldReference_Release(w: usize) { world::release(w) }
+/// Loaded as soon as it's made: there is nothing to stream in for a server.
+pub unsafe fn IWorldReference_IsWorldLoaded(w: usize) -> i32 { world::with(w, |_| ()).is_some() as i32 }
+pub unsafe fn IWorldReference_IsErrorWorld(w: usize) -> i32 { world::with(w, |_| ()).is_none() as i32 }
+pub unsafe fn IWorldReference_GetSceneWorld(w: usize) -> i32 { world::with(w, |x| crate::handles::of(x.scene_world)).unwrap_or(0) }
+pub unsafe fn IWorldReference_GetFolder(w: usize) -> usize { world::with(w, |x| x.folder.as_ptr() as usize).unwrap_or(c"".as_ptr() as usize) }
+pub unsafe fn IWorldReference_GetEntityCount(w: usize, lump: usize) -> i32 { world::lump(w, &unsafe { read(lump) }).len() as i32 }
+pub unsafe fn IWorldReference_GetEntityKeyValues(w: usize, lump: usize, i: i32) -> usize {
+    world::lump(w, &unsafe { read(lump) }).get(i as usize).map(|e| *e as *const _ as usize).unwrap_or(0)
+}
+pub unsafe fn CEntityKeyValues_GetKeyCount(e: usize) -> i32 { world::entity(e).map(|e| e.keys.len() as i32).unwrap_or(0) }
+pub unsafe fn CEntityKeyValues_GetKey(e: usize, i: i32) -> u32 { world::entity(e).and_then(|e| e.keys.get(i as usize).map(|k| k.0)).unwrap_or(0) }
+pub unsafe fn CEntityKeyValues_GetValueString(e: usize, key: S_Sandbox_StringToken, default: usize) -> usize {
+    unsafe { CEntityKeyValues_GetValueString_1(e, key.f_Value, default) }
+}
+/// A key's value as text, or the default managed gave (its own string, handed back).
+pub unsafe fn CEntityKeyValues_GetValueString_1(e: usize, key: u32, default: usize) -> usize {
+    match world::entity(e).and_then(|e| e.get(key)) {
+        Some(v) => returned(v.to_string()),
+        None => default,
     }
 }

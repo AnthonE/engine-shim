@@ -6,9 +6,10 @@
 //! object's transform. That last is where a renderer finds a bone, and so
 //! where ModelHitboxes puts a hitbox.
 //!
-//! The animation is a sequence played straight (assets/anim.rs), as a
-//! SkinnedModelRenderer with a sequence and no animation graph asks; with
-//! none, the bind pose. Animation graphs aren't run.
+//! The animation is the object's animation graph run (animgraph.rs: the
+//! model's own, or one managed sets), when managed has it use one; else a
+//! sequence played straight (assets/anim.rs), as a SkinnedModelRenderer
+//! with a sequence asks; with none, the bind pose.
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -71,6 +72,11 @@ pub struct Posed {
     pub cycle: f32,
     pub looping: Option<bool>,
     pub rate: Option<f32>,
+    /// its animation graph (animgraph.rs; 0: none) and the graph running
+    pub graph: usize,
+    pub instance: Option<crate::animgraph::Instance>,
+    /// what managed asked to hear when the graph changes (InitAnimGraph)
+    pub on_graph_changed: usize,
 }
 
 fn all() -> MutexGuard<'static, HashMap<usize, Posed>> {
@@ -96,6 +102,7 @@ impl Posed {
         Posed {
             model, local, model_space, world: vec![Xf::IDENTITY; n], previous: vec![Xf::IDENTITY; n], overrides: HashMap::new(), delta: 0.0,
             sequence: None, cycle: 0.0, looping: None, rate: None,
+            graph: crate::models::file(model).map(crate::animgraph::of_model).unwrap_or(0), instance: None, on_graph_changed: 0,
         }
     }
 
@@ -156,6 +163,14 @@ impl Posed {
         self.local = pose.iter().map(|p| Xf { pos: p.pos, rot: p.rot, scale: Vector::splat(p.scale) }).collect();
     }
 
+    /// The graph run on by `delta`: the bones in its pose.
+    fn run_graph(&mut self, delta: f32) {
+        let (Some(g), Some(f)) = (crate::animgraph::graph(self.graph), crate::models::file(self.model)) else { return self.reset() };
+        let pose = self.instance.get_or_insert_with(|| crate::animgraph::Instance::new(g)).run(g, f, delta * self.rate.unwrap_or(1.0));
+        if pose.len() != self.local.len() { return; }
+        self.local = pose.iter().map(|p| Xf { pos: p.pos, rot: p.rot, scale: Vector::splat(p.scale) }).collect();
+    }
+
     /// Play a sequence by name from its start (an unknown name, or none: stop).
     pub fn play(&mut self, name: &str) {
         self.sequence = crate::models::file(self.model).and_then(|f| f.anim.sequences.iter().position(|s| s.name.eq_ignore_ascii_case(name)));
@@ -170,9 +185,38 @@ pub fn create(obj: usize, model: usize) {
     all().insert(obj, p);
 }
 
-/// The object shows another model now: its bones, in that one's bind pose.
+/// The object shows another model now: its bones, in that one's bind pose,
+/// and that one's graph.
 pub fn change_model(obj: usize, model: usize) {
+    let callback = all().get(&obj).map(|p| p.on_graph_changed).unwrap_or(0);
     create(obj, model);
+    with(obj, |p| p.on_graph_changed = callback);
+    graph_changed(obj);
+}
+
+/// Managed's callback for a graph changed, and a first call of it.
+pub fn init_graph(obj: usize, callback: usize) {
+    with(obj, |p| p.on_graph_changed = callback);
+    graph_changed(obj);
+}
+
+/// The object runs `graph` now (0: none), from its start.
+pub fn set_graph(obj: usize, graph: usize) {
+    with(obj, |p| { p.graph = graph; p.instance = None; });
+    graph_changed(obj);
+}
+
+/// Tells managed the graph changed, if it asked to hear (never under the lock).
+fn graph_changed(obj: usize) {
+    let callback = all().get(&obj).map(|p| p.on_graph_changed).unwrap_or(0);
+    if callback != 0 {
+        let f: extern "C" fn(usize) = unsafe { std::mem::transmute(callback) };
+        f(obj);
+    }
+}
+
+pub fn graph_of(obj: usize) -> usize {
+    all().get(&obj).map(|p| p.graph).unwrap_or(0)
 }
 
 pub fn model_of(obj: usize) -> usize {
@@ -191,7 +235,52 @@ pub fn with<R>(obj: usize, f: impl FnOnce(&mut Posed) -> R) -> Option<R> {
 /// The animation's step: the bones take the animation's pose, for managed's
 /// procedural bones and the world placement to follow.
 pub fn update(obj: usize, delta: f32) {
-    with(obj, |p| { p.delta = delta; p.step(delta); });
+    let use_graph = crate::state::get::<i32>(obj, crate::slots::PROP_ShouldUseAnimGraph) != 0;
+    with(obj, |p| {
+        p.delta = delta;
+        if use_graph && p.graph != 0 { p.run_graph(delta) } else { p.step(delta) }
+    });
+}
+
+// a graph's parameters on an object, as managed holds them: each (object,
+// parameter) at an address of its own
+
+fn parameters() -> MutexGuard<'static, (HashMap<(usize, usize), usize>, HashMap<usize, (usize, usize)>)> {
+    static P: OnceLock<Mutex<(HashMap<(usize, usize), usize>, HashMap<usize, (usize, usize)>)>> = OnceLock::new();
+    P.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Parameter `index` of the object's graph: its object (0: none such).
+pub fn parameter(obj: usize, index: usize) -> usize {
+    let n = crate::animgraph::graph(graph_of(obj)).map(|g| g.params.len()).unwrap_or(0);
+    if index >= n { return 0; }
+    let mut p = parameters();
+    if let Some(&ptr) = p.0.get(&(obj, index)) { return ptr; }
+    let ptr = crate::handles::object();
+    p.0.insert((obj, index), ptr);
+    p.1.insert(ptr, (obj, index));
+    ptr
+}
+
+pub fn parameter_named(obj: usize, name: &str) -> usize {
+    let Some(g) = crate::animgraph::graph(graph_of(obj)) else { return 0 };
+    g.params.iter().position(|p| p.name.to_bytes().eq_ignore_ascii_case(name.as_bytes())).map(|i| parameter(obj, i)).unwrap_or(0)
+}
+
+/// A parameter object's graph parameter, and its value on its object (set with `set`).
+pub fn with_parameter<R>(ptr: usize, f: impl FnOnce(&'static crate::animgraph::Param, &mut crate::animgraph::Variant) -> R) -> Option<R> {
+    let (obj, index) = *parameters().1.get(&ptr)?;
+    let g = crate::animgraph::graph(graph_of(obj))?;
+    let param = g.params.get(index)?;
+    with(obj, |p| {
+        let i = p.instance.get_or_insert_with(|| crate::animgraph::Instance::new(g));
+        i.values.get_mut(index).map(|v| f(param, v))
+    }).flatten()
+}
+
+pub fn reset_parameters(obj: usize) {
+    let Some(g) = crate::animgraph::graph(graph_of(obj)) else { return };
+    with(obj, |p| if let Some(i) = p.instance.as_mut() { i.reset_parameters(g) });
 }
 
 pub fn set_bind_pose(obj: usize) {
