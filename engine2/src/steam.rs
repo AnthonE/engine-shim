@@ -164,7 +164,7 @@ fn verify_proof(claimed: u64, message: &str, signature: &[u8], domains: &[String
         Some(_) => {
             c.remove(&f.nonce);
             crate::trace::note(&format!("steam: {claimed} is {}", siwe::hex(&signer)));
-            wallets().lock().unwrap().insert(claimed, siwe::hex(&signer));
+            wallets().lock().unwrap().insert(claimed, (siwe::hex(&signer), now));
             Ok(claimed)
         }
     }
@@ -263,22 +263,31 @@ pub fn end_auth(player: u64) {
     wallets().lock().unwrap().remove(&player);
 }
 
-// ---- wallets: the address each signed-in player proved
+// ---- wallets: the address each signed-in player proved, and when
 
-fn wallets() -> &'static Mutex<HashMap<u64, String>> {
-    static W: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
+fn wallets() -> &'static Mutex<HashMap<u64, (String, i64)>> {
+    static W: OnceLock<Mutex<HashMap<u64, (String, i64)>>> = OnceLock::new();
     W.get_or_init(Default::default)
 }
 
 pub fn wallet_of(player: u64) -> Option<String> {
-    wallets().lock().unwrap().get(&player).cloned()
+    wallets().lock().unwrap().get(&player).map(|(w, _)| w.clone())
 }
 
 /// The players in a session who signed in: (player, wallet).
 pub fn roster() -> Vec<(u64, String)> {
     let s = sessions().lock().unwrap();
     let w = wallets().lock().unwrap();
-    s.iter().filter_map(|p| w.get(p).map(|a| (*p, a.clone()))).collect()
+    s.iter().filter_map(|p| w.get(p).map(|(a, _)| (*p, a.clone()))).collect()
+}
+
+/// Who is signed in here, and since when (unix seconds): `online.json`.
+pub fn online() -> Vec<(String, i64)> {
+    let s = sessions().lock().unwrap();
+    let w = wallets().lock().unwrap();
+    let mut o: Vec<_> = s.iter().filter_map(|p| w.get(p).cloned()).collect();
+    o.sort_by_key(|(_, since)| *since);
+    o
 }
 
 /// ValidateAuthTicketResponse_t, Pack 4: SteamID, the response, the owner.

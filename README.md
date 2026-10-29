@@ -100,7 +100,7 @@ kicks (the player hears why), and "could not look" never does.
 | `ENGINE2_PUBLIC_ADDR` | `host:port` players reach this server at: the row's `addr`, and the `elo://join/<slug>/<addr>` link printed at start |
 | `ENGINE2_SHARDLIST` | where to write the row, kept current; the origin serves `$SCRY_DEPOTS_DIR/<slug>/servers.json` as written |
 | `ENGINE2_SHARD_ID` | the row's `id` (default: the address) |
-| `ENGINE2_STATUS_ADDR` | where `GET /status.json` answers, plain HTTP (`{"players":…,"max_players":…,"tick":…}`) |
+| `ENGINE2_STATUS_ADDR` | where `GET /status.json` answers, plain HTTP (`{"players":…,"max_players":…,"tick":…}`), and beside it `GET /online.json`, who is signed in and since when: the store's playtime and friends' "playing now" read it |
 | `ENGINE2_STATUS_URL` | where the world reaches it, for the row's `status_url` (https, behind your proxy) |
 | `ENGINE2_ELO_ORIGIN` | `https://elopros.com` arms the copy check (`/api/ticket/<slug>/…`). Unset: nothing is checked |
 

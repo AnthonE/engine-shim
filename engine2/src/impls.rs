@@ -411,7 +411,7 @@ pub unsafe fn globalSteam_SteamGameServer_GetSteamID() -> u64 { crate::steam::id
 fn open_for_business() {
     crate::steam::log_on();
     crate::elo::announce();
-    crate::elo::serve_status(|| net().players());
+    crate::elo::serve_status(|| net().players(), crate::steam::online);
     crate::elo::sweep(crate::steam::roster, |player| net().kick(player, KICK_NO_COPY, "you no longer hold a copy of this game"));
 }
 

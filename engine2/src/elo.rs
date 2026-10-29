@@ -9,8 +9,10 @@
 //!   `$SCRY_DEPOTS_DIR/<slug>/servers.json`. Needs `ENGINE2_PUBLIC_ADDR`
 //!   (`host:port`): an address we can't know from in here.
 //! - **Status.** `GET /status.json` on `ENGINE2_STATUS_ADDR`, plain HTTP:
-//!   `{"players":3,"max_players":8,"tick":123456}`. The row's `status_url`
-//!   (`ENGINE2_STATUS_URL`) names where the world reaches it.
+//!   `{"players":3,"max_players":8,"tick":123456}`, and beside it
+//!   `GET /online.json`, who is signed in and since when, which the store's
+//!   playtime and friends' presence read. The row's `status_url`
+//!   (`ENGINE2_STATUS_URL`) names where the world reaches them.
 //! - **The ticket.** A paid title's copy is a token; `ENGINE2_ELO_ORIGIN`
 //!   (`https://elopros.com`) arms the check. At join a signed-in player's
 //!   wallet is asked about (`GET /api/ticket/{slug}/of/{wallet}`), and the
@@ -107,9 +109,16 @@ pub fn status(players: usize, s: &Server, tick: u64) -> String {
     format!("{{\"players\":{players}{max},\"tick\":{tick}}}")
 }
 
+/// `online.json` (Gates' online.rs, read by scry's playtime.py): signed-in
+/// wallets and when they came; a guest has no wallet, so no row.
+pub fn online(at: i64, rows: &[(String, i64)]) -> String {
+    let rows: Vec<String> = rows.iter().map(|(w, since)| format!("{{\"wallet\":{},\"since\":{since}}}", quote(w))).collect();
+    format!("{{\"at\":{at},\"online\":[{}]}}", rows.join(","))
+}
+
 /// The status responder, once, if `ENGINE2_STATUS_ADDR` says where:
-/// `players` counts the connections `players` reports.
-pub fn serve_status(players: fn() -> usize) {
+/// `players` counts the connections, `signed_in` who proved a wallet.
+pub fn serve_status(players: fn() -> usize, signed_in: fn() -> Vec<(String, i64)>) {
     static ONCE: OnceLock<()> = OnceLock::new();
     let Some(addr) = env("ENGINE2_STATUS_ADDR") else { return };
     ONCE.get_or_init(|| {
@@ -125,6 +134,9 @@ pub fn serve_status(players: fn() -> usize) {
                 let _ = BufReader::new(&c).read_line(&mut line);
                 let (code, body) = if line.starts_with("GET /status.json ") {
                     ("200 OK", status(players(), &server().lock().unwrap(), TICK.load(Ordering::Relaxed)))
+                } else if line.starts_with("GET /online.json ") {
+                    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+                    ("200 OK", online(at, &signed_in()))
                 } else {
                     ("404 Not Found", "{}".to_string())
                 };
@@ -330,5 +342,7 @@ mod tests {
         assert_eq!(shard_row(&Server::default(), "a:1", None), "{\"servers\":[{\"id\":\"a:1\",\"name\":\"a:1\",\"addr\":\"a:1\"}]}\n");
         assert_eq!(status(3, &s, 42), r#"{"players":3,"max_players":16,"tick":42}"#);
         assert_eq!(status(0, &Server::default(), 1), r#"{"players":0,"tick":1}"#);
+        assert_eq!(online(100, &[(W1.into(), 40), (W2.into(), 90)]), format!(r#"{{"at":100,"online":[{{"wallet":"{W1}","since":40}},{{"wallet":"{W2}","since":90}}]}}"#));
+        assert_eq!(online(5, &[]), r#"{"at":5,"online":[]}"#);
     }
 }
