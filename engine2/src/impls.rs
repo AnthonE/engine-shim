@@ -1093,6 +1093,237 @@ pub unsafe fn IPhysicsJoint_Parallel_GetDampingRatio(j: usize) -> f32 { joint::w
 pub unsafe fn IPhysicsJoint_Parallel_SetMaxTorque(j: usize, v: f32) { joint::edit_joint(j, |j| j.parallel.2 = v); }
 pub unsafe fn IPhysicsJoint_Parallel_GetMaxTorque(j: usize) -> f32 { joint::with_joint(j, |j| j.parallel.2).unwrap_or(0.0) }
 
+// ---- models made at runtime: models.rs. Their collision (an editor mesh's,
+// a procedural prop's) is what physics reads back and makes shapes of.
+
+use crate::models::{self, Hull, Mesh, Obj};
+use crate::slots::S_System_Guid;
+
+pub unsafe fn CModelBuilder_Create() -> usize { models::make(Obj::Builder { physics: 0 }) }
+pub unsafe fn CModelBuilder_DeleteThis(_builder: usize) {}
+pub unsafe fn CModelBuilder_SetPhysics_Runtime(builder: usize, bodies: usize) {
+    if let Some(Obj::Builder { physics }) = models::models().objs.get_mut(&builder) { *physics = bodies; }
+}
+pub unsafe fn CModelBuilder_CreateRuntimeModel(builder: usize, _name: usize, _strong: i32) -> usize { models::build(builder) }
+
+/// A model is itself: managed caches models by this.
+pub unsafe fn CModel_GetBindingPtr(model: usize) -> usize { model }
+pub unsafe fn CModel_GetPhysicsContainer(model: usize) -> usize { models::models().physics_of(model) }
+
+/// A polygon's triangles: indices written to `out` (room for `max`), how many.
+pub unsafe fn MeshGlue_TriangulatePolygon(points: usize, n: i32, out: usize, max: i32) -> i32 {
+    let t = models::triangulate(&unsafe { phys::read_points(points, n) });
+    let k = t.len().min(max.max(0) as usize);
+    if out != 0 {
+        for (i, &v) in t.iter().take(k).enumerate() { unsafe { core::ptr::write_unaligned((out as *mut i32).add(i), v as i32) }; }
+    }
+    k as i32
+}
+
+// a builder's bodies (CPhysBodyDescArray), and a model's (CPhysicsData)
+
+pub unsafe fn CPhysBdyDscrry_Create(n: i32, joints: i32) -> usize { models::new_bodies(n, joints) }
+pub unsafe fn CPhysBdyDscrry_DeleteThis(_bodies: usize) {}
+pub unsafe fn CPhysBdyDscrry_Get(bodies: usize, i: i32) -> usize {
+    models::models().bodies(bodies).and_then(|b| b.parts.get(i as usize).copied()).unwrap_or(0)
+}
+pub unsafe fn CPhysBdyDscrry_GetJoint(bodies: usize, i: i32) -> usize {
+    models::models().bodies(bodies).and_then(|b| b.joints.get(i as usize).copied()).unwrap_or(0)
+}
+pub unsafe fn CPhysBdyDscrry_AddSurface(bodies: usize, surface: i32) {
+    if let Some(b) = models::models().bodies(bodies) { b.surfaces.push(surface); }
+}
+
+pub unsafe fn CPhysicsData_GetBindingPtr(physics: usize) -> usize { physics }
+pub unsafe fn CPhysicsData_GetPartCount(physics: usize) -> i32 {
+    models::models().bodies(physics).map(|b| b.parts.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CPhysicsData_GetPart(physics: usize, i: i32) -> usize { unsafe { CPhysBdyDscrry_Get(physics, i) } }
+pub unsafe fn CPhysicsData_GetJointCount(physics: usize) -> i32 {
+    models::models().bodies(physics).map(|b| b.joints.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CPhysicsData_GetJoint(physics: usize, i: i32) -> usize { unsafe { CPhysBdyDscrry_GetJoint(physics, i) } }
+pub unsafe fn CPhysicsData_GetGuid(_physics: usize) -> S_System_Guid { unsafe { core::mem::zeroed() } }
+
+// a body's description (CPhysBodyDesc), which is also the part it becomes (VPhysXBodyPart_t)
+
+fn part<R: Default>(p: usize, f: impl FnOnce(&mut models::Part) -> R) -> R {
+    models::models().part(p).map(f).unwrap_or_default()
+}
+
+/// A shape of a part: a new object, its pointer listed on the part.
+fn add_to_part(p: usize, o: Obj, list: impl FnOnce(&mut models::Part) -> &mut Vec<usize>) {
+    let ptr = models::make(o);
+    part(p, |x| list(x).push(ptr));
+}
+
+pub unsafe fn CPhysBodyDesc_SetBoneName(p: usize, name: usize) {
+    let name = unsafe { read(name) };
+    part(p, |x| x.bone = name);
+}
+pub unsafe fn CPhysBodyDesc_SetSurface(p: usize, surface: S_Sandbox_StringToken) {
+    let token: u32 = unsafe { core::mem::transmute(surface) };
+    part(p, |x| x.surface = token);
+}
+pub unsafe fn CPhysBodyDesc_SetBindPose(p: usize, tx: usize) {
+    let pose = unsafe { phys::read_pose(tx) };
+    part(p, |x| x.bind_pose = pose);
+}
+pub unsafe fn CPhysBodyDesc_AddSphere(p: usize, sphere: usize) {
+    let s = unsafe { core::ptr::read_unaligned(sphere as *const S_Sandbox_Sphere) };
+    add_to_part(p, Obj::Sphere(phys::vec(s.f_Center), s.f_Radius), |x| &mut x.spheres);
+}
+pub unsafe fn CPhysBodyDesc_AddCapsule(p: usize, capsule: usize) {
+    let c = unsafe { core::ptr::read_unaligned(capsule as *const S_Capsule) };
+    add_to_part(p, Obj::Capsule(phys::vec(c.f_CenterA), phys::vec(c.f_CenterB), c.f_Radius), |x| &mut x.capsules);
+}
+
+/// The hull of `points` placed by `tx`, added to the part.
+fn add_hull(p: usize, points: Vec<rapier3d::math::Vector>, tx: rapier3d::math::Pose) {
+    let placed: Vec<_> = points.into_iter().map(|v| tx.transform_point(v)).collect();
+    if let Some(h) = Hull::of(&placed) { add_to_part(p, Obj::Hull(h), |x| &mut x.hulls); }
+}
+
+pub unsafe fn CPhysBodyDesc_AddBox(p: usize, extents: usize, tx: usize) {
+    let e = unsafe { phys::read_vec(extents) }.abs();
+    let corners = (0..8).map(|i| rapier3d::math::Vector::new(if i & 1 == 0 { -e.x } else { e.x }, if i & 2 == 0 { -e.y } else { e.y }, if i & 4 == 0 { -e.z } else { e.z })).collect();
+    add_hull(p, corners, unsafe { phys::read_pose(tx) });
+}
+pub unsafe fn CPhysBodyDesc_AddHull(p: usize, points: usize, n: i32, tx: usize) {
+    add_hull(p, unsafe { phys::read_points(points, n) }, unsafe { phys::read_pose(tx) });
+}
+/// As AddHull: the simplification asked for is not done.
+pub unsafe fn CPhysBodyDesc_AddHull_1(p: usize, points: usize, n: i32, tx: usize, _degrees: f32, _inches: f32, _faces: i32, _edges: i32, _verts: i32, _algo: i32) {
+    add_hull(p, unsafe { phys::read_points(points, n) }, unsafe { phys::read_pose(tx) });
+}
+pub unsafe fn CPhysBodyDesc_AddMesh(p: usize, vertices: usize, nv: u32, indices: usize, ni: u32, materials: usize) {
+    let triangles = unsafe { read_triangles(indices, ni as i32) };
+    let materials = if materials == 0 { Vec::new() } else { unsafe { core::slice::from_raw_parts(materials as *const u8, triangles.len()) }.to_vec() };
+    let mesh = Mesh { vertices: unsafe { phys::read_points(vertices, nv as i32) }, triangles, materials };
+    add_to_part(p, Obj::Mesh(mesh), |x| &mut x.meshes);
+}
+
+pub unsafe fn Get__CPhysBodyDesc_m_flMass(p: usize) -> f32 { part(p, |x| x.mass) }
+pub unsafe fn Set__CPhysBodyDesc_m_flMass(p: usize, v: f32) { part(p, |x| x.mass = v) }
+pub unsafe fn Get__CPhysBodyDesc_m_flInertiaScale(p: usize) -> f32 { part(p, |x| x.inertia_scale) }
+pub unsafe fn Set__CPhysBodyDesc_m_flInertiaScale(p: usize, v: f32) { part(p, |x| x.inertia_scale = v) }
+pub unsafe fn Get__CPhysBodyDesc_m_flLinearDamping(p: usize) -> f32 { part(p, |x| x.linear_damping) }
+pub unsafe fn Set__CPhysBodyDesc_m_flLinearDamping(p: usize, v: f32) { part(p, |x| x.linear_damping = v) }
+pub unsafe fn Get__CPhysBodyDesc_m_flAngularDamping(p: usize) -> f32 { part(p, |x| x.angular_damping) }
+pub unsafe fn Set__CPhysBodyDesc_m_flAngularDamping(p: usize, v: f32) { part(p, |x| x.angular_damping = v) }
+
+pub unsafe fn VPhysXBodyPart_t_GetSphereCount(p: usize) -> i32 { part(p, |x| x.spheres.len() as i32) }
+pub unsafe fn VPhysXBodyPart_t_GetSphere(p: usize, i: i32) -> usize { part(p, |x| x.spheres.get(i as usize).copied().unwrap_or(0)) }
+pub unsafe fn VPhysXBodyPart_t_GetCapsuleCount(p: usize) -> i32 { part(p, |x| x.capsules.len() as i32) }
+pub unsafe fn VPhysXBodyPart_t_GetCapsule(p: usize, i: i32) -> usize { part(p, |x| x.capsules.get(i as usize).copied().unwrap_or(0)) }
+pub unsafe fn VPhysXBodyPart_t_GetHullCount(p: usize) -> i32 { part(p, |x| x.hulls.len() as i32) }
+pub unsafe fn VPhysXBodyPart_t_GetHull(p: usize, i: i32) -> usize { part(p, |x| x.hulls.get(i as usize).copied().unwrap_or(0)) }
+pub unsafe fn VPhysXBodyPart_t_GetMeshCount(p: usize) -> i32 { part(p, |x| x.meshes.len() as i32) }
+pub unsafe fn VPhysXBodyPart_t_GetMesh(p: usize, i: i32) -> usize { part(p, |x| x.meshes.get(i as usize).copied().unwrap_or(0)) }
+pub unsafe fn Get__VPhysXBodyPart_t_m_nFlags(p: usize) -> u32 { part(p, |x| x.flags) }
+pub unsafe fn Set__VPhysXBodyPart_t_m_nFlags(p: usize, v: u32) { part(p, |x| x.flags = v) }
+pub unsafe fn Get__VPhysXBodyPart_t_m_flMass(p: usize) -> f32 { part(p, |x| x.mass) }
+pub unsafe fn Set__VPhysXBodyPart_t_m_flMass(p: usize, v: f32) { part(p, |x| x.mass = v) }
+pub unsafe fn Get__VPhysXBodyPart_t_m_flInertiaScale(p: usize) -> f32 { part(p, |x| x.inertia_scale) }
+pub unsafe fn Set__VPhysXBodyPart_t_m_flInertiaScale(p: usize, v: f32) { part(p, |x| x.inertia_scale = v) }
+pub unsafe fn Get__VPhysXBodyPart_t_m_flLinearDamping(p: usize) -> f32 { part(p, |x| x.linear_damping) }
+pub unsafe fn Set__VPhysXBodyPart_t_m_flLinearDamping(p: usize, v: f32) { part(p, |x| x.linear_damping = v) }
+pub unsafe fn Get__VPhysXBodyPart_t_m_flAngularDamping(p: usize) -> f32 { part(p, |x| x.angular_damping) }
+pub unsafe fn Set__VPhysXBodyPart_t_m_flAngularDamping(p: usize, v: f32) { part(p, |x| x.angular_damping = v) }
+pub unsafe fn Get__VPhysXBodyPart_t_m_flGravityScale(p: usize) -> f32 { part(p, |x| x.gravity_scale) }
+pub unsafe fn Set__VPhysXBodyPart_t_m_flGravityScale(p: usize, v: f32) { part(p, |x| x.gravity_scale = v) }
+pub unsafe fn Get__VPhysXBodyPart_t_m_bOverrideMassCenter(p: usize) -> i32 { part(p, |x| x.override_mass_center as i32) }
+pub unsafe fn Set__VPhysXBodyPart_t_m_bOverrideMassCenter(p: usize, v: i32) { part(p, |x| x.override_mass_center = v != 0) }
+pub unsafe fn Get__VPhysXBodyPart_t_m_vMassCenterOverride(p: usize) -> S_Vector3 { phys::v3(part(p, |x| x.mass_center)) }
+pub unsafe fn Set__VPhysXBodyPart_t_m_vMassCenterOverride(p: usize, v: usize) {
+    let v = unsafe { phys::read_vec(v) };
+    part(p, |x| x.mass_center = v)
+}
+
+// a part's shapes: spheres, capsules, hulls, meshes
+
+pub unsafe fn Get__RnSphereDesc_t_m_Sphere(p: usize) -> S_Sandbox_Sphere {
+    match models::models().objs.get(&p) {
+        Some(Obj::Sphere(c, r)) => S_Sandbox_Sphere { f_Center: phys::v3(*c), f_Radius: *r },
+        _ => S_Sandbox_Sphere { f_Center: phys::v3(rapier3d::math::Vector::ZERO), f_Radius: 0.0 },
+    }
+}
+pub unsafe fn Get__RnCapsuleDesc_t_m_Capsule(p: usize) -> S_Capsule {
+    match models::models().objs.get(&p) {
+        Some(Obj::Capsule(a, b, r)) => S_Capsule { f_CenterA: phys::v3(*a), f_CenterB: phys::v3(*b), f_Radius: *r },
+        _ => S_Capsule { f_CenterA: phys::v3(rapier3d::math::Vector::ZERO), f_CenterB: phys::v3(rapier3d::math::Vector::ZERO), f_Radius: 0.0 },
+    }
+}
+/// A hull's (a mesh's) description is the hull (the mesh).
+pub unsafe fn RnHullDesc_t_GetHull(p: usize) -> usize { p }
+pub unsafe fn RnMeshDesc_t_GetMesh(p: usize) -> usize { p }
+
+fn hull<R: Default>(p: usize, f: impl FnOnce(&Hull) -> R) -> R { models::models().hull(p).map(f).unwrap_or_default() }
+fn mesh<R: Default>(p: usize, f: impl FnOnce(&Mesh) -> R) -> R { models::models().mesh(p).map(f).unwrap_or_default() }
+fn bbox((lo, hi): (rapier3d::math::Vector, rapier3d::math::Vector)) -> S_BBox { S_BBox { f_Mins: phys::v3(lo), f_Maxs: phys::v3(hi) } }
+
+pub unsafe fn RnHull_t_GetVertexCount(p: usize) -> i32 { hull(p, |h| h.points.len() as i32) }
+pub unsafe fn RnHull_t_GetEdgeCount(p: usize) -> i32 { hull(p, |h| h.edges.len() as i32) }
+pub unsafe fn RnHull_t_GetVertex(p: usize, i: i32) -> S_Vector3 { phys::v3(hull(p, |h| h.points.get(i as usize).copied().unwrap_or_default())) }
+pub unsafe fn RnHull_t_GetEdgeVertex(p: usize, i: i32, a: usize, b: usize) {
+    let (va, vb) = hull(p, |h| h.edges.get(i as usize).map(|&(x, y)| (h.points[x as usize], h.points[y as usize])).unwrap_or_default());
+    if a != 0 { unsafe { core::ptr::write_unaligned(a as *mut S_Vector3, phys::v3(va)) }; }
+    if b != 0 { unsafe { core::ptr::write_unaligned(b as *mut S_Vector3, phys::v3(vb)) }; }
+}
+pub unsafe fn RnHull_t_GetBbox(p: usize) -> S_BBox { bbox(hull(p, |h| h.bounds())) }
+pub unsafe fn RnHull_t_GetCentroid(p: usize) -> S_Vector3 {
+    phys::v3(hull(p, |h| h.points.iter().copied().sum::<rapier3d::math::Vector>() / h.points.len().max(1) as f32))
+}
+pub unsafe fn RnHull_t_GetMassCenter(p: usize) -> S_Vector3 { unsafe { RnHull_t_GetCentroid(p) } }
+
+pub unsafe fn RnMesh_t_GetTriangleCount(p: usize) -> i32 { mesh(p, |m| m.triangles.len() as i32) }
+pub unsafe fn RnMesh_t_GetVertexCount(p: usize) -> i32 { mesh(p, |m| m.vertices.len() as i32) }
+pub unsafe fn RnMesh_t_GetVertex(p: usize, i: i32) -> S_Vector3 { phys::v3(mesh(p, |m| m.vertices.get(i as usize).copied().unwrap_or_default())) }
+pub unsafe fn RnMesh_t_GetBbox(p: usize) -> S_BBox { bbox(mesh(p, |m| m.bounds())) }
+/// How many materials a mesh's triangles name: one more than the highest.
+pub unsafe fn RnMesh_t_GetMaterialCount(p: usize) -> i32 { mesh(p, |m| m.materials.iter().max().map(|&x| x as i32 + 1).unwrap_or(0)) }
+pub unsafe fn RnMesh_t_GetTriangleMaterial(p: usize, i: i32) -> i32 { mesh(p, |m| m.materials.get(i as usize).map(|&x| x as i32).unwrap_or(0)) }
+pub unsafe fn RnMesh_t_GetTriangleIndices(p: usize, i: i32, a: usize, b: usize, c: usize) {
+    let t = mesh(p, |m| m.triangles.get(i as usize).copied().unwrap_or_default());
+    for (out, v) in [(a, t[0]), (b, t[1]), (c, t[2])] {
+        if out != 0 { unsafe { core::ptr::write_unaligned(out as *mut i32, v as i32) }; }
+    }
+}
+pub unsafe fn RnMesh_t_GetTriangle(p: usize, i: i32, a: usize, b: usize, c: usize) {
+    let t = mesh(p, |m| m.triangles.get(i as usize).map(|t| t.map(|k| m.vertices.get(k as usize).copied().unwrap_or_default())).unwrap_or_default());
+    for (out, v) in [(a, t[0]), (b, t[1]), (c, t[2])] {
+        if out != 0 { unsafe { core::ptr::write_unaligned(out as *mut S_Vector3, phys::v3(v)) }; }
+    }
+}
+
+// a body given a model's hull or mesh, placed (and scaled) by a transform
+
+/// A transform as where it puts things, and how it scales their points
+/// first (no scale, or a zero one: none).
+unsafe fn placed(tx: usize, points: Vec<rapier3d::math::Vector>) -> (rapier3d::math::Pose, Vec<rapier3d::math::Vector>) {
+    if tx == 0 { return (rapier3d::math::Pose::IDENTITY, points); }
+    let t = unsafe { core::ptr::read_unaligned(tx as *const S_Transform) };
+    let s = phys::vec(t.f_Scale);
+    let s = rapier3d::math::Vector::new(if s.x == 0.0 { 1.0 } else { s.x }, if s.y == 0.0 { 1.0 } else { s.y }, if s.z == 0.0 { 1.0 } else { s.z });
+    let pose = rapier3d::math::Pose::from_parts(phys::vec(t.f_Position), phys::quat(t.f_Rotation));
+    (pose, if s == rapier3d::math::Vector::ONE { points } else { points.into_iter().map(|p| p * s).collect() })
+}
+
+pub unsafe fn IPhysicsBody_AddHullShape_1(body: usize, h: usize, tx: usize, settings: usize) -> i32 {
+    let (at, points) = unsafe { placed(tx, hull(h, |h| h.points.clone())) };
+    add_shape(body, Geometry::Hull(at, points), settings)
+}
+/// A mesh as its hull.
+pub unsafe fn IPhysicsBody_AddHullShape_2(body: usize, m: usize, tx: usize, settings: usize) -> i32 {
+    let (at, points) = unsafe { placed(tx, mesh(m, |m| m.vertices.clone())) };
+    add_shape(body, Geometry::Hull(at, points), settings)
+}
+pub unsafe fn IPhysicsBody_AddMeshShape_1(body: usize, m: usize, tx: usize, _materials: i32, settings: usize) -> i32 {
+    let (vertices, triangles) = mesh(m, |m| (m.vertices.clone(), m.triangles.clone()));
+    let (at, vertices) = unsafe { placed(tx, vertices) };
+    add_shape(body, Geometry::Mesh(at, vertices, triangles), settings)
+}
+
 // traces
 
 pub unsafe fn PhysicsTrace_Trace(request: usize) -> S_PhysicsTrace_Result {

@@ -275,10 +275,55 @@ through the slots alone falls, lands, is heard moving and falling asleep,
 touches the floor, is traced, queried, filtered past, knocked back up and
 removed.
 
+## A real game: Facepunch's Sandbox
+
+[Facepunch/sandbox](https://github.com/Facepunch/sandbox) (MIT), s&box's
+Garry's Mod: 379 C# files, 151 prefabs, its own resource types. Its code
+compiles in the engine, its resources (all JSON but its models and
+materials) load, it hosts, and a player joins it.
+
+Its map (`facepunch.flatgrass`) and some of its content
+(`facepunch.sbox_content`, graffiti) are packages on sbox.game under
+Facepunch's terms, not in the repository, and aren't fetched here. So
+`tools/sandbox.sh` starts its dedicated server in one of its own scenes,
+`zoo.scene` (a test level of editor meshes, props, a jointed car), and
+adds a watcher. Measured (`grep shimwatch target/spike/server.log`):
+
+- The level's 11 editor meshes have collision. Their collision is built
+  at runtime by managed's `ModelBuilder` through the native model builder
+  (`engine2/src/models.rs`: models, their bodies' descriptions, hulls,
+  meshes and the physics container managed reads them back from, and the
+  polygon triangulation the editor mesh is made with).
+- 15 of its 18 bodies come to rest on them, among them the car, a hull on
+  four hinged wheels. The other three are props made from model files
+  (`ModelCollider`), which wait for the assets step and fall.
+- A player joins, spawns, and stands on the floor (`on Block`): the
+  player controller's ground traces run on this library's physics.
+
+```sh
+git clone https://github.com/Facepunch/sandbox ../sandbox
+sh tools/sandbox.sh ../sandbox
+SBOX=../sbox-public sh spike.sh 120 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
+# once "Server started!" (startup waits a while on sbox.game for what it can't have):
+(cd ../sbox-public/game && ./sbox-server +shimclient 127.0.0.1:27015 +instanceid 2)
+grep shimwatch target/spike/server.log
+```
+
+**The size of a server, measured.** The server and a player together call
+485 distinct slots: 167 written by hand, 106 generated (handles and
+remembered properties), 212 still stubs. Of the stubs, 85 are rendering
+and the scene's render objects, 39 the engine's own odds and ends, 32
+Steam's bookkeeping, 29 models (what a model file holds: meshes, bones,
+hitboxes), 15 sound, 12 physics (debug drawing, scrape contacts, the
+navmesh's triangulation, surface properties).
+
 What the game's components still can't do:
 
-- **Model physics.** A model's collision (`CreateAggregateInstance`, the
-  hulls and meshes a model carries) waits for the assets step.
+- **Model files.** A model loaded from disk (`.vmdl_c`: its meshes,
+  bones, hitboxes, its collision, `CreateAggregateInstance`) waits for the
+  assets step. Models built at runtime are here (above).
+- **Surfaces.** Every shape has the default friction and density; the
+  project's surfaces (`.surface`) aren't read into physics yet.
 
 ## Reproduce
 
@@ -311,7 +356,7 @@ the checkout's root writes `engine/Sandbox.Engine/Interop.Engine.cs` and
 the C++ under `src/`. The folders the `.def` files name for C++ must exist
 first.
 
-**sbox-public.patch** changes two things locally, neither shipped:
+**sbox-public.patch** changes a few things locally, none shipped:
 
 - `System.Speech` comes from NuGet, not the Windows DLL their setup downloads.
 - The server's launcher prints every managed log line to stdout (and says
@@ -319,15 +364,18 @@ first.
   through the `game` command 30 frames in. The engine runs `+game` itself,
   but only as a package to download from sbox.game; a local project goes
   through the command. A path there is the server's: give it absolute.
-- `+shimhost` runs `host` 300 frames later: it opens the lobby, as a
-  networked game's `NetworkHelper` does for itself.
+- `+shimhost` runs `host` once the game and its scene have loaded: it
+  opens the lobby, as a networked game's `NetworkHelper` does for itself.
 - `+shimclient <address>` boots the same launcher as a headless player (a
   game app, not a dedicated server) and runs `connect <address>`.
 - A dedicated server running a local project counts as a developer host
   (`NetworkSystem.IsDeveloperHost`). It already sends such a game's code
   to its players (`GameInstanceDll`'s code archives), but told them it was
   no developer host, so they looked for a published package and failed.
-  This one is a fix upstream could take.
+  And it names its game `org.ident#local` to them: a local project that
+  shares its ident with a published game (Facepunch's own Sandbox) sent
+  its players to download the published one, through Steam's workshop.
+  These are fixes upstream could take.
 
 `tools/compile.sh` copies a project's scenes and prefabs to their `_c`
 names, which is all a JSON resource needs here. Models, materials and
@@ -348,6 +396,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer, freed |
 | `engine2/src/physics.rs` | physics on Rapier: worlds, bodies, shapes, the step and what touched, collision rules, traces and queries |
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
+| `engine2/src/models.rs` | models built at runtime: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
 | `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
@@ -359,12 +408,12 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
 | `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
 | `tools/jointrig.sh`, `tools/jointrig/` | five rigs of s&box's joint components, and what each does |
+| `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
 
-1. **A server that runs a game.** The handle protocol, physics and joints
-   are here (above); next a real open-source s&box game: its trace is the
-   measured size of "a server", the slots one game needs.
+1. **A server that runs a game.** Facepunch's Sandbox hosts and is joined
+   (above). What its world still lacks is model files: the assets step.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
    the shard list and the relay are ours now, and a player joins (above).
    Next: lobbies. A relay run for others wants a price, as the stream relay's

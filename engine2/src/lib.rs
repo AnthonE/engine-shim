@@ -12,6 +12,7 @@ mod elo_overlay;
 mod elo;
 mod handles;
 mod impls;
+mod models;
 mod net;
 mod physics;
 pub mod relay;
