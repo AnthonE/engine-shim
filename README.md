@@ -199,7 +199,7 @@ it, with no error at all, and the physics world steps on both.
 **Things move** (`engine2/src/physics.rs`). Where s&box's native engine
 runs Box3D, worlds, bodies and shapes here are Rapier's (MIT/Apache-2.0,
 pure Rust, so the browser too), in s&box's units (inches, kilograms;
-Rapier's tolerances told so). 157 slots are written, the physics ones and
+Rapier's tolerances told so). 268 slots are written, the physics ones and
 the result vectors they fill:
 
 - **Bodies**: static, keyframed (sent to a target each step) and dynamic;
@@ -227,8 +227,18 @@ the result vectors they fill:
   masks and its filter delegate, with the hit's body, shape, surface, tags
   and triangle. Also traces against one given shape, and `FindInPhysics`'s
   sphere, box and frustum queries.
-- **Handles**: bodies and shapes removed free their managed handles, so
-  managed's objects stop being valid with them.
+- **Joints** (`engine2/src/physics/joints.rs`): all nine of s&box's kinds,
+  each one of Rapier's generic joints, on Box3D's axes (a hinge turns
+  about its frame's z, a slider and a wheel's suspension run along its x):
+  welds (rigid, or soft on their springs), springs and ropes (a range, a
+  rest length, pulling or pushing only), hinges and sliders with limits,
+  springs, motors and friction, ball joints with twist and swing limits,
+  a target rotation or a motor, wheels (suspension, steering, a spinning
+  motor), motor (control) joints, upright joints and filter joints. A
+  joint pulled past its strength is told to managed once
+  (`PhysicsEngine.OnPhysicsJointBreak`); a body removed takes its joints.
+- **Handles**: bodies, shapes and joints removed free their managed
+  handles, so managed's objects stop being valid with them.
 
 Measured under the real server: Sweeper's scene has 72 physics cubes
 stacked on a plane. With `tools/physdrop.sh`'s watcher in it, all 72 start
@@ -245,6 +255,21 @@ SBOX=../sbox-public sh spike.sh 25 +shimgame /tmp/physdrop/.sbproj
 grep watch target/spike/server.log
 ```
 
+And joints, by s&box's own joint components (`tools/jointrig.sh`): a
+pendulum on a `HingeJoint` keeps to 100.0 from its pivot and to its plane
+(y 0.00) as it swings from side to side; a chain of three `BallJoint`s
+keeps its links 49.5 apart as it swings; a box on a `SpringJoint` (rest
+100, 2 Hz) settles at 105.4, the 5.4 gravity's pull at that stiffness
+predicts; a box on a vertical `SliderJoint` drops to its limit, -100,
+and no way else; a `FixedJoint` with a break force of 1 breaks at once,
+`OnBreak` fires, and its box falls to the floor.
+
+```sh
+sh tools/jointrig.sh ../sbox-public /tmp/jointrig
+SBOX=../sbox-public sh spike.sh 12 +shimgame /tmp/jointrig/.sbproj
+grep jointrig target/spike/server.log
+```
+
 Also tested the way managed calls it (`cargo test`): a ball dropped
 through the slots alone falls, lands, is heard moving and falling asleep,
 touches the floor, is traced, queried, filtered past, knocked back up and
@@ -252,9 +277,6 @@ removed.
 
 What the game's components still can't do:
 
-- **Joints.** Made and remembered (102 slots), not simulated yet:
-  Rapier's fixed, spherical, revolute, prismatic and spring joints map
-  onto most of them.
 - **Model physics.** A model's collision (`CreateAggregateInstance`, the
   hulls and meshes a model carries) waits for the assets step.
 
@@ -325,6 +347,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer, freed |
 | `engine2/src/physics.rs` | physics on Rapier: worlds, bodies, shapes, the step and what touched, collision rules, traces and queries |
+| `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
 | `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
@@ -335,12 +358,13 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `spike.sh` | one turn of the loop |
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
 | `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
+| `tools/jointrig.sh`, `tools/jointrig/` | five rigs of s&box's joint components, and what each does |
 
 ## Next
 
-1. **A server that runs a game.** The handle protocol and physics are
-   here (above); next joints, then a real open-source s&box game: its
-   trace is the measured size of "a server", the slots one game needs.
+1. **A server that runs a game.** The handle protocol, physics and joints
+   are here (above); next a real open-source s&box game: its trace is the
+   measured size of "a server", the slots one game needs.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
    the shard list and the relay are ours now, and a player joins (above).
    Next: lobbies. A relay run for others wants a price, as the stream relay's

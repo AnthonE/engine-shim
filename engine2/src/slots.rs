@@ -2878,107 +2878,107 @@ unsafe extern "C" fn s1835(_a0: usize, _a1: usize, _a2: usize, _a3: f32, _a4: f3
 unsafe extern "C" fn s1836(_a0: usize, _a1: f32) { hit(1836); unsafe { crate::impls::IPhysicsBody_ScaleInertia(_a0, _a1) } }
 unsafe extern "C" fn s1837(_a0: usize, _a1: i32) { hit(1837);  }
 unsafe extern "C" fn s1838(_a0: usize) -> i32 { hit(1838); crate::handles::related(_a0, "PhysicsWorld") }
-unsafe extern "C" fn s1839(_a0: usize) -> i32 { hit(1839); crate::handles::related(_a0, "PhysicsBody") }
-unsafe extern "C" fn s1840(_a0: usize) -> i32 { hit(1840); crate::handles::related(_a0, "PhysicsBody") }
-unsafe extern "C" fn s1841(_a0: usize, _a1: usize, _a2: usize) { hit(1841);  }
-unsafe extern "C" fn s1842(_a0: usize, _a1: usize, _a2: usize) { hit(1842);  }
-unsafe extern "C" fn s1843(_a0: usize, _a1: usize, _a2: usize) { hit(1843);  }
-unsafe extern "C" fn s1844(_a0: usize, _a1: usize, _a2: usize) { hit(1844);  }
-unsafe extern "C" fn s1845(_a0: usize, _a1: i32) { hit(1845);  }
-unsafe extern "C" fn s1846(_a0: usize) -> i32 { hit(1846); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1847(_a0: usize) -> i64 { hit(1847); crate::state::get::<i64>(_a0, 164) }
-unsafe extern "C" fn s1848(_a0: usize, _a1: usize) { hit(1848); unsafe { crate::state::set_from::<S_Vector3>(_a0, 165, _a1) } }
-unsafe extern "C" fn s1849(_a0: usize) -> S_Vector3 { hit(1849); crate::state::get::<S_Vector3>(_a0, 165) }
-unsafe extern "C" fn s1850(_a0: usize, _a1: usize) { hit(1850); unsafe { crate::state::set_from::<S_Vector3>(_a0, 166, _a1) } }
-unsafe extern "C" fn s1851(_a0: usize) -> S_Vector3 { hit(1851); crate::state::get::<S_Vector3>(_a0, 166) }
-unsafe extern "C" fn s1852(_a0: usize, _a1: f32, _a2: f32) { hit(1852);  }
-unsafe extern "C" fn s1853(_a0: usize, _a1: f32, _a2: f32) { hit(1853);  }
-unsafe extern "C" fn s1854(_a0: usize, _a1: f32) { hit(1854); crate::state::set(_a0, 167, _a1) }
-unsafe extern "C" fn s1855(_a0: usize) -> f32 { hit(1855); crate::state::get::<f32>(_a0, 167) }
-unsafe extern "C" fn s1856(_a0: usize, _a1: f32) { hit(1856); crate::state::set(_a0, 168, _a1) }
-unsafe extern "C" fn s1857(_a0: usize) -> f32 { hit(1857); crate::state::get::<f32>(_a0, 168) }
-unsafe extern "C" fn s1858(_a0: usize, _a1: f32) { hit(1858); crate::state::set(_a0, 169, _a1) }
-unsafe extern "C" fn s1859(_a0: usize) -> f32 { hit(1859); crate::state::get::<f32>(_a0, 169) }
-unsafe extern "C" fn s1860(_a0: usize, _a1: f32) { hit(1860); crate::state::set(_a0, 170, _a1) }
-unsafe extern "C" fn s1861(_a0: usize) -> f32 { hit(1861); crate::state::get::<f32>(_a0, 170) }
-unsafe extern "C" fn s1862(_a0: usize, _a1: f32) { hit(1862); crate::state::set(_a0, 171, _a1) }
-unsafe extern "C" fn s1863(_a0: usize, _a1: f32) { hit(1863);  }
-unsafe extern "C" fn s1864(_a0: usize, _a1: i32) { hit(1864);  }
-unsafe extern "C" fn s1865(_a0: usize, _a1: f32, _a2: f32) { hit(1865);  }
-unsafe extern "C" fn s1866(_a0: usize, _a1: i32) { hit(1866);  }
-unsafe extern "C" fn s1867(_a0: usize, _a1: f32, _a2: f32) { hit(1867);  }
-unsafe extern "C" fn s1868(_a0: usize, _a1: i32) { hit(1868);  }
-unsafe extern "C" fn s1869(_a0: usize) -> f32 { hit(1869); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1870(_a0: usize) -> f32 { hit(1870); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1871(_a0: usize) -> f32 { hit(1871); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1872(_a0: usize) -> f32 { hit(1872); crate::state::get::<f32>(_a0, 172) }
-unsafe extern "C" fn s1873(_a0: usize) -> f32 { hit(1873); crate::state::get::<f32>(_a0, 173) }
-unsafe extern "C" fn s1874(_a0: usize, _a1: f32) { hit(1874); crate::state::set(_a0, 172, _a1) }
-unsafe extern "C" fn s1875(_a0: usize, _a1: f32) { hit(1875); crate::state::set(_a0, 173, _a1) }
-unsafe extern "C" fn s1876(_a0: usize, _a1: usize, _a2: f32) { hit(1876);  }
-unsafe extern "C" fn s1877(_a0: usize, _a1: usize, _a2: f32, _a3: f32) { hit(1877);  }
-unsafe extern "C" fn s1878(_a0: usize, _a1: usize) { hit(1878); unsafe { crate::state::set_from::<S_Vector3>(_a0, 162, _a1) } }
-unsafe extern "C" fn s1879(_a0: usize, _a1: usize) { hit(1879); unsafe { crate::state::set_from::<S_Vector3>(_a0, 153, _a1) } }
-unsafe extern "C" fn s1880(_a0: usize, _a1: f32) { hit(1880); crate::state::set(_a0, 174, _a1) }
-unsafe extern "C" fn s1881(_a0: usize, _a1: f32) { hit(1881); crate::state::set(_a0, 175, _a1) }
-unsafe extern "C" fn s1882(_a0: usize, _a1: f32) { hit(1882); crate::state::set(_a0, 176, _a1) }
-unsafe extern "C" fn s1883(_a0: usize, _a1: f32) { hit(1883); crate::state::set(_a0, 177, _a1) }
-unsafe extern "C" fn s1884(_a0: usize, _a1: f32) { hit(1884); crate::state::set(_a0, 178, _a1) }
-unsafe extern "C" fn s1885(_a0: usize, _a1: f32) { hit(1885); crate::state::set(_a0, 179, _a1) }
-unsafe extern "C" fn s1886(_a0: usize, _a1: f32) { hit(1886); crate::state::set(_a0, 180, _a1) }
-unsafe extern "C" fn s1887(_a0: usize, _a1: f32) { hit(1887); crate::state::set(_a0, 181, _a1) }
-unsafe extern "C" fn s1888(_a0: usize) -> S_Vector3 { hit(1888); crate::state::get::<S_Vector3>(_a0, 162) }
-unsafe extern "C" fn s1889(_a0: usize) -> S_Vector3 { hit(1889); crate::state::get::<S_Vector3>(_a0, 153) }
-unsafe extern "C" fn s1890(_a0: usize) -> f32 { hit(1890); crate::state::get::<f32>(_a0, 174) }
-unsafe extern "C" fn s1891(_a0: usize) -> f32 { hit(1891); crate::state::get::<f32>(_a0, 175) }
-unsafe extern "C" fn s1892(_a0: usize) -> f32 { hit(1892); crate::state::get::<f32>(_a0, 176) }
-unsafe extern "C" fn s1893(_a0: usize) -> f32 { hit(1893); crate::state::get::<f32>(_a0, 177) }
-unsafe extern "C" fn s1894(_a0: usize) -> f32 { hit(1894); crate::state::get::<f32>(_a0, 178) }
-unsafe extern "C" fn s1895(_a0: usize) -> f32 { hit(1895); crate::state::get::<f32>(_a0, 179) }
-unsafe extern "C" fn s1896(_a0: usize) -> f32 { hit(1896); crate::state::get::<f32>(_a0, 180) }
-unsafe extern "C" fn s1897(_a0: usize) -> f32 { hit(1897); crate::state::get::<f32>(_a0, 181) }
-unsafe extern "C" fn s1898(_a0: usize, _a1: i32) { hit(1898);  }
-unsafe extern "C" fn s1899(_a0: usize) -> i32 { hit(1899); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1900(_a0: usize, _a1: f32) { hit(1900); crate::state::set(_a0, 182, _a1) }
-unsafe extern "C" fn s1901(_a0: usize) -> f32 { hit(1901); crate::state::get::<f32>(_a0, 182) }
-unsafe extern "C" fn s1902(_a0: usize, _a1: f32) { hit(1902); crate::state::set(_a0, 183, _a1) }
-unsafe extern "C" fn s1903(_a0: usize) -> f32 { hit(1903); crate::state::get::<f32>(_a0, 183) }
-unsafe extern "C" fn s1904(_a0: usize, _a1: i32) { hit(1904);  }
-unsafe extern "C" fn s1905(_a0: usize) -> i32 { hit(1905); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1906(_a0: usize) -> f32 { hit(1906); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1907(_a0: usize) -> f32 { hit(1907); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1908(_a0: usize, _a1: f32, _a2: f32) { hit(1908);  }
-unsafe extern "C" fn s1909(_a0: usize, _a1: i32) { hit(1909);  }
-unsafe extern "C" fn s1910(_a0: usize) -> i32 { hit(1910); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1911(_a0: usize, _a1: f32) { hit(1911); crate::state::set(_a0, 184, _a1) }
-unsafe extern "C" fn s1912(_a0: usize) -> f32 { hit(1912); crate::state::get::<f32>(_a0, 184) }
-unsafe extern "C" fn s1913(_a0: usize, _a1: f32) { hit(1913); crate::state::set(_a0, 185, _a1) }
-unsafe extern "C" fn s1914(_a0: usize) -> f32 { hit(1914); crate::state::get::<f32>(_a0, 185) }
-unsafe extern "C" fn s1915(_a0: usize, _a1: i32) { hit(1915);  }
-unsafe extern "C" fn s1916(_a0: usize) -> i32 { hit(1916); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1917(_a0: usize, _a1: f32) { hit(1917); crate::state::set(_a0, 186, _a1) }
-unsafe extern "C" fn s1918(_a0: usize) -> f32 { hit(1918); crate::state::get::<f32>(_a0, 186) }
-unsafe extern "C" fn s1919(_a0: usize, _a1: f32) { hit(1919); crate::state::set(_a0, 187, _a1) }
-unsafe extern "C" fn s1920(_a0: usize) -> f32 { hit(1920); crate::state::get::<f32>(_a0, 187) }
-unsafe extern "C" fn s1921(_a0: usize, _a1: f32) { hit(1921); crate::state::set(_a0, 188, _a1) }
-unsafe extern "C" fn s1922(_a0: usize) -> f32 { hit(1922); crate::state::get::<f32>(_a0, 188) }
-unsafe extern "C" fn s1923(_a0: usize, _a1: i32) { hit(1923);  }
-unsafe extern "C" fn s1924(_a0: usize) -> i32 { hit(1924); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1925(_a0: usize) -> f32 { hit(1925); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1926(_a0: usize) -> f32 { hit(1926); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1927(_a0: usize, _a1: f32, _a2: f32) { hit(1927);  }
-unsafe extern "C" fn s1928(_a0: usize, _a1: f32) { hit(1928); crate::state::set(_a0, 189, _a1) }
-unsafe extern "C" fn s1929(_a0: usize) -> f32 { hit(1929); crate::state::get::<f32>(_a0, 189) }
-unsafe extern "C" fn s1930(_a0: usize) -> f32 { hit(1930); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1931(_a0: usize) -> f32 { hit(1931); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1932(_a0: usize) -> f32 { hit(1932); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1933(_a0: usize) -> f32 { hit(1933); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1934(_a0: usize, _a1: f32) { hit(1934); crate::state::set(_a0, 190, _a1) }
-unsafe extern "C" fn s1935(_a0: usize) -> f32 { hit(1935); crate::state::get::<f32>(_a0, 190) }
-unsafe extern "C" fn s1936(_a0: usize, _a1: f32) { hit(1936); crate::state::set(_a0, 191, _a1) }
-unsafe extern "C" fn s1937(_a0: usize) -> f32 { hit(1937); crate::state::get::<f32>(_a0, 191) }
-unsafe extern "C" fn s1938(_a0: usize, _a1: f32) { hit(1938); crate::state::set(_a0, 192, _a1) }
-unsafe extern "C" fn s1939(_a0: usize) -> f32 { hit(1939); crate::state::get::<f32>(_a0, 192) }
+unsafe extern "C" fn s1839(_a0: usize) -> i32 { hit(1839); unsafe { crate::impls::IPhysicsJoint_GetBody1(_a0) } }
+unsafe extern "C" fn s1840(_a0: usize) -> i32 { hit(1840); unsafe { crate::impls::IPhysicsJoint_GetBody2(_a0) } }
+unsafe extern "C" fn s1841(_a0: usize, _a1: usize, _a2: usize) { hit(1841); unsafe { crate::impls::IPhysicsJoint_GetLocalFrameA(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1842(_a0: usize, _a1: usize, _a2: usize) { hit(1842); unsafe { crate::impls::IPhysicsJoint_GetLocalFrameB(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1843(_a0: usize, _a1: usize, _a2: usize) { hit(1843); unsafe { crate::impls::IPhysicsJoint_SetLocalFrameA(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1844(_a0: usize, _a1: usize, _a2: usize) { hit(1844); unsafe { crate::impls::IPhysicsJoint_SetLocalFrameB(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1845(_a0: usize, _a1: i32) { hit(1845); unsafe { crate::impls::IPhysicsJoint_SetEnableCollision(_a0, _a1) } }
+unsafe extern "C" fn s1846(_a0: usize) -> i32 { hit(1846); unsafe { crate::impls::IPhysicsJoint_IsCollisionEnabled(_a0) } }
+unsafe extern "C" fn s1847(_a0: usize) -> i64 { hit(1847); unsafe { crate::impls::IPhysicsJoint_GetType(_a0) } }
+unsafe extern "C" fn s1848(_a0: usize, _a1: usize) { hit(1848); unsafe { crate::impls::IPhysicsJoint_SetLinearSpring(_a0, _a1) } }
+unsafe extern "C" fn s1849(_a0: usize) -> S_Vector3 { hit(1849); unsafe { crate::impls::IPhysicsJoint_GetLinearSpring(_a0) } }
+unsafe extern "C" fn s1850(_a0: usize, _a1: usize) { hit(1850); unsafe { crate::impls::IPhysicsJoint_SetAngularSpring(_a0, _a1) } }
+unsafe extern "C" fn s1851(_a0: usize) -> S_Vector3 { hit(1851); unsafe { crate::impls::IPhysicsJoint_GetAngularSpring(_a0) } }
+unsafe extern "C" fn s1852(_a0: usize, _a1: f32, _a2: f32) { hit(1852); unsafe { crate::impls::IPhysicsJoint_SetAngularMotor(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1853(_a0: usize, _a1: f32, _a2: f32) { hit(1853); unsafe { crate::impls::IPhysicsJoint_SetLinearMotor(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1854(_a0: usize, _a1: f32) { hit(1854); unsafe { crate::impls::IPhysicsJoint_SetMinLength(_a0, _a1) } }
+unsafe extern "C" fn s1855(_a0: usize) -> f32 { hit(1855); unsafe { crate::impls::IPhysicsJoint_GetMinLength(_a0) } }
+unsafe extern "C" fn s1856(_a0: usize, _a1: f32) { hit(1856); unsafe { crate::impls::IPhysicsJoint_SetMaxLength(_a0, _a1) } }
+unsafe extern "C" fn s1857(_a0: usize) -> f32 { hit(1857); unsafe { crate::impls::IPhysicsJoint_GetMaxLength(_a0) } }
+unsafe extern "C" fn s1858(_a0: usize, _a1: f32) { hit(1858); unsafe { crate::impls::IPhysicsJoint_SetMinForce(_a0, _a1) } }
+unsafe extern "C" fn s1859(_a0: usize) -> f32 { hit(1859); unsafe { crate::impls::IPhysicsJoint_GetMinForce(_a0) } }
+unsafe extern "C" fn s1860(_a0: usize, _a1: f32) { hit(1860); unsafe { crate::impls::IPhysicsJoint_SetMaxForce(_a0, _a1) } }
+unsafe extern "C" fn s1861(_a0: usize) -> f32 { hit(1861); unsafe { crate::impls::IPhysicsJoint_GetMaxForce(_a0) } }
+unsafe extern "C" fn s1862(_a0: usize, _a1: f32) { hit(1862); unsafe { crate::impls::IPhysicsJoint_SetFriction(_a0, _a1) } }
+unsafe extern "C" fn s1863(_a0: usize, _a1: f32) { hit(1863); unsafe { crate::impls::IPhysicsJoint_SetSwingLimit(_a0, _a1) } }
+unsafe extern "C" fn s1864(_a0: usize, _a1: i32) { hit(1864); unsafe { crate::impls::IPhysicsJoint_SetSwingLimitEnabled(_a0, _a1) } }
+unsafe extern "C" fn s1865(_a0: usize, _a1: f32, _a2: f32) { hit(1865); unsafe { crate::impls::IPhysicsJoint_SetTwistLimits(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1866(_a0: usize, _a1: i32) { hit(1866); unsafe { crate::impls::IPhysicsJoint_SetTwistLimitEnabled(_a0, _a1) } }
+unsafe extern "C" fn s1867(_a0: usize, _a1: f32, _a2: f32) { hit(1867); unsafe { crate::impls::IPhysicsJoint_SetLinearLimits(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1868(_a0: usize, _a1: i32) { hit(1868); unsafe { crate::impls::IPhysicsJoint_SetLinearLimitEnabled(_a0, _a1) } }
+unsafe extern "C" fn s1869(_a0: usize) -> f32 { hit(1869); unsafe { crate::impls::IPhysicsJoint_GetAngle(_a0) } }
+unsafe extern "C" fn s1870(_a0: usize) -> f32 { hit(1870); unsafe { crate::impls::IPhysicsJoint_GetLinearImpulse(_a0) } }
+unsafe extern "C" fn s1871(_a0: usize) -> f32 { hit(1871); unsafe { crate::impls::IPhysicsJoint_GetAngularImpulse(_a0) } }
+unsafe extern "C" fn s1872(_a0: usize) -> f32 { hit(1872); unsafe { crate::impls::IPhysicsJoint_GetMaxLinearImpulse(_a0) } }
+unsafe extern "C" fn s1873(_a0: usize) -> f32 { hit(1873); unsafe { crate::impls::IPhysicsJoint_GetMaxAngularImpulse(_a0) } }
+unsafe extern "C" fn s1874(_a0: usize, _a1: f32) { hit(1874); unsafe { crate::impls::IPhysicsJoint_SetMaxLinearImpulse(_a0, _a1) } }
+unsafe extern "C" fn s1875(_a0: usize, _a1: f32) { hit(1875); unsafe { crate::impls::IPhysicsJoint_SetMaxAngularImpulse(_a0, _a1) } }
+unsafe extern "C" fn s1876(_a0: usize, _a1: usize, _a2: f32) { hit(1876); unsafe { crate::impls::IPhysicsJoint_SetMotorVelocity(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1877(_a0: usize, _a1: usize, _a2: f32, _a3: f32) { hit(1877); unsafe { crate::impls::IPhysicsJoint_SetTargetRotation(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s1878(_a0: usize, _a1: usize) { hit(1878); unsafe { crate::impls::IPhysicsJoint_Motor_SetLinearVelocity(_a0, _a1) } }
+unsafe extern "C" fn s1879(_a0: usize, _a1: usize) { hit(1879); unsafe { crate::impls::IPhysicsJoint_Motor_SetAngularVelocity(_a0, _a1) } }
+unsafe extern "C" fn s1880(_a0: usize, _a1: f32) { hit(1880); unsafe { crate::impls::IPhysicsJoint_Motor_SetMaxVelocityForce(_a0, _a1) } }
+unsafe extern "C" fn s1881(_a0: usize, _a1: f32) { hit(1881); unsafe { crate::impls::IPhysicsJoint_Motor_SetMaxVelocityTorque(_a0, _a1) } }
+unsafe extern "C" fn s1882(_a0: usize, _a1: f32) { hit(1882); unsafe { crate::impls::IPhysicsJoint_Motor_SetLinearHertz(_a0, _a1) } }
+unsafe extern "C" fn s1883(_a0: usize, _a1: f32) { hit(1883); unsafe { crate::impls::IPhysicsJoint_Motor_SetLinearDampingRatio(_a0, _a1) } }
+unsafe extern "C" fn s1884(_a0: usize, _a1: f32) { hit(1884); unsafe { crate::impls::IPhysicsJoint_Motor_SetAngularHertz(_a0, _a1) } }
+unsafe extern "C" fn s1885(_a0: usize, _a1: f32) { hit(1885); unsafe { crate::impls::IPhysicsJoint_Motor_SetAngularDampingRatio(_a0, _a1) } }
+unsafe extern "C" fn s1886(_a0: usize, _a1: f32) { hit(1886); unsafe { crate::impls::IPhysicsJoint_Motor_SetMaxSpringForce(_a0, _a1) } }
+unsafe extern "C" fn s1887(_a0: usize, _a1: f32) { hit(1887); unsafe { crate::impls::IPhysicsJoint_Motor_SetMaxSpringTorque(_a0, _a1) } }
+unsafe extern "C" fn s1888(_a0: usize) -> S_Vector3 { hit(1888); unsafe { crate::impls::IPhysicsJoint_Motor_GetLinearVelocity(_a0) } }
+unsafe extern "C" fn s1889(_a0: usize) -> S_Vector3 { hit(1889); unsafe { crate::impls::IPhysicsJoint_Motor_GetAngularVelocity(_a0) } }
+unsafe extern "C" fn s1890(_a0: usize) -> f32 { hit(1890); unsafe { crate::impls::IPhysicsJoint_Motor_GetMaxVelocityForce(_a0) } }
+unsafe extern "C" fn s1891(_a0: usize) -> f32 { hit(1891); unsafe { crate::impls::IPhysicsJoint_Motor_GetMaxVelocityTorque(_a0) } }
+unsafe extern "C" fn s1892(_a0: usize) -> f32 { hit(1892); unsafe { crate::impls::IPhysicsJoint_Motor_GetLinearHertz(_a0) } }
+unsafe extern "C" fn s1893(_a0: usize) -> f32 { hit(1893); unsafe { crate::impls::IPhysicsJoint_Motor_GetLinearDampingRatio(_a0) } }
+unsafe extern "C" fn s1894(_a0: usize) -> f32 { hit(1894); unsafe { crate::impls::IPhysicsJoint_Motor_GetAngularHertz(_a0) } }
+unsafe extern "C" fn s1895(_a0: usize) -> f32 { hit(1895); unsafe { crate::impls::IPhysicsJoint_Motor_GetAngularDampingRatio(_a0) } }
+unsafe extern "C" fn s1896(_a0: usize) -> f32 { hit(1896); unsafe { crate::impls::IPhysicsJoint_Motor_GetMaxSpringForce(_a0) } }
+unsafe extern "C" fn s1897(_a0: usize) -> f32 { hit(1897); unsafe { crate::impls::IPhysicsJoint_Motor_GetMaxSpringTorque(_a0) } }
+unsafe extern "C" fn s1898(_a0: usize, _a1: i32) { hit(1898); unsafe { crate::impls::IPhysicsJoint_Wheel_EnableSuspension(_a0, _a1) } }
+unsafe extern "C" fn s1899(_a0: usize) -> i32 { hit(1899); unsafe { crate::impls::IPhysicsJoint_Wheel_IsSuspensionEnabled(_a0) } }
+unsafe extern "C" fn s1900(_a0: usize, _a1: f32) { hit(1900); unsafe { crate::impls::IPhysicsJoint_Wheel_SetSuspensionHertz(_a0, _a1) } }
+unsafe extern "C" fn s1901(_a0: usize) -> f32 { hit(1901); unsafe { crate::impls::IPhysicsJoint_Wheel_GetSuspensionHertz(_a0) } }
+unsafe extern "C" fn s1902(_a0: usize, _a1: f32) { hit(1902); unsafe { crate::impls::IPhysicsJoint_Wheel_SetSuspensionDampingRatio(_a0, _a1) } }
+unsafe extern "C" fn s1903(_a0: usize) -> f32 { hit(1903); unsafe { crate::impls::IPhysicsJoint_Wheel_GetSuspensionDampingRatio(_a0) } }
+unsafe extern "C" fn s1904(_a0: usize, _a1: i32) { hit(1904); unsafe { crate::impls::IPhysicsJoint_Wheel_EnableSuspensionLimit(_a0, _a1) } }
+unsafe extern "C" fn s1905(_a0: usize) -> i32 { hit(1905); unsafe { crate::impls::IPhysicsJoint_Wheel_IsSuspensionLimitEnabled(_a0) } }
+unsafe extern "C" fn s1906(_a0: usize) -> f32 { hit(1906); unsafe { crate::impls::IPhysicsJoint_Wheel_GetLowerSuspensionLimit(_a0) } }
+unsafe extern "C" fn s1907(_a0: usize) -> f32 { hit(1907); unsafe { crate::impls::IPhysicsJoint_Wheel_GetUpperSuspensionLimit(_a0) } }
+unsafe extern "C" fn s1908(_a0: usize, _a1: f32, _a2: f32) { hit(1908); unsafe { crate::impls::IPhysicsJoint_Wheel_SetSuspensionLimits(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1909(_a0: usize, _a1: i32) { hit(1909); unsafe { crate::impls::IPhysicsJoint_Wheel_EnableSpinMotor(_a0, _a1) } }
+unsafe extern "C" fn s1910(_a0: usize) -> i32 { hit(1910); unsafe { crate::impls::IPhysicsJoint_Wheel_IsSpinMotorEnabled(_a0) } }
+unsafe extern "C" fn s1911(_a0: usize, _a1: f32) { hit(1911); unsafe { crate::impls::IPhysicsJoint_Wheel_SetSpinMotorSpeed(_a0, _a1) } }
+unsafe extern "C" fn s1912(_a0: usize) -> f32 { hit(1912); unsafe { crate::impls::IPhysicsJoint_Wheel_GetSpinMotorSpeed(_a0) } }
+unsafe extern "C" fn s1913(_a0: usize, _a1: f32) { hit(1913); unsafe { crate::impls::IPhysicsJoint_Wheel_SetMaxSpinTorque(_a0, _a1) } }
+unsafe extern "C" fn s1914(_a0: usize) -> f32 { hit(1914); unsafe { crate::impls::IPhysicsJoint_Wheel_GetMaxSpinTorque(_a0) } }
+unsafe extern "C" fn s1915(_a0: usize, _a1: i32) { hit(1915); unsafe { crate::impls::IPhysicsJoint_Wheel_EnableSteering(_a0, _a1) } }
+unsafe extern "C" fn s1916(_a0: usize) -> i32 { hit(1916); unsafe { crate::impls::IPhysicsJoint_Wheel_IsSteeringEnabled(_a0) } }
+unsafe extern "C" fn s1917(_a0: usize, _a1: f32) { hit(1917); unsafe { crate::impls::IPhysicsJoint_Wheel_SetSteeringHertz(_a0, _a1) } }
+unsafe extern "C" fn s1918(_a0: usize) -> f32 { hit(1918); unsafe { crate::impls::IPhysicsJoint_Wheel_GetSteeringHertz(_a0) } }
+unsafe extern "C" fn s1919(_a0: usize, _a1: f32) { hit(1919); unsafe { crate::impls::IPhysicsJoint_Wheel_SetSteeringDampingRatio(_a0, _a1) } }
+unsafe extern "C" fn s1920(_a0: usize) -> f32 { hit(1920); unsafe { crate::impls::IPhysicsJoint_Wheel_GetSteeringDampingRatio(_a0) } }
+unsafe extern "C" fn s1921(_a0: usize, _a1: f32) { hit(1921); unsafe { crate::impls::IPhysicsJoint_Wheel_SetMaxSteeringTorque(_a0, _a1) } }
+unsafe extern "C" fn s1922(_a0: usize) -> f32 { hit(1922); unsafe { crate::impls::IPhysicsJoint_Wheel_GetMaxSteeringTorque(_a0) } }
+unsafe extern "C" fn s1923(_a0: usize, _a1: i32) { hit(1923); unsafe { crate::impls::IPhysicsJoint_Wheel_EnableSteeringLimit(_a0, _a1) } }
+unsafe extern "C" fn s1924(_a0: usize) -> i32 { hit(1924); unsafe { crate::impls::IPhysicsJoint_Wheel_IsSteeringLimitEnabled(_a0) } }
+unsafe extern "C" fn s1925(_a0: usize) -> f32 { hit(1925); unsafe { crate::impls::IPhysicsJoint_Wheel_GetLowerSteeringLimit(_a0) } }
+unsafe extern "C" fn s1926(_a0: usize) -> f32 { hit(1926); unsafe { crate::impls::IPhysicsJoint_Wheel_GetUpperSteeringLimit(_a0) } }
+unsafe extern "C" fn s1927(_a0: usize, _a1: f32, _a2: f32) { hit(1927); unsafe { crate::impls::IPhysicsJoint_Wheel_SetSteeringLimits(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1928(_a0: usize, _a1: f32) { hit(1928); unsafe { crate::impls::IPhysicsJoint_Wheel_SetTargetSteeringAngle(_a0, _a1) } }
+unsafe extern "C" fn s1929(_a0: usize) -> f32 { hit(1929); unsafe { crate::impls::IPhysicsJoint_Wheel_GetTargetSteeringAngle(_a0) } }
+unsafe extern "C" fn s1930(_a0: usize) -> f32 { hit(1930); unsafe { crate::impls::IPhysicsJoint_Wheel_GetSpinSpeed(_a0) } }
+unsafe extern "C" fn s1931(_a0: usize) -> f32 { hit(1931); unsafe { crate::impls::IPhysicsJoint_Wheel_GetSpinTorque(_a0) } }
+unsafe extern "C" fn s1932(_a0: usize) -> f32 { hit(1932); unsafe { crate::impls::IPhysicsJoint_Wheel_GetSteeringAngle(_a0) } }
+unsafe extern "C" fn s1933(_a0: usize) -> f32 { hit(1933); unsafe { crate::impls::IPhysicsJoint_Wheel_GetSteeringTorque(_a0) } }
+unsafe extern "C" fn s1934(_a0: usize, _a1: f32) { hit(1934); unsafe { crate::impls::IPhysicsJoint_Parallel_SetHertz(_a0, _a1) } }
+unsafe extern "C" fn s1935(_a0: usize) -> f32 { hit(1935); unsafe { crate::impls::IPhysicsJoint_Parallel_GetHertz(_a0) } }
+unsafe extern "C" fn s1936(_a0: usize, _a1: f32) { hit(1936); unsafe { crate::impls::IPhysicsJoint_Parallel_SetDampingRatio(_a0, _a1) } }
+unsafe extern "C" fn s1937(_a0: usize) -> f32 { hit(1937); unsafe { crate::impls::IPhysicsJoint_Parallel_GetDampingRatio(_a0) } }
+unsafe extern "C" fn s1938(_a0: usize, _a1: f32) { hit(1938); unsafe { crate::impls::IPhysicsJoint_Parallel_SetMaxTorque(_a0, _a1) } }
+unsafe extern "C" fn s1939(_a0: usize) -> f32 { hit(1939); unsafe { crate::impls::IPhysicsJoint_Parallel_GetMaxTorque(_a0) } }
 unsafe extern "C" fn s1940(_a0: usize, _a1: u8) { hit(1940); unsafe { crate::impls::IPhysicsShape_AddCollisionFunctionMask(_a0, _a1) } }
 unsafe extern "C" fn s1941(_a0: usize, _a1: u8) { hit(1941); unsafe { crate::impls::IPhysicsShape_RemoveCollisionFunctionMask(_a0, _a1) } }
 unsafe extern "C" fn s1942(_a0: usize) -> u8 { hit(1942); unsafe { crate::impls::IPhysicsShape_GetCollisionFunctionMask(_a0) } }
@@ -3022,7 +3022,7 @@ unsafe extern "C" fn s1979(_a0: usize, _a1: usize) -> i32 { hit(1979); unsafe { 
 unsafe extern "C" fn s1980(_a0: usize, _a1: usize) { hit(1980); unsafe { crate::impls::IPhysicsWorld_RemoveBody(_a0, _a1) } }
 unsafe extern "C" fn s1981(_a0: usize) -> i32 { hit(1981); unsafe { crate::impls::IPhysicsWorld_GetWorldReferenceBody(_a0) } }
 unsafe extern "C" fn s1982(_a0: usize, _a1: usize) { hit(1982); unsafe { crate::impls::IPhysicsWorld_SetWorldReferenceBody(_a0, _a1) } }
-unsafe extern "C" fn s1983(_a0: usize, _a1: usize) { hit(1983);  }
+unsafe extern "C" fn s1983(_a0: usize, _a1: usize) { hit(1983); unsafe { crate::impls::IPhysicsWorld_RemoveJoint(_a0, _a1) } }
 unsafe extern "C" fn s1984(_a0: usize, _a1: usize) { hit(1984); unsafe { crate::impls::IPhysicsWorld_SetGravity(_a0, _a1) } }
 unsafe extern "C" fn s1985(_a0: usize) -> S_Vector3 { hit(1985); unsafe { crate::impls::IPhysicsWorld_GetGravity(_a0) } }
 unsafe extern "C" fn s1986(_a0: usize, _a1: i64) { hit(1986); unsafe { crate::impls::IPhysicsWorld_SetSimulation(_a0, _a1) } }
@@ -3031,15 +3031,15 @@ unsafe extern "C" fn s1988(_a0: usize) { hit(1988); unsafe { crate::impls::IPhys
 unsafe extern "C" fn s1989(_a0: usize) { hit(1989); unsafe { crate::impls::IPhysicsWorld_DisableSleeping(_a0) } }
 unsafe extern "C" fn s1990(_a0: usize) -> i32 { hit(1990); unsafe { crate::impls::IPhysicsWorld_IsSleepingEnabled(_a0) } }
 unsafe extern "C" fn s1991(_a0: usize, _a1: f32) { hit(1991); unsafe { crate::impls::IPhysicsWorld_SetMaximumLinearSpeed(_a0, _a1) } }
-unsafe extern "C" fn s1992(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1992); crate::handles::create(1992, "PhysicsJoint", &[_a0, _a1, _a2, _a3, _a4]) }
-unsafe extern "C" fn s1993(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1993); crate::handles::create(1993, "PhysicsJoint", &[_a0, _a1, _a2, _a3, _a4]) }
-unsafe extern "C" fn s1994(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1994); crate::handles::create(1994, "PhysicsJoint", &[_a0, _a1, _a2, _a3, _a4]) }
-unsafe extern "C" fn s1995(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1995); crate::handles::create(1995, "PhysicsJoint", &[_a0, _a1, _a2, _a3, _a4]) }
-unsafe extern "C" fn s1996(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1996); crate::handles::create(1996, "PhysicsJoint", &[_a0, _a1, _a2, _a3, _a4]) }
-unsafe extern "C" fn s1997(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1997); crate::handles::create(1997, "PhysicsJoint", &[_a0, _a1, _a2, _a3, _a4]) }
-unsafe extern "C" fn s1998(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1998); crate::handles::create(1998, "PhysicsJoint", &[_a0, _a1, _a2, _a3, _a4]) }
-unsafe extern "C" fn s1999(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1999); crate::handles::create(1999, "PhysicsJoint", &[_a0, _a1, _a2, _a3, _a4]) }
-unsafe extern "C" fn s2000(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(2000); crate::handles::create(2000, "PhysicsJoint", &[_a0, _a1, _a2]) }
+unsafe extern "C" fn s1992(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1992); unsafe { crate::impls::IPhysicsWorld_AddWeldJoint(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s1993(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1993); unsafe { crate::impls::IPhysicsWorld_AddSpringJoint(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s1994(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1994); unsafe { crate::impls::IPhysicsWorld_AddRevoluteJoint(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s1995(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1995); unsafe { crate::impls::IPhysicsWorld_AddPrismaticJoint(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s1996(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1996); unsafe { crate::impls::IPhysicsWorld_AddSphericalJoint(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s1997(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1997); unsafe { crate::impls::IPhysicsWorld_AddMotorJoint(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s1998(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1998); unsafe { crate::impls::IPhysicsWorld_AddWheelJoint(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s1999(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(1999); unsafe { crate::impls::IPhysicsWorld_AddParallelJoint(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s2000(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(2000); unsafe { crate::impls::IPhysicsWorld_AddFilterJoint(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2001(_a0: usize, _a1: usize) { hit(2001); unsafe { crate::impls::IPhysicsWorld_SetCollisionRulesFromJson(_a0, _a1) } }
 unsafe extern "C" fn s2002(_a0: usize, _a1: f32, _a2: i32) { hit(2002); unsafe { crate::impls::IPhysicsWorld_StepSimulation(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2003(_a0: usize, _a1: usize) { hit(2003); unsafe { crate::impls::IPhysicsWorld_ProcessIntersections(_a0, _a1) } }

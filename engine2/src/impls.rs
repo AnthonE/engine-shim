@@ -536,15 +536,25 @@ pub unsafe fn IPhysicsWorld_SetCollisionRulesFromJson(world: usize, json: usize)
 pub unsafe fn IPhysicsWorld_ManagedObject(world: usize) -> i32 { crate::handles::of(world) }
 
 /// One step, then each body that moved is told to managed
-/// (PhysicsEngine.OnActive): where it is, how fast, whether it fell asleep.
+/// (PhysicsEngine.OnActive): where it is, how fast, whether it fell asleep;
+/// and each joint that broke (PhysicsEngine.OnPhysicsJointBreak).
 pub unsafe fn IPhysicsWorld_StepSimulation(world: usize, dt: f32, steps: i32) {
-    let active = phys::step(world, dt, steps);
+    let stepped = phys::step(world, dt, steps);
     let f = crate::managed(crate::slots::M_SandboxPhysics_PhysicsEngine_OnActive);
-    if f == 0 { return; }
-    let on_active: extern "C" fn(i32, S_Transform, S_Vector3, S_Vector3, i32, i32) = unsafe { std::mem::transmute(f) };
-    for a in active {
-        let h = crate::handles::of(a.body);
-        if h > 0 { on_active(h, a.transform, phys::v3(a.velocity), phys::v3(a.angular_velocity), a.fell_asleep as i32, 0); }
+    if f != 0 {
+        let on_active: extern "C" fn(i32, S_Transform, S_Vector3, S_Vector3, i32, i32) = unsafe { std::mem::transmute(f) };
+        for a in stepped.active {
+            let h = crate::handles::of(a.body);
+            if h > 0 { on_active(h, a.transform, phys::v3(a.velocity), phys::v3(a.angular_velocity), a.fell_asleep as i32, 0); }
+        }
+    }
+    let f = crate::managed(crate::slots::M_SandboxPhysics_PhysicsEngine_OnPhysicsJointBreak);
+    if f != 0 {
+        let on_break: extern "C" fn(i32) = unsafe { std::mem::transmute(f) };
+        for j in stepped.broken {
+            let h = crate::handles::of(j);
+            if h > 0 { on_break(h); }
+        }
     }
 }
 
@@ -844,6 +854,244 @@ pub unsafe fn IPhysicsShape_SetHasNoMass(shape: usize, on: i32) { phys::with_sha
 pub unsafe fn IPhysicsShape_BuildBounds(shape: usize) -> S_BBox { phys::shape_bounds(shape, false) }
 pub unsafe fn IPhysicsShape_LocalBounds(shape: usize) -> S_BBox { phys::shape_bounds(shape, true) }
 pub unsafe fn IPhysicsShape_IsTouching(shape: usize, other: usize, triggers: i32) -> i32 { phys::shape_touching(shape, other, b(triggers)) as i32 }
+
+// joints: physics/joints.rs. What a setter means can depend on the kind
+// (an angular spring is a hinge's target, a weld's softness), as in
+// managed's own 2D joints.
+
+use crate::physics::joints::{self as joint, Drive, Kind};
+
+fn add_joint(world: usize, kind: Kind, body1: usize, body2: usize, frame1: usize, frame2: usize) -> i32 {
+    let j = crate::handles::object();
+    let (f1, f2) = (unsafe { phys::read_pose(frame1) }, unsafe { phys::read_pose(frame2) });
+    if !joint::add_joint(world, j, kind, body1, body2, f1, f2) { return 0; }
+    crate::handles::register(j, "PhysicsJoint", &[world, body1, body2])
+}
+
+pub unsafe fn IPhysicsWorld_AddWeldJoint(w: usize, a: usize, b: usize, fa: usize, fb: usize) -> i32 { add_joint(w, Kind::Weld, a, b, fa, fb) }
+pub unsafe fn IPhysicsWorld_AddSpringJoint(w: usize, a: usize, b: usize, fa: usize, fb: usize) -> i32 { add_joint(w, Kind::Spring, a, b, fa, fb) }
+pub unsafe fn IPhysicsWorld_AddRevoluteJoint(w: usize, a: usize, b: usize, fa: usize, fb: usize) -> i32 { add_joint(w, Kind::Revolute, a, b, fa, fb) }
+pub unsafe fn IPhysicsWorld_AddPrismaticJoint(w: usize, a: usize, b: usize, fa: usize, fb: usize) -> i32 { add_joint(w, Kind::Prismatic, a, b, fa, fb) }
+pub unsafe fn IPhysicsWorld_AddSphericalJoint(w: usize, a: usize, b: usize, fa: usize, fb: usize) -> i32 { add_joint(w, Kind::Spherical, a, b, fa, fb) }
+pub unsafe fn IPhysicsWorld_AddMotorJoint(w: usize, a: usize, b: usize, fa: usize, fb: usize) -> i32 { add_joint(w, Kind::Motor, a, b, fa, fb) }
+pub unsafe fn IPhysicsWorld_AddWheelJoint(w: usize, a: usize, b: usize, fa: usize, fb: usize) -> i32 { add_joint(w, Kind::Wheel, a, b, fa, fb) }
+pub unsafe fn IPhysicsWorld_AddParallelJoint(w: usize, a: usize, b: usize, fa: usize, fb: usize) -> i32 { add_joint(w, Kind::Parallel, a, b, fa, fb) }
+pub unsafe fn IPhysicsWorld_AddFilterJoint(w: usize, a: usize, b: usize) -> i32 { add_joint(w, Kind::Filter, a, b, 0, 0) }
+pub unsafe fn IPhysicsWorld_RemoveJoint(_world: usize, j: usize) {
+    if joint::remove_joint(j) { crate::handles::free(j); }
+}
+
+fn kind(j: usize) -> Option<Kind> { joint::with_joint(j, |j| j.kind) }
+
+/// A turn's angle about z, in radians (a hinge's target from a rotation).
+fn yaw(q: rapier3d::math::Rotation) -> f32 { 2.0 * q.z.atan2(q.w) }
+
+pub unsafe fn IPhysicsJoint_GetBody1(j: usize) -> i32 { crate::handles::of(joint::with_joint(j, |j| j.body1).unwrap_or(0)) }
+pub unsafe fn IPhysicsJoint_GetBody2(j: usize) -> i32 { crate::handles::of(joint::with_joint(j, |j| j.body2).unwrap_or(0)) }
+
+unsafe fn write_frame(f: rapier3d::math::Pose, position: usize, rotation: usize) {
+    if position != 0 { unsafe { core::ptr::write_unaligned(position as *mut S_Vector3, phys::v3(f.translation)) }; }
+    if rotation != 0 { unsafe { core::ptr::write_unaligned(rotation as *mut S_Rotation, phys::rot(f.rotation)) }; }
+}
+pub unsafe fn IPhysicsJoint_GetLocalFrameA(j: usize, position: usize, rotation: usize) {
+    if let Some(f) = joint::with_joint(j, |j| j.frame1) { unsafe { write_frame(f, position, rotation) } }
+}
+pub unsafe fn IPhysicsJoint_GetLocalFrameB(j: usize, position: usize, rotation: usize) {
+    if let Some(f) = joint::with_joint(j, |j| j.frame2) { unsafe { write_frame(f, position, rotation) } }
+}
+pub unsafe fn IPhysicsJoint_SetLocalFrameA(j: usize, position: usize, rotation: usize) {
+    let f = pose_of(position, rotation);
+    joint::edit_joint(j, |j| j.frame1 = f);
+}
+pub unsafe fn IPhysicsJoint_SetLocalFrameB(j: usize, position: usize, rotation: usize) {
+    let f = pose_of(position, rotation);
+    joint::edit_joint(j, |j| j.frame2 = f);
+}
+pub unsafe fn IPhysicsJoint_SetEnableCollision(j: usize, on: i32) { joint::edit_joint(j, |j| j.collide = on != 0); }
+pub unsafe fn IPhysicsJoint_IsCollisionEnabled(j: usize) -> i32 { joint::with_joint(j, |j| j.collide).unwrap_or(false) as i32 }
+pub unsafe fn IPhysicsJoint_GetType(j: usize) -> i64 { kind(j).map(Kind::native).unwrap_or(0) }
+
+/// A slider's: frequency, damping, target. A weld's or a spring's: PhysicsSpring.
+pub unsafe fn IPhysicsJoint_SetLinearSpring(j: usize, v: usize) {
+    let v = unsafe { phys::read_vec(v) };
+    joint::edit_joint(j, |j| {
+        j.linear_spring = v;
+        if j.kind == Kind::Prismatic { j.drive = Drive::Spring(v.z, v.x, v.y); }
+    });
+}
+pub unsafe fn IPhysicsJoint_GetLinearSpring(j: usize) -> S_Vector3 { phys::v3(joint::with_joint(j, |j| j.linear_spring).unwrap_or_default()) }
+/// A hinge's: target angle, frequency, damping. A weld's: PhysicsSpring.
+pub unsafe fn IPhysicsJoint_SetAngularSpring(j: usize, v: usize) {
+    let v = unsafe { phys::read_vec(v) };
+    joint::edit_joint(j, |j| {
+        j.angular_spring = v;
+        if j.kind == Kind::Revolute { j.drive = Drive::Spring(v.x, v.y, v.z); }
+    });
+}
+pub unsafe fn IPhysicsJoint_GetAngularSpring(j: usize) -> S_Vector3 { phys::v3(joint::with_joint(j, |j| j.angular_spring).unwrap_or_default()) }
+pub unsafe fn IPhysicsJoint_SetAngularMotor(j: usize, speed: f32, most: f32) {
+    joint::edit_joint(j, |j| if j.kind == Kind::Revolute { j.drive = Drive::Velocity(speed, most) });
+}
+pub unsafe fn IPhysicsJoint_SetLinearMotor(j: usize, speed: f32, most: f32) {
+    joint::edit_joint(j, |j| if j.kind == Kind::Prismatic { j.drive = Drive::Velocity(speed, most) });
+}
+/// A spring's shortest, a hinge's lowest angle (radians), a slider's least travel.
+pub unsafe fn IPhysicsJoint_SetMinLength(j: usize, v: f32) {
+    joint::edit_joint(j, |j| {
+        j.min = v;
+        j.limited = if j.kind == Kind::Revolute { j.max > v } else { true };
+    });
+}
+pub unsafe fn IPhysicsJoint_GetMinLength(j: usize) -> f32 { joint::with_joint(j, |j| j.min).unwrap_or(0.0) }
+pub unsafe fn IPhysicsJoint_SetMaxLength(j: usize, v: f32) {
+    joint::edit_joint(j, |j| {
+        j.max = v;
+        j.limited = if j.kind == Kind::Revolute { v > j.min } else { true };
+    });
+}
+pub unsafe fn IPhysicsJoint_GetMaxLength(j: usize) -> f32 { joint::with_joint(j, |j| j.max).unwrap_or(0.0) }
+pub unsafe fn IPhysicsJoint_SetMinForce(j: usize, v: f32) { joint::edit_joint(j, |j| j.min_force = v); }
+pub unsafe fn IPhysicsJoint_GetMinForce(j: usize) -> f32 { joint::with_joint(j, |j| j.min_force).unwrap_or(f32::MIN) }
+pub unsafe fn IPhysicsJoint_SetMaxForce(j: usize, v: f32) { joint::edit_joint(j, |j| j.max_force = v); }
+pub unsafe fn IPhysicsJoint_GetMaxForce(j: usize) -> f32 { joint::with_joint(j, |j| j.max_force).unwrap_or(f32::MAX) }
+pub unsafe fn IPhysicsJoint_SetFriction(j: usize, mu: f32) { joint::edit_joint(j, |j| j.drive = Drive::Friction(mu)); }
+pub unsafe fn IPhysicsJoint_SetSwingLimit(j: usize, degrees: f32) { joint::edit_joint(j, |j| j.swing = degrees); }
+pub unsafe fn IPhysicsJoint_SetSwingLimitEnabled(j: usize, on: i32) { joint::edit_joint(j, |j| j.swing_limited = on != 0); }
+pub unsafe fn IPhysicsJoint_SetTwistLimits(j: usize, lower: f32, upper: f32) {
+    joint::edit_joint(j, |j| {
+        j.min = lower.to_radians();
+        j.max = upper.to_radians();
+    });
+}
+pub unsafe fn IPhysicsJoint_SetTwistLimitEnabled(j: usize, on: i32) {
+    joint::edit_joint(j, |j| if j.kind == Kind::Spherical { j.twist_limited = on != 0 } else { j.limited = on != 0 });
+}
+pub unsafe fn IPhysicsJoint_SetLinearLimits(j: usize, lower: f32, upper: f32) {
+    joint::edit_joint(j, |j| {
+        j.min = lower;
+        j.max = upper;
+    });
+}
+pub unsafe fn IPhysicsJoint_SetLinearLimitEnabled(j: usize, on: i32) { joint::edit_joint(j, |j| j.limited = on != 0); }
+pub unsafe fn IPhysicsJoint_GetAngle(j: usize) -> f32 { joint::joint_angle(j, rapier3d::math::Vector::Z) }
+pub unsafe fn IPhysicsJoint_GetLinearImpulse(j: usize) -> f32 { joint::joint_forces(j).0 }
+pub unsafe fn IPhysicsJoint_GetAngularImpulse(j: usize) -> f32 { joint::joint_forces(j).1 }
+pub unsafe fn IPhysicsJoint_GetMaxLinearImpulse(j: usize) -> f32 { joint::with_joint(j, |j| j.max_linear).unwrap_or(f32::MAX) }
+pub unsafe fn IPhysicsJoint_GetMaxAngularImpulse(j: usize) -> f32 { joint::with_joint(j, |j| j.max_angular).unwrap_or(f32::MAX) }
+/// A break threshold; nothing (zero) is unbreakable.
+pub unsafe fn IPhysicsJoint_SetMaxLinearImpulse(j: usize, v: f32) { joint::edit_joint(j, |j| j.max_linear = if v > 0.0 { v } else { f32::MAX }); }
+pub unsafe fn IPhysicsJoint_SetMaxAngularImpulse(j: usize, v: f32) { joint::edit_joint(j, |j| j.max_angular = if v > 0.0 { v } else { f32::MAX }); }
+pub unsafe fn IPhysicsJoint_SetMotorVelocity(j: usize, v: usize, most: f32) {
+    let v = unsafe { phys::read_vec(v) };
+    joint::edit_joint(j, |j| match j.kind {
+        Kind::Spherical => {
+            j.ball_target = None;
+            j.ball_motor = Some((v, most));
+        }
+        Kind::Revolute => j.drive = Drive::Velocity(v.z, most),
+        _ => {}
+    });
+}
+pub unsafe fn IPhysicsJoint_SetTargetRotation(j: usize, q: usize, hz: f32, zeta: f32) {
+    let q = unsafe { phys::read_rot(q) };
+    joint::edit_joint(j, |j| match j.kind {
+        Kind::Spherical => {
+            j.ball_motor = None;
+            j.ball_target = Some((q, hz, zeta));
+        }
+        Kind::Revolute => j.drive = Drive::Spring(yaw(q), hz, zeta),
+        _ => {}
+    });
+}
+
+// the motor joint (ControlJoint)
+
+pub unsafe fn IPhysicsJoint_Motor_SetLinearVelocity(j: usize, v: usize) {
+    let v = unsafe { phys::read_vec(v) };
+    joint::edit_joint(j, |j| j.motor.linear_velocity = v);
+}
+pub unsafe fn IPhysicsJoint_Motor_SetAngularVelocity(j: usize, v: usize) {
+    let v = unsafe { phys::read_vec(v) };
+    joint::edit_joint(j, |j| j.motor.angular_velocity = v);
+}
+pub unsafe fn IPhysicsJoint_Motor_SetMaxVelocityForce(j: usize, v: f32) { joint::edit_joint(j, |j| j.motor.max_velocity_force = v); }
+pub unsafe fn IPhysicsJoint_Motor_SetMaxVelocityTorque(j: usize, v: f32) { joint::edit_joint(j, |j| j.motor.max_velocity_torque = v); }
+pub unsafe fn IPhysicsJoint_Motor_SetLinearHertz(j: usize, v: f32) { joint::edit_joint(j, |j| j.motor.linear_hertz = v); }
+pub unsafe fn IPhysicsJoint_Motor_SetLinearDampingRatio(j: usize, v: f32) { joint::edit_joint(j, |j| j.motor.linear_damping = v); }
+pub unsafe fn IPhysicsJoint_Motor_SetAngularHertz(j: usize, v: f32) { joint::edit_joint(j, |j| j.motor.angular_hertz = v); }
+pub unsafe fn IPhysicsJoint_Motor_SetAngularDampingRatio(j: usize, v: f32) { joint::edit_joint(j, |j| j.motor.angular_damping = v); }
+pub unsafe fn IPhysicsJoint_Motor_SetMaxSpringForce(j: usize, v: f32) { joint::edit_joint(j, |j| j.motor.max_spring_force = v); }
+pub unsafe fn IPhysicsJoint_Motor_SetMaxSpringTorque(j: usize, v: f32) { joint::edit_joint(j, |j| j.motor.max_spring_torque = v); }
+fn motor(j: usize) -> joint::MotorJoint { joint::with_joint(j, |j| j.motor).unwrap_or_default() }
+pub unsafe fn IPhysicsJoint_Motor_GetLinearVelocity(j: usize) -> S_Vector3 { phys::v3(motor(j).linear_velocity) }
+pub unsafe fn IPhysicsJoint_Motor_GetAngularVelocity(j: usize) -> S_Vector3 { phys::v3(motor(j).angular_velocity) }
+pub unsafe fn IPhysicsJoint_Motor_GetMaxVelocityForce(j: usize) -> f32 { motor(j).max_velocity_force }
+pub unsafe fn IPhysicsJoint_Motor_GetMaxVelocityTorque(j: usize) -> f32 { motor(j).max_velocity_torque }
+pub unsafe fn IPhysicsJoint_Motor_GetLinearHertz(j: usize) -> f32 { motor(j).linear_hertz }
+pub unsafe fn IPhysicsJoint_Motor_GetLinearDampingRatio(j: usize) -> f32 { motor(j).linear_damping }
+pub unsafe fn IPhysicsJoint_Motor_GetAngularHertz(j: usize) -> f32 { motor(j).angular_hertz }
+pub unsafe fn IPhysicsJoint_Motor_GetAngularDampingRatio(j: usize) -> f32 { motor(j).angular_damping }
+pub unsafe fn IPhysicsJoint_Motor_GetMaxSpringForce(j: usize) -> f32 { motor(j).max_spring_force }
+pub unsafe fn IPhysicsJoint_Motor_GetMaxSpringTorque(j: usize) -> f32 { motor(j).max_spring_torque }
+
+// the wheel joint: suspension along the frame's x, steering about it, spin about z
+
+fn wheel(j: usize) -> joint::Wheel { joint::with_joint(j, |j| j.wheel).unwrap_or_default() }
+pub unsafe fn IPhysicsJoint_Wheel_EnableSuspension(j: usize, on: i32) { joint::edit_joint(j, |j| j.wheel.suspension = on != 0); }
+pub unsafe fn IPhysicsJoint_Wheel_IsSuspensionEnabled(j: usize) -> i32 { wheel(j).suspension as i32 }
+pub unsafe fn IPhysicsJoint_Wheel_SetSuspensionHertz(j: usize, v: f32) { joint::edit_joint(j, |j| j.wheel.suspension_hertz = v); }
+pub unsafe fn IPhysicsJoint_Wheel_GetSuspensionHertz(j: usize) -> f32 { wheel(j).suspension_hertz }
+pub unsafe fn IPhysicsJoint_Wheel_SetSuspensionDampingRatio(j: usize, v: f32) { joint::edit_joint(j, |j| j.wheel.suspension_damping = v); }
+pub unsafe fn IPhysicsJoint_Wheel_GetSuspensionDampingRatio(j: usize) -> f32 { wheel(j).suspension_damping }
+pub unsafe fn IPhysicsJoint_Wheel_EnableSuspensionLimit(j: usize, on: i32) { joint::edit_joint(j, |j| j.wheel.suspension_limited = on != 0); }
+pub unsafe fn IPhysicsJoint_Wheel_IsSuspensionLimitEnabled(j: usize) -> i32 { wheel(j).suspension_limited as i32 }
+pub unsafe fn IPhysicsJoint_Wheel_GetLowerSuspensionLimit(j: usize) -> f32 { wheel(j).lower }
+pub unsafe fn IPhysicsJoint_Wheel_GetUpperSuspensionLimit(j: usize) -> f32 { wheel(j).upper }
+pub unsafe fn IPhysicsJoint_Wheel_SetSuspensionLimits(j: usize, lower: f32, upper: f32) {
+    joint::edit_joint(j, |j| {
+        j.wheel.lower = lower;
+        j.wheel.upper = upper;
+    });
+}
+pub unsafe fn IPhysicsJoint_Wheel_EnableSpinMotor(j: usize, on: i32) { joint::edit_joint(j, |j| j.wheel.spin = on != 0); }
+pub unsafe fn IPhysicsJoint_Wheel_IsSpinMotorEnabled(j: usize) -> i32 { wheel(j).spin as i32 }
+pub unsafe fn IPhysicsJoint_Wheel_SetSpinMotorSpeed(j: usize, v: f32) { joint::edit_joint(j, |j| j.wheel.spin_speed = v); }
+pub unsafe fn IPhysicsJoint_Wheel_GetSpinMotorSpeed(j: usize) -> f32 { wheel(j).spin_speed }
+pub unsafe fn IPhysicsJoint_Wheel_SetMaxSpinTorque(j: usize, v: f32) { joint::edit_joint(j, |j| j.wheel.spin_torque = v); }
+pub unsafe fn IPhysicsJoint_Wheel_GetMaxSpinTorque(j: usize) -> f32 { wheel(j).spin_torque }
+pub unsafe fn IPhysicsJoint_Wheel_EnableSteering(j: usize, on: i32) { joint::edit_joint(j, |j| j.wheel.steering = on != 0); }
+pub unsafe fn IPhysicsJoint_Wheel_IsSteeringEnabled(j: usize) -> i32 { wheel(j).steering as i32 }
+pub unsafe fn IPhysicsJoint_Wheel_SetSteeringHertz(j: usize, v: f32) { joint::edit_joint(j, |j| j.wheel.steering_hertz = v); }
+pub unsafe fn IPhysicsJoint_Wheel_GetSteeringHertz(j: usize) -> f32 { wheel(j).steering_hertz }
+pub unsafe fn IPhysicsJoint_Wheel_SetSteeringDampingRatio(j: usize, v: f32) { joint::edit_joint(j, |j| j.wheel.steering_damping = v); }
+pub unsafe fn IPhysicsJoint_Wheel_GetSteeringDampingRatio(j: usize) -> f32 { wheel(j).steering_damping }
+pub unsafe fn IPhysicsJoint_Wheel_SetMaxSteeringTorque(j: usize, v: f32) { joint::edit_joint(j, |j| j.wheel.steering_torque = v); }
+pub unsafe fn IPhysicsJoint_Wheel_GetMaxSteeringTorque(j: usize) -> f32 { wheel(j).steering_torque }
+pub unsafe fn IPhysicsJoint_Wheel_EnableSteeringLimit(j: usize, on: i32) { joint::edit_joint(j, |j| j.wheel.steering_limited = on != 0); }
+pub unsafe fn IPhysicsJoint_Wheel_IsSteeringLimitEnabled(j: usize) -> i32 { wheel(j).steering_limited as i32 }
+pub unsafe fn IPhysicsJoint_Wheel_GetLowerSteeringLimit(j: usize) -> f32 { wheel(j).steer_lower }
+pub unsafe fn IPhysicsJoint_Wheel_GetUpperSteeringLimit(j: usize) -> f32 { wheel(j).steer_upper }
+pub unsafe fn IPhysicsJoint_Wheel_SetSteeringLimits(j: usize, lower: f32, upper: f32) {
+    joint::edit_joint(j, |j| {
+        j.wheel.steer_lower = lower;
+        j.wheel.steer_upper = upper;
+    });
+}
+pub unsafe fn IPhysicsJoint_Wheel_SetTargetSteeringAngle(j: usize, v: f32) { joint::edit_joint(j, |j| j.wheel.target_steer = v); }
+pub unsafe fn IPhysicsJoint_Wheel_GetTargetSteeringAngle(j: usize) -> f32 { wheel(j).target_steer }
+pub unsafe fn IPhysicsJoint_Wheel_GetSpinSpeed(j: usize) -> f32 { joint::joint_spin(j, rapier3d::math::Vector::Z) }
+pub unsafe fn IPhysicsJoint_Wheel_GetSteeringAngle(j: usize) -> f32 { joint::joint_angle(j, rapier3d::math::Vector::X) }
+pub unsafe fn IPhysicsJoint_Wheel_GetSpinTorque(j: usize) -> f32 { joint::joint_forces(j).1 }
+pub unsafe fn IPhysicsJoint_Wheel_GetSteeringTorque(j: usize) -> f32 { joint::joint_forces(j).1 }
+
+// the parallel joint (UprightJoint): keeps the frames' z together
+
+pub unsafe fn IPhysicsJoint_Parallel_SetHertz(j: usize, v: f32) { joint::edit_joint(j, |j| j.parallel.0 = v); }
+pub unsafe fn IPhysicsJoint_Parallel_GetHertz(j: usize) -> f32 { joint::with_joint(j, |j| j.parallel.0).unwrap_or(0.0) }
+pub unsafe fn IPhysicsJoint_Parallel_SetDampingRatio(j: usize, v: f32) { joint::edit_joint(j, |j| j.parallel.1 = v); }
+pub unsafe fn IPhysicsJoint_Parallel_GetDampingRatio(j: usize) -> f32 { joint::with_joint(j, |j| j.parallel.1).unwrap_or(0.0) }
+pub unsafe fn IPhysicsJoint_Parallel_SetMaxTorque(j: usize, v: f32) { joint::edit_joint(j, |j| j.parallel.2 = v); }
+pub unsafe fn IPhysicsJoint_Parallel_GetMaxTorque(j: usize) -> f32 { joint::with_joint(j, |j| j.parallel.2).unwrap_or(0.0) }
 
 // traces
 

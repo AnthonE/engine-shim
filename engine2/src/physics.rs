@@ -19,6 +19,8 @@ use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::parry::shape::{FeatureId, HeightField, SharedShape, TriMeshFlags};
 use rapier3d::prelude::*;
 
+pub mod joints;
+
 use crate::handles::murmur2;
 use crate::slots::{S_BBox, S_Capsule, S_PhysicsTrace_Result, S_Rotation, S_Sandbox_Sphere, S_Transform, S_Vector3};
 
@@ -423,6 +425,7 @@ pub struct World {
     pending: Vec<Intersection>,
     /// bodies moved or reshaped since the last step: queries see them anyway
     stale: HashSet<RigidBodyHandle>,
+    joints: HashMap<usize, joints::Joint>,
 }
 
 impl World {
@@ -443,6 +446,7 @@ impl World {
             triggering: HashSet::new(),
             pending: Vec::new(),
             stale: HashSet::new(),
+            joints: HashMap::new(),
         }
     }
 
@@ -469,6 +473,8 @@ struct Physics {
     body_world: HashMap<usize, usize>,
     /// shape pointer -> its world's
     shape_world: HashMap<usize, usize>,
+    /// joint pointer -> its world's
+    joint_world: HashMap<usize, usize>,
 }
 
 fn physics() -> MutexGuard<'static, Physics> {
@@ -504,6 +510,10 @@ pub fn destroy_world(ptr: usize) -> Vec<usize> {
     let mut p = physics();
     let Some(w) = p.worlds.remove(&ptr) else { return Vec::new() };
     let mut gone = Vec::new();
+    for j in w.joints.into_keys() {
+        p.joint_world.remove(&j);
+        gone.push(j);
+    }
     for (b, body) in w.bodies {
         p.body_world.remove(&b);
         for s in body.shapes {
@@ -582,15 +592,24 @@ pub struct Active {
     pub fell_asleep: bool,
 }
 
-/// Steps `world` by `dt` in `steps` equal steps: the bodies that moved, and
-/// any that fell asleep. Forces applied are spent (Box3D's rule).
-pub fn step(world: usize, dt: f32, steps: i32) -> Vec<Active> {
+/// What a step did: the bodies that moved (and any that fell asleep), and
+/// the joints that broke.
+#[derive(Default)]
+pub struct Stepped {
+    pub active: Vec<Active>,
+    pub broken: Vec<usize>,
+}
+
+/// Steps `world` by `dt` in `steps` equal steps. Forces applied are spent
+/// (Box3D's rule).
+pub fn step(world: usize, dt: f32, steps: i32) -> Stepped {
     let mut p = physics();
-    let Some(w) = p.worlds.get_mut(&world) else { return Vec::new() };
-    if !(dt > 0.0) { return Vec::new(); }
+    let Some(w) = p.worlds.get_mut(&world) else { return Stepped::default() };
+    if !(dt > 0.0) { return Stepped::default(); }
     let steps = steps.max(1);
     w.sim.integration_parameters.dt = dt / steps as f32;
     w.stale.clear();
+    w.tension_springs();
     for _ in 0..steps {
         w.sim.step_with_events(&w.meta, &());
         if w.max_speed.is_finite() {
@@ -607,6 +626,7 @@ pub fn step(world: usize, dt: f32, steps: i32) -> Vec<Active> {
         }
     }
     collect_intersections(w);
+    let broken = w.broken_joints(dt / steps as f32);
     let mut active = Vec::new();
     for (&ptr, body) in w.bodies.iter_mut() {
         let Some(rb) = w.sim.bodies.get(body.handle) else { continue };
@@ -623,7 +643,7 @@ pub fn step(world: usize, dt: f32, steps: i32) -> Vec<Active> {
             fell_asleep,
         });
     }
-    active
+    Stepped { active, broken }
 }
 
 /// The pair of colliders in a set's order.
@@ -788,10 +808,15 @@ pub fn remove_body(ptr: usize) -> Vec<usize> {
     for s in &body.shapes {
         if let Some(shape) = world.meta.shapes.remove(s) { world.meta.by_collider.remove(&shape.collider); }
     }
+    // Rapier takes the body's joints with it; their handles go too
+    let joints: Vec<usize> = world.joints.iter().filter(|(_, j)| j.body1 == ptr || j.body2 == ptr).map(|(&j, _)| j).collect();
+    for j in &joints { world.joints.remove(j); }
     world.sim.remove_body(body.handle);
     if world.reference == ptr { world.reference = 0; }
     for s in &body.shapes { p.shape_world.remove(s); }
-    let mut gone = body.shapes;
+    for j in &joints { p.joint_world.remove(j); }
+    let mut gone = joints;
+    gone.extend(body.shapes);
     gone.push(ptr);
     gone
 }
@@ -1666,7 +1691,7 @@ mod tests {
         let mut moved = 0;
         let mut slept = false;
         for _ in 0..600 {
-            let active = step(w, 1.0 / 60.0, 2);
+            let active = step(w, 1.0 / 60.0, 2).active;
             moved += active.iter().filter(|a| a.body == ball).count();
             slept |= active.iter().any(|a| a.body == ball && a.fell_asleep);
         }
@@ -1817,7 +1842,7 @@ mod tests {
         add_body(w, k, &BodySettings { body_type: KEYFRAMED as i32, ..Default::default() });
         add_shape(k, ptr(), &Geometry::Box(Pose::IDENTITY, Vector::splat(5.0)), &ShapeSettings::default());
         set_target(k, Pose::from_translation(Vector::new(10.0, 0.0, 0.0)), 1.0 / 60.0);
-        let active = step(w, 1.0 / 60.0, 1);
+        let active = step(w, 1.0 / 60.0, 1).active;
         assert!(active.iter().any(|a| a.body == k && (vec(a.transform.f_Position).x - 10.0).abs() < 1e-3));
     }
 
