@@ -3343,14 +3343,14 @@ unsafe extern "C" fn s2300(_a0: usize) -> i32 { hit(2300); unsafe { core::mem::z
 unsafe extern "C" fn s2301(_a0: usize, _a1: i32) -> usize { hit(2301); crate::trace::object(2301) }
 unsafe extern "C" fn s2302(_a0: usize, _a1: i32) -> usize { hit(2302); crate::trace::object(2302) }
 unsafe extern "C" fn s2303(_a0: usize) -> usize { hit(2303); crate::trace::object(2303) }
-unsafe extern "C" fn s2304(_a0: i32) -> i32 { hit(2304); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2305(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2305); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2306(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) -> i32 { hit(2306); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2307(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2307); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2308(_a0: i32) -> i32 { hit(2308); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2309(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) -> i32 { hit(2309); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2310(_a0: usize, _a1: i32) -> i64 { hit(2310); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2311(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2311); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2304(_a0: i32) -> i32 { hit(2304); unsafe { crate::impls::LZ4Glue_CompressBound(_a0) } }
+unsafe extern "C" fn s2305(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2305); unsafe { crate::impls::LZ4Glue_Compress(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2306(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) -> i32 { hit(2306); unsafe { crate::impls::LZ4Glue_CompressHC(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s2307(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2307); unsafe { crate::impls::LZ4Glue_Decompress(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2308(_a0: i32) -> i32 { hit(2308); unsafe { crate::impls::LZ4Glue_CompressFrameBound(_a0) } }
+unsafe extern "C" fn s2309(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) -> i32 { hit(2309); unsafe { crate::impls::LZ4Glue_CompressFrame(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s2310(_a0: usize, _a1: i32) -> i64 { hit(2310); unsafe { crate::impls::LZ4Glue_GetFrameContentSize(_a0, _a1) } }
+unsafe extern "C" fn s2311(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2311); unsafe { crate::impls::LZ4Glue_DecompressFrame(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s2312(_a0: usize, _a1: i32, _a2: usize) -> usize { hit(2312); crate::trace::object(2312) }
 unsafe extern "C" fn s2313(_a0: usize) -> i32 { hit(2313); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2314(_a0: usize, _a1: usize, _a2: u32) { hit(2314);  }

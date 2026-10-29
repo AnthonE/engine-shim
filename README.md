@@ -104,11 +104,26 @@ kicks (the player hears why), and "could not look" never does.
 | `ENGINE2_STATUS_URL` | where the world reaches it, for the row's `status_url` (https, behind your proxy) |
 | `ENGINE2_ELO_ORIGIN` | `https://elopros.com` arms the copy check (`/api/ticket/<slug>/…`). Unset: nothing is checked |
 
-The slots are tested the way managed calls them (`cargo test`: a server
-logs on, listens, takes a player over QUIC, checks a proof a stand-in
-launcher signed, they talk, a player without a copy is refused at the door
-by a stand-in origin, and a kicked one hears why), but not yet under a
-running server.
+Measured under the real server (Sweeper, hosted with `+shimhost`): it logs
+on, prints `Server started!`, listens on QUIC, and writes its shard row
+from what managed set (`"Sweeper Dedicated Server"`, map `Sweeper`, 64
+players). A player dialling in (`net.rs`'s `probe`, below) is accepted by
+managed's own `ShouldAcceptConnection`, welcomed with a nonce, counted in
+`status.json`, and sent s&box's first handshake message, the server's info,
+compressed with LZ4 (the eight `LZ4Glue` slots, `lz4_flex` behind them).
+The next step of the handshake needs an s&box client to answer it.
+
+```sh
+ENGINE2_PUBLIC_ADDR=127.0.0.1:27015 ENGINE2_STATUS_ADDR=127.0.0.1:27016 \
+  SBOX=../sbox-public sh spike.sh 90 +shimgame $PWD/../sbox-public/game/samples/sweeper/.sbproj +shimhost
+# once it says "Server started!":
+curl -s 127.0.0.1:27016/status.json
+(cd engine2 && ENGINE2_PROBE=127.0.0.1:27015 cargo test --release -- --ignored probe --nocapture)
+```
+
+The rest is tested the way managed calls it (`cargo test`): a proof a
+stand-in launcher signed, a player without a copy refused at the door by a
+stand-in origin, a kicked one hearing why.
 
 What the game's components still can't do:
 
@@ -136,7 +151,7 @@ DOTNET_ROOT=~/.dotnet dotnet build engine/Launcher/SboxServer/Sbox-Server.csproj
 #   before the build: the engine's C# compiler embeds them
 cd ../engine-shim
 sh tools/compile.sh ../sbox-public/game/samples/sweeper      # its scene as engine2 reads it
-SBOX=../sbox-public sh spike.sh 90 +shimgame ../sbox-public/game/samples/sweeper/.sbproj
+SBOX=../sbox-public sh spike.sh 90 +shimgame $PWD/../sbox-public/game/samples/sweeper/.sbproj
 ```
 
 `spike.sh` regenerates `engine2/src/slots.rs` (`gen/`), builds, installs
@@ -157,7 +172,9 @@ first.
   whether it is a dedicated server), and runs `+shimgame <project.sbproj>`
   through the `game` command 30 frames in. The engine runs `+game` itself,
   but only as a package to download from sbox.game; a local project goes
-  through the command.
+  through the command. A path there is the server's: give it absolute.
+- `+shimhost` runs `host` 300 frames later: it opens the lobby, as a
+  networked game's `NetworkHelper` does for itself.
 
 `tools/compile.sh` copies a project's scenes and prefabs to their `_c`
 names, which is all a JSON resource needs here. Models, materials and

@@ -191,6 +191,77 @@ fn returned(s: String) -> usize {
     })
 }
 
+// ---- LZ4: what s&box compresses its packets and saved data with, in the C
+// library's block and frame formats (lz4_flex). HC compresses as the fast
+// mode does: valid LZ4, a little larger.
+
+unsafe fn bytes<'a>(p: usize, n: i32) -> &'a [u8] {
+    if p == 0 || n <= 0 { &[] } else { unsafe { core::slice::from_raw_parts(p as *const u8, n as usize) } }
+}
+unsafe fn bytes_mut<'a>(p: usize, n: i32) -> &'a mut [u8] {
+    if p == 0 || n <= 0 { &mut [] } else { unsafe { core::slice::from_raw_parts_mut(p as *mut u8, n as usize) } }
+}
+
+pub unsafe fn LZ4Glue_CompressBound(n: i32) -> i32 { lz4_flex::block::get_maximum_output_size(n.max(0) as usize) as i32 }
+/// The compressed size, or 0: LZ4's own failure.
+pub unsafe fn LZ4Glue_Compress(src: usize, dst: usize, n: i32, cap: i32) -> i32 {
+    lz4_flex::block::compress_into(unsafe { bytes(src, n) }, unsafe { bytes_mut(dst, cap) }).map_or(0, |n| n as i32)
+}
+pub unsafe fn LZ4Glue_CompressHC(src: usize, dst: usize, n: i32, cap: i32, _level: i32) -> i32 {
+    unsafe { LZ4Glue_Compress(src, dst, n, cap) }
+}
+/// The decompressed size, or negative.
+pub unsafe fn LZ4Glue_Decompress(src: usize, dst: usize, n: i32, cap: i32) -> i32 {
+    lz4_flex::block::decompress_into(unsafe { bytes(src, n) }, unsafe { bytes_mut(dst, cap) }).map_or(-1, |n| n as i32)
+}
+
+/// The most a frame of `n` bytes can take: a header, a size per 64 KiB
+/// block, the blocks (stored, at worst), the end mark.
+pub unsafe fn LZ4Glue_CompressFrameBound(n: i32) -> i32 {
+    let n = n.max(0) as usize;
+    (19 + 4 * (n / 65_536 + 1) + lz4_flex::block::get_maximum_output_size(n) + 4) as i32
+}
+/// A frame carrying its content size (DecompressFrame reads it back), or 0.
+pub unsafe fn LZ4Glue_CompressFrame(src: usize, dst: usize, n: i32, cap: i32, _level: i32) -> i32 {
+    use lz4_flex::frame::{BlockSize, FrameEncoder, FrameInfo};
+    use std::io::Write;
+    let input = unsafe { bytes(src, n) };
+    let info = FrameInfo::new().block_size(BlockSize::Max64KB).content_size(Some(input.len() as u64));
+    let mut e = FrameEncoder::with_frame_info(info, Vec::with_capacity(input.len() / 2 + 64));
+    let Some(frame) = e.write_all(input).ok().and_then(|_| e.finish().ok()) else { return 0 };
+    let out = unsafe { bytes_mut(dst, cap) };
+    if frame.len() > out.len() { return 0; }
+    out[..frame.len()].copy_from_slice(&frame);
+    frame.len() as i32
+}
+/// The size a frame's header says it holds: 0 if it doesn't say, -1 if
+/// it's not a frame.
+pub unsafe fn LZ4Glue_GetFrameContentSize(src: usize, n: i32) -> i64 {
+    let b = unsafe { bytes(src, n) };
+    if b.len() < 7 || b[..4] != 0x184D_2204u32.to_le_bytes() { return -1; }
+    if b[4] & 0x08 == 0 { return 0; }
+    b.get(6..14).map_or(-1, |c| u64::from_le_bytes(c.try_into().unwrap()) as i64)
+}
+/// The decompressed size, or negative (not a frame, or more than `cap`).
+pub unsafe fn LZ4Glue_DecompressFrame(src: usize, dst: usize, n: i32, cap: i32) -> i32 {
+    use std::io::Read;
+    let mut d = lz4_flex::frame::FrameDecoder::new(unsafe { bytes(src, n) });
+    let out = unsafe { bytes_mut(dst, cap) };
+    let mut at = 0;
+    loop {
+        match d.read(&mut out[at..]) {
+            Ok(0) if at < out.len() => return at as i32,
+            Ok(0) => {
+                // full: anything left over is too much
+                let mut more = [0u8; 1];
+                return if matches!(d.read(&mut more), Ok(0)) { at as i32 } else { -1 };
+            }
+            Ok(k) => at += k,
+            Err(_) => return -1,
+        }
+    }
+}
+
 // ---- connections (Glue.Networking): net.rs, over our own transport
 
 use crate::net::{self, Net};
@@ -400,6 +471,37 @@ pub unsafe fn ISteamUser_EndAuthSession(_self: usize, player: u64) { crate::stea
 mod tests {
     //! The slots as managed calls them: a dedicated server logs on, listens,
     //! takes a player, checks their ticket, and they talk.
+    #[test]
+    fn lz4_round_trips_blocks_and_frames() {
+        unsafe {
+            let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8 ^ (i / 1000) as u8).collect();
+            let n = data.len() as i32;
+            let mut c = vec![0u8; LZ4Glue_CompressBound(n) as usize];
+            let k = LZ4Glue_Compress(data.as_ptr() as usize, c.as_mut_ptr() as usize, n, c.len() as i32);
+            assert!(k > 0 && k < n);
+            let mut d = vec![0u8; data.len()];
+            assert_eq!(LZ4Glue_Decompress(c.as_ptr() as usize, d.as_mut_ptr() as usize, k, n), n);
+            assert_eq!(d, data);
+            // too small a destination fails, as LZ4's does
+            assert_eq!(LZ4Glue_Compress(data.as_ptr() as usize, c.as_mut_ptr() as usize, n, 10), 0);
+            assert!(LZ4Glue_Decompress(c.as_ptr() as usize, d.as_mut_ptr() as usize, k, 100) < 0);
+
+            let mut f = vec![0u8; LZ4Glue_CompressFrameBound(n) as usize];
+            let k = LZ4Glue_CompressFrame(data.as_ptr() as usize, f.as_mut_ptr() as usize, n, f.len() as i32, 1);
+            assert!(k > 0);
+            assert_eq!(LZ4Glue_GetFrameContentSize(f.as_ptr() as usize, k), n as i64);
+            let mut d = vec![0u8; data.len()];
+            assert_eq!(LZ4Glue_DecompressFrame(f.as_ptr() as usize, d.as_mut_ptr() as usize, k, n), n);
+            assert_eq!(d, data);
+            assert!(LZ4Glue_DecompressFrame(f.as_ptr() as usize, d.as_mut_ptr() as usize, k, n - 1) < 0);
+            assert_eq!(LZ4Glue_GetFrameContentSize(data.as_ptr() as usize, 64), -1);
+            // incompressible bytes still fit the bound
+            let noise: Vec<u8> = (0..70_000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+            let mut f = vec![0u8; LZ4Glue_CompressFrameBound(noise.len() as i32) as usize];
+            assert!(LZ4Glue_CompressFrame(noise.as_ptr() as usize, f.as_mut_ptr() as usize, noise.len() as i32, f.len() as i32, 1) > 0);
+        }
+    }
+
     use super::*;
     use std::sync::Mutex;
 

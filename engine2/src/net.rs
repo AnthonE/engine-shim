@@ -785,6 +785,30 @@ mod tests {
         }).collect()
     }
 
+    /// A player at a running server (`ENGINE2_PROBE=host:port`): connects,
+    /// and prints what the server sends for a few seconds.
+    /// `ENGINE2_PROBE=127.0.0.1:27015 cargo test --release -- --ignored probe --nocapture`
+    #[test]
+    #[ignore]
+    fn probe() {
+        let addr = std::env::var("ENGINE2_PROBE").expect("ENGINE2_PROBE=host:port");
+        let (client, clog) = (Net::new(0x0110_0001_0000_0777), Log::default());
+        let c = client.connect(&addr, 0);
+        until(&[(&client, &clog)], || client.state(c) != STATE_CONNECTING);
+        println!("probe: state {} ({:?}), the server is {}, nonce {:?}", client.state(c), clog.take(), client.peer(c), client.challenge());
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(5) {
+            client.run_callbacks(&clog);
+            for m in client.receive(c, 64) {
+                let b = unsafe { message_bytes(m) };
+                println!("probe: a message of {} bytes, flags {}: {:02x?}", b.len(), unsafe { (*m).flags }, &b[..b.len().min(24)]);
+                unsafe { release(m) };
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        println!("probe: state {} {:?}", client.state(c), clog.take());
+    }
+
     #[test]
     fn only_loopback_goes_unchecked() {
         for a in ["127.0.0.1:27015", "localhost:27015", "[::1]:27015", "127.4.5.6:1"] { assert!(loopback(a), "{a}"); }
