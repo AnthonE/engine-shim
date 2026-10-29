@@ -157,6 +157,71 @@ var implemented = 0;
 var stubs = new StringBuilder();
 var names = new StringBuilder();
 var table = new StringBuilder();
+
+// the native class a slot's managed wrapper stands for: `CDynamicSceneObject`
+// for NativeEngine.CDynamicSceneObject.__N, without its leading C
+static string NativeClass(string wrapper)
+{
+    var c = wrapper.Replace(".__N", "").Split('.').Last();
+    return c.Length > 1 && c[0] == 'C' && char.IsUpper(c[1]) ? c[1..] : null;
+}
+
+// every slot's signature first, so a Set can find its Get
+var sigs = new Dictionary<int, (string field, Type[] ps, Type ret)>();
+for (int i = 1; i < total; i++)
+{
+    if (!slots.TryGetValue(i, out var s)) throw new Exception($"no managed field for slot {i}");
+    var type = asm.GetType(s.type.Replace(".__N", "+__N")) ?? throw new Exception($"no type {s.type}");
+    var field = type.GetField(s.field, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ?? throw new Exception($"no field {s.type}.{s.field}");
+    var fp = field.FieldType;
+    if (!fp.IsFunctionPointer) fp = field.GetModifiedFieldType();
+    sigs[i] = (s.field, fp.GetFunctionPointerParameterTypes().Select(p => p.UnderlyingSystemType).ToArray(), fp.GetFunctionPointerReturnType().UnderlyingSystemType);
+}
+
+// Properties an object remembers (state.rs): a method's Set<Name>(self, v)
+// and Get<Name>(self), or a field's Set__<x>(self, v) and Get__<x>(self),
+// whose value is the same type: passed by value or by pointer to a struct,
+// returned by value or through an out pointer. A raw pointer is not a value
+// (a string, a buffer: managed's, gone after the call), so it is left out.
+// The key is the name, the same for every class: a property lives on the
+// object.
+static (string key, bool set)? Property(string f)
+{
+    var m = Regex.Match(f, @"^(?:Set|Get)__(.+)$");
+    if (m.Success) return ("." + m.Groups[1].Value, f.StartsWith("Set"));
+    m = Regex.Match(f, @"^.+?_(Set|Get)([A-Z]\w*)$");
+    if (m.Success) return (m.Groups[2].Value, m.Groups[1].Value == "Set");
+    return null;
+}
+static bool IsValue(Type t) => t != typeof(void) && t != typeof(IntPtr) && t != typeof(UIntPtr) && !t.IsPointer && !t.IsFunctionPointer && !t.IsByRef;
+static bool IsStructPtr(Type t) => t.IsPointer && IsValue(t.GetElementType()) && !t.GetElementType().IsPrimitive;
+static Type SetValue((string field, Type[] ps, Type ret) g)
+{
+    if (g.ret != typeof(void) || g.ps.Length != 2 || g.ps[0] != typeof(IntPtr)) return null;
+    var v = g.ps[1];
+    if (IsStructPtr(v)) return v.GetElementType();
+    return IsValue(v) ? v : null;
+}
+static Type GetValue((string field, Type[] ps, Type ret) g)
+{
+    if (g.ps.Length == 1 && g.ps[0] == typeof(IntPtr) && IsValue(g.ret)) return g.ret;
+    if (g.ret == typeof(void) && g.ps.Length == 2 && g.ps[0] == typeof(IntPtr) && IsStructPtr(g.ps[1])) return g.ps[1].GetElementType();
+    return null;
+}
+var setters = new Dictionary<string, List<Type>>();
+var getters = new Dictionary<string, List<Type>>();
+foreach (var (_, g) in sigs)
+{
+    if (Property(g.field) is not { } p) continue;
+    var t = p.set ? SetValue(g) : GetValue(g);
+    if (t == null) continue;
+    var into = p.set ? setters : getters;
+    if (!into.TryGetValue(p.key, out var l)) into[p.key] = l = new();
+    l.Add(t);
+}
+var propKeys = new Dictionary<string, int>();
+int remembered = 0;
+
 for (int i = 0; i < total; i++)
 {
     if (i == 0)
@@ -165,13 +230,8 @@ for (int i = 0; i < total; i++)
         table.AppendLine("    debug_error as *const () as usize,");
         continue;
     }
-    if (!slots.TryGetValue(i, out var s)) throw new Exception($"no managed field for slot {i}");
-    var type = asm.GetType(s.type.Replace(".__N", "+__N")) ?? throw new Exception($"no type {s.type}");
-    var field = type.GetField(s.field, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ?? throw new Exception($"no field {s.type}.{s.field}");
-    var fp = field.FieldType;
-    if (!fp.IsFunctionPointer) fp = field.GetModifiedFieldType();
-    var ps = fp.GetFunctionPointerParameterTypes().Select(p => p.UnderlyingSystemType).ToArray();
-    var ret = fp.GetFunctionPointerReturnType().UnderlyingSystemType;
+    var s = slots[i];
+    var (_, ps, ret) = sigs[i];
     var argList = string.Join(", ", ps.Select((p, k) => $"_a{k}: {Rust(p)}"));
     var r = Rust(ret);
     // a pointer back is an object of its own (zeroed memory: an empty string if read as one); anything else, zeroes
@@ -180,11 +240,45 @@ for (int i = 0; i < total; i++)
     if (r == "i32" && Regex.IsMatch(s.field, @"(IsValid|IsStrongHandleValid|IsLoaded|IsInitialized)$")) body = "1";
     // a cast between classes (C++'s dynamic_cast) is the same object here
     if (r == "usize" && ps.Length == 1 && Regex.IsMatch(s.field, @"^(From|To)_\w+_(To|From)_\w+$")) body = "_a0";
-    // a Create that returns a handle makes the object and registers it with managed
-    if (r == "i32" && handleOf.TryGetValue(s.field, out var hcls) && s.field.Contains("Create") && typeOfClass.TryGetValue(hcls.Split('.').Last(), out var htype))
+    // a Create that returns a handle makes the object and registers it with
+    // managed, remembering the objects it was made with (its pointer arguments)
+    var makes = s.field.Contains("Create") || Regex.IsMatch(s.field, @"_Add[A-Z]");
+    if (r == "i32" && handleOf.TryGetValue(s.field, out var hcls) && makes && typeOfClass.TryGetValue(hcls.Split('.').Last(), out var htype))
     {
-        body = $"crate::handles::create({i}, \"{htype}\")";
+        var links = string.Join(", ", ps.Select((p, k) => (p, k)).Where(x => Rust(x.p) == "usize").Select(x => $"_a{x.k}"));
+        body = $"crate::handles::create({i}, \"{htype}\", &[{links}])";
         registered++;
+    }
+    // a class's own Create, whose handle managed doesn't wrap (it waits for
+    // it in its next handle), registers as the class it makes: its own type,
+    // or the one its name ends with (a CDynamicSceneObject is a SceneObject)
+    else if (r == "i32" && s.field.EndsWith("_Create") && NativeClass(s.type) is { } ncls
+             && tokenOf.Values.Where(t => ncls == t || ncls.EndsWith(t)).OrderByDescending(t => t.Length).FirstOrDefault() is { } ptype)
+    {
+        var links = string.Join(", ", ps.Select((p, k) => (p, k)).Where(x => Rust(x.p) == "usize").Select(x => $"_a{x.k}"));
+        body = $"crate::handles::create({i}, \"{ptype}\", &[{links}])";
+        registered++;
+    }
+    // any other handle an object gives back (its world, its parent) is the
+    // one of that type it was made with
+    else if (r == "i32" && handleOf.TryGetValue(s.field, out hcls) && ps.Length == 1 && ps[0] == typeof(IntPtr) && typeOfClass.TryGetValue(hcls.Split('.').Last(), out htype))
+    {
+        body = $"crate::handles::related(_a0, \"{htype}\")";
+    }
+    // a property, remembered: set here, read back there
+    else if (Property(s.field) is { } prop)
+    {
+        var t = prop.set ? SetValue(sigs[i]) : GetValue(sigs[i]);
+        var other = prop.set ? getters : setters;
+        if (t != null && other.TryGetValue(prop.key, out var ts) && ts.Contains(t))
+        {
+            if (!propKeys.TryGetValue(prop.key, out var key)) propKeys[prop.key] = key = propKeys.Count + 1;
+            var rt = Rust(t);
+            body = prop.set
+                ? (ps[1].IsPointer ? $"unsafe {{ crate::state::set_from::<{rt}>(_a0, {key}, _a1) }}" : $"crate::state::set(_a0, {key}, _a1)")
+                : (ps.Length == 2 ? $"unsafe {{ crate::state::get_into::<{rt}>(_a0, {key}, _a1) }}" : $"crate::state::get::<{rt}>(_a0, {key})");
+            remembered++;
+        }
     }
     if (impls.Contains(s.field)) { body = $"unsafe {{ crate::impls::{s.field}({string.Join(", ", ps.Select((_, k) => $"_a{k}"))}) }}"; implemented++; }
     stubs.AppendLine($"unsafe extern \"C\" fn s{i}({argList}){(r == "()" ? "" : $" -> {r}")} {{ hit({i}); {body} }}");
@@ -215,5 +309,5 @@ o.AppendLine($"pub fn table() -> [usize; {total}] {{ [");
 o.Append(table);
 o.AppendLine("] }");
 File.WriteAllText(outPath, o.ToString());
-Console.WriteLine($"igen_{ident}: {total} slots ({implemented} implemented in impls.rs, {registered} creating handles, the rest stubs), {structs.Count} struct types, {callbacks.Count} managed callbacks, hash {hash} -> {outPath}");
+Console.WriteLine($"igen_{ident}: {total} slots ({implemented} implemented in impls.rs, {registered} creating handles, {remembered} remembering {propKeys.Count} properties, the rest stubs), {structs.Count} struct types, {callbacks.Count} managed callbacks, hash {hash} -> {outPath}");
 foreach (var w in warnings) Console.WriteLine("  " + w);

@@ -119,8 +119,8 @@ is a local project), the scene's snapshot. With a launcher signing in
 (here the stand-in below) and a server that takes only a sign-in for its
 address, the player is their wallet's id, the server checks the proof,
 says `[17865156273432703638] is connected`, and `online.json` names the
-wallet. What fails after is the scene's native objects (lights, the sky,
-physics bodies) on both sides: the object state below, not the network.
+wallet. The scene comes up on both sides with no error: every component
+enables (the object state below).
 
 ```sh
 # a stand-in launcher (test key 9), a server that wants sign-ins, a player
@@ -179,14 +179,27 @@ The rest is tested the way managed calls it (`cargo test`): a proof a
 stand-in launcher signed, a player without a copy refused at the door by a
 stand-in origin, a kicked one hearing why.
 
+Native objects remember (`engine2/src/state.rs`, `handles.rs`), and gen/
+writes all of it from the managed interop:
+
+- **What they were made with.** Every create that hands managed a handle
+  registers the object as its class (a light, a body, a shape, a joint;
+  the `Add…` slots of a physics world and body too), and keeps its pointer
+  arguments. A getter that answers with another object's handle (`GetWorld`,
+  `GetBody`, `GetParent`) gives the one of that type it was made with.
+- **What each `Set…` stored, for its `Get…`.** A setter and a getter of
+  the same name and value type (passed by value or by pointer to a struct,
+  returned by value or through an out pointer), and every field accessor
+  pair: 798 slots, 339 properties. A raw pointer is never kept (a string,
+  a buffer: managed's, gone after the call).
+
+Measured: Sweeper's scene loads on the server, and on a player who joins
+it, with no error at all, and the physics world steps on both.
+
 What the game's components still can't do:
 
-- **Object state.** A light registers, then asks for its world
-  (`GetWorld`), and the stub has nothing to say. Native objects need to
-  remember: the arguments they were made with, what each `Set…` stored for
-  its `Get…`. That is the next layer, and most of it is generic.
-- **Physics.** The world exists; bodies and their simulation do not. About
-  300 slots; Rapier or Jolt behind them.
+- **Physics.** Bodies, shapes and joints exist and remember what they are
+  told; nothing moves them. About 300 slots; Rapier or Jolt behind them.
 
 ## Reproduce
 
@@ -248,9 +261,10 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 
 | | |
 | --- | --- |
-| `gen/` | C#: writes `engine2/src/slots.rs` from the managed interop (the slot order) and the built `Sandbox.Engine.dll` by reflection (every argument and return type, every struct's layout, its size asserted against the managed `sizeof` that Facepunch's C++ checks) |
+| `gen/` | C#: writes `engine2/src/slots.rs` (the stubs, the creates, the remembered properties) from the managed interop (the slot order) and the built `Sandbox.Engine.dll` by reflection (every argument and return type, every struct's layout, its size asserted against the managed `sizeof` that Facepunch's C++ checks) |
 | `engine2/src/lib.rs` | `igen_engine`: fills the table |
-| `engine2/src/slots.rs` | generated: 3,578 typed stubs, 81 struct layouts, the names |
+| `engine2/src/slots.rs` | generated: 3,578 typed slots, 81 struct layouts, the names |
+| `engine2/src/state.rs` | the properties native objects remember, set by one slot and read by another |
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
