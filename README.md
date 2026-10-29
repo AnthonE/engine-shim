@@ -155,6 +155,14 @@ probe dialling it by identity, and sends the same first message.
 | `ENGINE2_RELAY` | `host:port` of a relay. A server registers its identity socket there; a player's `ConnectToSteamId` goes through it |
 | `ENGINE2_HOST_KEY` | a server's key file (64 hex digits, made on first start, 0600): its identity across restarts, proven to the relay |
 | `ENGINE2_RELAY_PORT` | the `relay` binary's port (default 27080, udp); its certificate is a server's (`ENGINE2_TLS_CERT`/`KEY`, or self-signed and pinned) |
+| `ENGINE2_RELAY_METER`, `ENGINE2_RELAY_SECRET` | the relay asks the Elo Pros meter (`https://elopros.com/api`, scry-forge's `meter/gamerelay.py`) whether a server may register, and beats each minute with its players: billed by the player-hour from its developer's credits, and dropped when they run out. Unset: every server carried free, a relay for your own |
+
+A developer puts a server on their bill with `relay claim <host key file>
+<account>`: its address and its host key's signature over the claim, for
+the dev console. Measured against scry-forge's own meter, served alone:
+the claim lands, the server registers through the relay, a player joins it
+by identity with s&box's `connect <identity>`, and the first beat lands one
+ledger line (`gamerelay:<session>:0`, 1¢ for ten minutes).
 
 ```sh
 cargo build --release && ENGINE2_RELAY_PORT=27080 ./target/release/relay &

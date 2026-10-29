@@ -1037,7 +1037,7 @@ mod tests {
     fn a_player_reaches_a_server_by_identity_through_the_relay() {
         let endpoint = server_endpoint(0).unwrap();
         let relay = format!("127.0.0.1:{}", endpoint.local_addr().unwrap().port());
-        rt().spawn(crate::relay::serve(endpoint));
+        rt().spawn(crate::relay::serve(endpoint, None));
 
         let (key, address) = crate::siwe::test_key(21);
         let sid = crate::siwe::id_of(&address);
@@ -1096,6 +1096,83 @@ mod tests {
         let c = client.connect_via(&relay, sid + 1, 77);
         until(&[(&client, &clog)], || client.state(c) == STATE_NONE);
         server.close_socket(socket);
+    }
+
+    /// A meter as scry-forge's gamerelay.py answers the box: `allow` says
+    /// whether servers may register, `go` whether to keep carrying them, and
+    /// every beat's player count is kept.
+    fn meter(allow: Arc<AtomicBool>, go: Arc<AtomicBool>, beats: Arc<Mutex<Vec<usize>>>) -> String {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for c in l.incoming().flatten() {
+                let mut c = c;
+                let _ = c.set_read_timeout(Some(Duration::from_millis(500)));
+                let mut req = Vec::new();
+                let mut buf = [0u8; 4096];
+                while let Ok(n) = c.read(&mut buf) {
+                    if n == 0 { break; }
+                    req.extend_from_slice(&buf[..n]);
+                    if req.ends_with(b"}") { break; }
+                }
+                let req = String::from_utf8_lossy(&req).into_owned();
+                assert!(req.contains("?secret=s%20cret"), "{req}");
+                let (code, body) = if req.starts_with("POST /gamerelay/box/auth?") {
+                    if allow.load(Ordering::Relaxed) { ("200 OK", r#"{"ok":true,"why":"ok","session":"0123456789abcdef"}"#.to_string()) } else { ("403 Forbidden", r#"{"ok":false,"why":"no credits"}"#.to_string()) }
+                } else {
+                    let n = req.split("\"players\":").nth(1).and_then(|r| r.trim_end_matches('}').parse().ok()).unwrap_or(999);
+                    beats.lock().unwrap().push(n);
+                    ("200 OK", format!(r#"{{"go":{},"why":"the credits ran out"}}"#, go.load(Ordering::Relaxed)))
+                };
+                let _ = write!(c, "HTTP/1.1 {code}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn the_relay_carries_whom_the_meter_says() {
+        let (allow, go, beats) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(true)), Arc::<Mutex<Vec<usize>>>::default());
+        let m = crate::relay::Meter { url: meter(allow.clone(), go.clone(), beats.clone()), secret: "s cret".into(), beat: Duration::from_millis(300) };
+        let endpoint = server_endpoint(0).unwrap();
+        let relay = format!("127.0.0.1:{}", endpoint.local_addr().unwrap().port());
+        rt().spawn(crate::relay::serve(endpoint, Some(m)));
+        let (key, address) = crate::siwe::test_key(31);
+        let sid = crate::siwe::id_of(&address);
+
+        // nobody pays: refused, and told why
+        let r = rt().block_on(host_once(&Arc::default(), 1, &relay, 77, sid, &key));
+        assert_eq!(r, Err("refused: no credits".to_string()));
+
+        // paid for: registered, a player carried, beats with them
+        allow.store(true, Ordering::Relaxed);
+        let (server, slog) = (Net::new(sid), Log::default());
+        let socket = server.listen_relay(77, &relay, key);
+        let (client, clog) = (Net::new(0x0110_0001_0000_0031), Log::default());
+        let t = Instant::now();
+        let c = loop {
+            let c = client.connect_via(&relay, sid, 77);
+            until(&[(&server, &slog), (&client, &clog)], || client.state(c) != STATE_CONNECTING);
+            if client.state(c) == STATE_CONNECTED { break c; }
+            until(&[(&client, &clog)], || client.state(c) == STATE_NONE);
+            clog.take();
+            assert!(t.elapsed() < Duration::from_secs(15), "never got through");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        until(&[(&server, &slog)], || beats.lock().unwrap().contains(&1));
+
+        // the meter says stop: the server is dropped, and its player with it
+        go.store(false, Ordering::Relaxed);
+        until(&[(&server, &slog), (&client, &clog)], || client.state(c) == STATE_NONE);
+        assert!(clog.take()[0].starts_with(&format!("ended {c} ")));
+        server.close_socket(socket);
+    }
+
+    #[test]
+    fn a_claim_is_the_meters_text() {
+        assert_eq!(crate::relay::claim_text("0xABCdef0000000000000000000000000000000001", "acct_x"),
+            "elo game relay\nhost: 0xabcdef0000000000000000000000000000000001\naccount: acct_x");
     }
 
     #[test]
