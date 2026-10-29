@@ -393,6 +393,17 @@ and compressed positions, rotations and scales). That is the 70 `CModel_*`,
 as the file says. Every model in the cache reads (185: 656 meshes, 1,227
 bones, 1,409 playable sequences).
 
+**A model's key values** (`engine2/src/assets/kv3text.rs`): what its
+author set on it, kept as KV3 text in the model (`m_keyValueText`): its
+`prop_data` (a prop's health, whether it explodes and how hard) and its
+`break_list` (the gibs it breaks into). Read into KV3 values, handed to
+managed by name (`FindModelSubKey`) and written as the JSON it
+deserializes them from (`KeyValues3ToJson`). All 52 cached models that
+have any read (38 with `prop_data`, 87 break pieces). Measured in the zoo:
+the TV has 15 health and six gibs, the explosive oil drum 100 and four;
+killed, the TV is gone and its six gibs fall and sleep within three
+seconds.
+
 And a model in the scene has a pose (`engine2/src/animation.rs`, the
 `CSceneAnimatableObject` slots `SceneModel` drives): its bones in parent
 space, as the sequence playing leaves them (a SkinnedModelRenderer's
@@ -422,9 +433,8 @@ What the game's components still can't do:
   that uses one (the default, and a player's) stays in its bind pose
   under its procedural bones; only sequences play. Nor do animation
   events fire, or sequences blend into one another.
-- **Model data.** A model's key values (`prop_data`: a prop's health,
-  its gibs) aren't made into KeyValues3 yet; nor are a runtime model's
-  bones, hitboxes and meshes (`ModelBuilder`) kept.
+- **Runtime models' rest.** A model built at runtime (`ModelBuilder`)
+  keeps its collision, not its bones, hitboxes and meshes.
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
   has none.
 
@@ -504,7 +514,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/surfaces.rs` | surfaces: what shapes are made of, by index and by name, and what each does to them |
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
-| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`) and binary KeyValues 3 (`kv3.rs`) |
+| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`) |
 | `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders, the game's own |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |

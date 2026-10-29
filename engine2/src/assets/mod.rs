@@ -2,6 +2,7 @@
 //! it, and what physics needs of a model (models.rs makes the model).
 pub mod anim;
 pub mod kv3;
+pub mod kv3text;
 pub mod model;
 pub mod resource;
 
@@ -78,6 +79,7 @@ mod sweep {
         let Ok(dir) = std::env::var("ENGINE2_SAMPLE_ASSETS") else { return };
         let mut stack = vec![std::path::PathBuf::from(dir)];
         let (mut models, mut bones, mut hitboxes, mut attachments, mut sequences, mut meshes, mut clips, mut playable) = (0, 0, 0, 0, 0, 0, 0, 0);
+        let (mut keyed, mut props, mut breaks) = (0, 0, 0);
         while let Some(d) = stack.pop() {
             for e in std::fs::read_dir(d).unwrap().flatten() {
                 let p = e.path();
@@ -101,10 +103,19 @@ mod sweep {
                 clips += a.clips.len();
                 playable += a.sequences.len();
                 meshes += m.meshes.iter().filter(|x| !x.objects.is_empty()).count();
+                // key values written as text read, every one
+                let text = r.kv3("DATA").and_then(|d| d.ok()).and_then(|d| d.get("m_modelInfo")?.get("m_keyValueText")?.as_str().map(String::from)).unwrap_or_default();
+                if !text.trim().is_empty() {
+                    let kv = m.key_values.as_ref().unwrap_or_else(|| panic!("{}: {:?}", p.display(), super::kv3text::read(&text).err()));
+                    keyed += 1;
+                    props += kv.get("prop_data").is_some() as usize;
+                    breaks += kv.get("break_list").map(|b| b.as_array().len()).unwrap_or(0);
+                }
                 assert!(m.render_bounds().is_some(), "{}: no meshes", p.display());
             }
         }
         eprintln!("{models} models: {meshes} meshes, {bones} bones, {hitboxes} hitboxes, {attachments} attachments, {sequences} sequences ({playable} playing one of {clips} clips)");
+        eprintln!("{keyed} with key values: {props} with prop_data, {breaks} break pieces");
     }
 }
 

@@ -1562,6 +1562,7 @@ pub unsafe fn CtlVctrnt32_Element(v: usize, i: i32) -> u32 {
 // carry, its sequences. A model built at runtime has none of these yet.
 
 use crate::animation::{self, Xf};
+use crate::assets::kv3::Value;
 use crate::assets::model::{HitBox, HitBoxSet, ModelFile};
 use crate::models::Piece;
 use crate::slots::S_Color32;
@@ -1599,8 +1600,27 @@ pub unsafe fn CModel_HasPhysics(model: usize) -> i32 {
     let physics = m.physics_of(model);
     m.bodies(physics).is_some_and(|b| !b.parts.is_empty()) as i32
 }
-/// Model data (KeyValues3) isn't made here yet: none.
-pub unsafe fn CModel_FindModelSubKey(_model: usize, _name: usize) -> usize { 0 }
+/// A model's key values under `name` (its `prop_data`, its `break_list`):
+/// the value in the model file, where managed holds it until it asks for
+/// it as JSON.
+pub unsafe fn CModel_FindModelSubKey(model: usize, name: usize) -> usize {
+    let name = unsafe { read(name) };
+    let Some(v) = file(model).and_then(|f| f.key_values.as_ref()).and_then(|kv| kv.get(&name)) else { return 0 };
+    let p = v as *const Value as usize;
+    KEY_VALUES.lock().unwrap().insert(p);
+    p
+}
+
+/// The KeyValues3 handed to managed (a model file's, which live for good):
+/// only these are read back.
+static KEY_VALUES: Mutex<std::collections::BTreeSet<usize>> = Mutex::new(std::collections::BTreeSet::new());
+
+pub unsafe fn EngineGlue_KeyValues3ToJson(kv: usize) -> usize {
+    if !KEY_VALUES.lock().unwrap().contains(&kv) { return 0; }
+    let mut s = String::new();
+    crate::assets::kv3text::json(unsafe { &*(kv as *const Value) }, &mut s);
+    returned(s)
+}
 pub unsafe fn CModel_GetAnimationGraph(_model: usize) -> usize { 0 }
 pub unsafe fn CModel_MeshTrace(_model: usize, _input: usize, _output: usize) -> i32 { 0 }
 

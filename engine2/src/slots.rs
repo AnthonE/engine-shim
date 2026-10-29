@@ -2936,7 +2936,7 @@ unsafe extern "C" fn s1553(_a0: usize) { hit(1553);  }
 unsafe extern "C" fn s1554(_a0: usize, _a1: i32) -> usize { hit(1554); crate::trace::object(1554) }
 unsafe extern "C" fn s1555(_a0: usize) -> usize { hit(1555); crate::trace::object(1555) }
 unsafe extern "C" fn s1556(_a0: usize) -> usize { hit(1556); crate::trace::object(1556) }
-unsafe extern "C" fn s1557(_a0: usize) -> usize { hit(1557); crate::trace::object(1557) }
+unsafe extern "C" fn s1557(_a0: usize) -> usize { hit(1557); unsafe { crate::impls::EngineGlue_KeyValues3ToJson(_a0) } }
 unsafe extern "C" fn s1558(_a0: usize) -> usize { hit(1558); crate::trace::object(1558) }
 unsafe extern "C" fn s1559(_a0: usize) -> u32 { hit(1559); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1560(_a0: u32) -> usize { hit(1560); crate::trace::object(1560) }

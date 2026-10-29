@@ -4,12 +4,13 @@
 /// how many awake, how high), the joints. And shoots at a model's
 /// hitboxes: a skinned model from s&box's download cache, with
 /// ModelHitboxes, hit by traces aimed at its bones, then turned and moved,
-/// then playing a sequence.
+/// then playing a sequence. And breaks a prop, and follows its gibs.
 /// </summary>
 public sealed class ShimWatch : Component
 {
 	TimeSince _last;
 	int _ticks;
+	Prop _broken;
 
 	protected override void OnFixedUpdate()
 	{
@@ -42,6 +43,25 @@ public sealed class ShimWatch : Component
 				var shapes = m.Rigidbody?.PhysicsBody?.Shapes ?? Enumerable.Empty<PhysicsShape>();
 				Log.Info( $"shimwatch: {m.GameObject.Name} ({m.Model?.ResourceName}) surfaces [{string.Join( " ", surfaces )}], its shapes [{string.Join( " ", shapes.Select( s => s.Surface?.ResourceName ?? "none" ).Distinct() )}], mass {m.Rigidbody?.Mass:0.0}" );
 			}
+			// and its key values: a prop's health, what it breaks into
+			foreach ( var p in Scene.GetAllComponents<Prop>() )
+				Log.Info( $"shimwatch: prop {p.GameObject.Name} health {p.Health:0} explosive {p.IsExplosive} gibs {p.Model?.GetData<Sandbox.ModelEditor.Nodes.ModelBreakPiece[]>()?.Length ?? 0}" );
+		}
+
+		// once: break the first prop that has gibs, and follow them
+		if ( _ticks == 20 )
+		{
+			_broken = Scene.GetAllComponents<Prop>().FirstOrDefault( p => p.Model?.GetData<Sandbox.ModelEditor.Nodes.ModelBreakPiece[]>()?.Length > 0 && !p.IsExplosive );
+			if ( _broken is not null )
+			{
+				Log.Info( $"shimwatch: breaking {_broken.GameObject.Name} ({_broken.Model.ResourceName}) at {_broken.WorldPosition}" );
+				_broken.Kill();
+			}
+		}
+		if ( _ticks > 20 && _ticks <= 26 && _broken is not null )
+		{
+			var gibs = Scene.GetAllComponents<Gib>().ToList();
+			Log.Info( $"shimwatch gibs: {gibs.Count} ({string.Join( ", ", gibs.Select( g => $"{g.Model?.ResourceName} z {g.WorldPosition.z:0} {(g.Components.Get<Rigidbody>()?.PhysicsBody?.Sleeping == true ? "asleep" : "moving")}" ) )}) | {(_broken.IsValid() ? "the prop is still there" : "the prop is gone")}" );
 		}
 
 		Shoot();
