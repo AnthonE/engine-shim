@@ -205,12 +205,26 @@ the result vectors they fill:
 - **Bodies**: static, keyframed (sent to a target each step) and dynamic;
   position, rotation, velocities, impulses and forces (spent each step, as
   Box3D's are), damping, gravity and its scale, motion locks, sleep, CCD.
-  Mass comes from the shapes at water's density, unless managed sets a
-  mass, a centre or an inertia over it; mass updates defer while a
+  Mass comes from the shapes at their surfaces' densities, unless managed
+  sets a mass, a centre or an inertia over it; mass updates defer while a
   collider builds its shapes.
 - **Shapes**: spheres, capsules, boxes, hulls, triangle meshes and height
   fields, each with its tags, its surface, friction, elasticity, and
   whether it is a trigger, ignores traces or weighs nothing.
+- **Surfaces** (`engine2/src/surfaces.rs`): each `.surface` the game
+  loads (`Sandbox.Surface`: core's wood, metal, rubber... and a project's
+  own) is added by name and given its friction, elasticity and density;
+  managed keeps the index it gets. A shape is made of one (by index or by
+  name; none named is the default, `surfaces/default.surface`'s 0.8, 0.05
+  and 2,000 kg/m³) and takes its friction and elasticity unless managed
+  sets its own, and weighs its volume at its density. Two shapes touching
+  mix as Box3D's do: friction the geometric mean, elasticity the greater.
+  A mesh's or height field's triangles can each be of their own surface
+  (a model's collision mesh, a terrain's painted materials): a contact
+  takes the touching triangle's friction and elasticity, and a trace or a
+  touch reports its surface. A surface reloaded reaches the shapes made
+  of it, and their mass. A model file's shapes name their surfaces by
+  hash, found by name when managed asks.
 - **The step**: `StepSimulation` steps, then tells managed each body that
   moved (`PhysicsEngine.OnActive`: where, how fast, whether it fell
   asleep), which is how a `Rigidbody` follows its body.
@@ -273,7 +287,13 @@ grep jointrig target/spike/server.log
 Also tested the way managed calls it (`cargo test`): a ball dropped
 through the slots alone falls, lands, is heard moving and falling asleep,
 touches the floor, is traced, queried, filtered past, knocked back up and
-removed.
+removed. And surfaces: a ball of elasticity 0.9 dropped 182 comes back up
+over 100 while the default's barely leaves the floor; a box pushed at 300
+slides over 400 on ice (friction 0.01) and under 100 on the default; a
+box of wood weighs 540 kg/m³ and twice that once the surface reloads; a
+floor mesh half glue and half ice holds one box and lets the other slide,
+traces and touches naming each half's surface; a height field's painted
+cell traces as its own. Not yet measured under the real server.
 
 ## A real game: Facepunch's Sandbox
 
@@ -380,8 +400,8 @@ What the game's components still can't do:
 - **Model data.** A model's key values (`prop_data`: a prop's health,
   its gibs) aren't made into KeyValues3 yet; nor are a runtime model's
   bones, hitboxes and meshes (`ModelBuilder`) kept.
-- **Surfaces.** Every shape has the default friction and density; the
-  project's surfaces (`.surface`) aren't read into physics yet.
+- **Surfaces' finer points.** Rolling resistance and the bounce
+  threshold are kept but not simulated: Rapier has neither.
 
 ## Reproduce
 
@@ -453,6 +473,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer, freed |
 | `engine2/src/physics.rs` | physics on Rapier: worlds, bodies, shapes, the step and what touched, collision rules, traces and queries |
+| `engine2/src/surfaces.rs` | surfaces: what shapes are made of, by index and by name, and what each does to them |
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`) and binary KeyValues 3 (`kv3.rs`) |

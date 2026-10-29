@@ -681,9 +681,14 @@ pub unsafe fn IPhysicsBody_GetShape(body: usize, i: i32) -> i32 {
 
 /// A new shape on `body`: its handle, or 0 if it can't be made.
 fn add_shape(body: usize, g: Geometry, settings: usize) -> i32 {
+    add_shape_of(body, g, &[], settings)
+}
+
+/// A shape whose triangles (or a height field's samples) have materials.
+fn add_shape_of(body: usize, g: Geometry, materials: &[u8], settings: usize) -> i32 {
     let s = unsafe { phys::read::<phys::ShapeSettings>(settings) };
     let shape = crate::handles::object();
-    if !phys::add_shape(body, shape, &g, &s) { return 0; }
+    if !phys::add_shape(body, shape, &g, &s, materials) { return 0; }
     crate::handles::register(shape, "PhysicsShape", &[body, phys::world_of_body(body)])
 }
 
@@ -714,10 +719,11 @@ pub unsafe fn IPhysicsBody_AddMeshShape(body: usize, nv: i32, vertices: usize, n
     let g = Geometry::Mesh(rapier3d::math::Pose::IDENTITY, unsafe { phys::read_points(vertices, nv) }, unsafe { read_triangles(indices, ni) });
     add_shape(body, g, settings)
 }
-pub unsafe fn IPhysicsBody_AddHeightFieldShape(body: usize, heights: usize, _materials: usize, x: i32, y: i32, spacing: f32, scale: f32, _n: i32, settings: usize) -> i32 {
+pub unsafe fn IPhysicsBody_AddHeightFieldShape(body: usize, heights: usize, materials: usize, x: i32, y: i32, spacing: f32, scale: f32, _n: i32, settings: usize) -> i32 {
     if heights == 0 || x < 2 || y < 2 { return 0; }
     let h = unsafe { core::slice::from_raw_parts(heights as *const u16, (x * y) as usize) }.to_vec();
-    add_shape(body, Geometry::Height(h, x as usize, y as usize, spacing, scale), settings)
+    let m = if materials == 0 { &[][..] } else { unsafe { core::slice::from_raw_parts(materials as *const u8, (x * y) as usize) } };
+    add_shape_of(body, Geometry::Height(h, x as usize, y as usize, spacing, scale), m, settings)
 }
 pub unsafe fn IPhysicsBody_RemoveShape(_body: usize, shape: usize) {
     if phys::remove_shape(shape) { crate::handles::free(shape); }
@@ -763,10 +769,10 @@ pub unsafe fn IPhysicsBody_GetLinearDamping(body: usize) -> f32 { phys::with_bod
 pub unsafe fn IPhysicsBody_SetAngularDamping(body: usize, d: f32) { phys::with_body_mut(body, |_, rb| rb.set_angular_damping(d)); }
 pub unsafe fn IPhysicsBody_GetAngularDamping(body: usize) -> f32 { phys::with_body(body, |_, rb| rb.angular_damping()).unwrap_or(0.0) }
 pub unsafe fn IPhysicsBody_BuildBounds(body: usize) -> S_BBox { phys::body_bounds(body) }
-/// Every shape weighs as water does, kilograms per cubic metre.
-pub unsafe fn IPhysicsBody_GetDensity(_body: usize) -> f32 { 1000.0 }
+/// What its shapes weigh for their volume, kilograms per cubic metre.
+pub unsafe fn IPhysicsBody_GetDensity(body: usize) -> f32 { phys::body_density(body) }
 pub unsafe fn IPhysicsBody_GetClosestPoint(body: usize, p: usize) -> S_Vector3 { phys::v3(phys::closest_point(body, unsafe { phys::read_vec(p) })) }
-pub unsafe fn IPhysicsBody_SetMaterialIndex(_body: usize, _name: S_Sandbox_StringToken) {}
+pub unsafe fn IPhysicsBody_SetMaterialIndex(body: usize, name: S_Sandbox_StringToken) { phys::set_body_surface(body, surface_named(name)) }
 pub unsafe fn IPhysicsBody_SetTargetTransform(body: usize, position: usize, rotation: usize, dt: f32) {
     phys::set_target(body, pose_of(position, rotation), dt)
 }
@@ -795,6 +801,33 @@ pub unsafe fn IPhysicsBody_IsTouching(body: usize, other: usize, triggers: i32) 
 pub unsafe fn IPhysicsBody_IsTouching_1(body: usize, shape: usize, triggers: i32) -> i32 { phys::touching_shape(body, shape, b(triggers)) as i32 }
 pub unsafe fn IPhysicsBody_SetBullet(body: usize, on: i32) { phys::with_body_mut(body, |_, rb| rb.enable_ccd(on != 0)); }
 
+// surfaces (surfaces.rs): the controller is the one list of them
+
+use crate::surfaces;
+
+/// The surface a StringToken names: none (-1, the default) for a name no
+/// surface has.
+fn surface_named(name: S_Sandbox_StringToken) -> i32 {
+    if name.f_Value == 0 { -1 } else { surfaces::by_hash(name.f_Value).unwrap_or(-1) }
+}
+
+static SURFACE_CONTROLLER: u64 = 0;
+
+pub unsafe fn g_pPhysicsSystem_GetSurfacePropertyController() -> usize { &SURFACE_CONTROLLER as *const u64 as usize }
+pub unsafe fn PhysSrfcPrprtyCn_GetSurfacePropCount(_c: usize) -> i32 { surfaces::count() }
+pub unsafe fn PhysSrfcPrprtyCn_GetSurfaceProperty(_c: usize, i: i32) -> usize { surfaces::object(i) }
+pub unsafe fn PhysSrfcPrprtyCn_AddProperty(_c: usize, name: usize, base: usize, description: usize) -> usize {
+    surfaces::add(&unsafe { read(name) }, &unsafe { read(base) }, &unsafe { read(description) })
+}
+/// A surface's values: the shapes made of it take them at once.
+pub unsafe fn CPhysSrfcPrprts_UpdatePhysics(p: usize, friction: f32, elasticity: f32, density: f32, rolling_resistance: f32, bounce_threshold: f32) {
+    let props = surfaces::Props { friction, elasticity, density, rolling_resistance, bounce_threshold };
+    if surfaces::update(p, props).is_some() { phys::surfaces_changed(); }
+}
+pub unsafe fn g_pPhysicsSystem_UpdateSurfaceProperties(_p: usize) { phys::surfaces_changed() }
+pub unsafe fn Get__CPhysSrfcPrprts_m_name(p: usize) -> usize { surfaces::name_of(p) }
+pub unsafe fn Get__CPhysSrfcPrprts_m_description(p: usize) -> usize { surfaces::description(p) }
+
 // shapes
 
 pub unsafe fn IPhysicsShape_AddCollisionFunctionMask(shape: usize, m: u8) { phys::set_mask(shape, |was| was | m) }
@@ -818,9 +851,9 @@ pub unsafe fn IPhysicsShape_ClearTags(shape: usize) -> i32 {
         had
     }) as i32
 }
-pub unsafe fn IPhysicsShape_SetSurfaceIndex(shape: usize, part: i32, index: i32) {
-    if part == 0 { phys::with_shape_mut(shape, false, |s, _| s.surface = index); }
-}
+pub unsafe fn IPhysicsShape_SetSurfaceIndex(shape: usize, index: i32, part: i32) { phys::set_surface(shape, part.max(0), index) }
+pub unsafe fn IPhysicsShape_SetMaterialIndex(shape: usize, name: S_Sandbox_StringToken) { phys::set_surface(shape, -1, surface_named(name)) }
+pub unsafe fn IPhysicsShape_GetMaterialName(shape: usize) -> usize { surfaces::name(phys::surface(shape)) }
 pub unsafe fn IPhysicsShape_GetType(shape: usize) -> i64 { phys::shape_kind(shape) }
 pub unsafe fn IPhysicsShape_UpdateMeshShape(shape: usize, nv: i32, vertices: usize, ni: i32, indices: usize) {
     phys::update_shape(shape, &Geometry::Mesh(rapier3d::math::Pose::IDENTITY, unsafe { phys::read_points(vertices, nv) }, unsafe { read_triangles(indices, ni) }))
@@ -848,13 +881,14 @@ pub unsafe fn IPhysicsShape_GetTriangulation(shape: usize, vertices: usize, indi
 pub unsafe fn IPhysicsShape_AsSphere(shape: usize) -> S_Sandbox_Sphere { phys::as_sphere(shape) }
 pub unsafe fn IPhysicsShape_AsCapsule(shape: usize) -> S_Capsule { phys::as_capsule(shape) }
 pub unsafe fn IPhysicsShape_SetFriction(shape: usize, f: f32) { phys::set_friction(shape, f) }
-pub unsafe fn IPhysicsShape_GetFriction(shape: usize) -> f32 { phys::with_shape(shape, |s, _| s.friction).unwrap_or(0.0) }
+pub unsafe fn IPhysicsShape_GetFriction(shape: usize) -> f32 { phys::friction(shape) }
 pub unsafe fn IPhysicsShape_SetLocalVelocity(shape: usize, v: usize) {
     let v = unsafe { phys::read_vec(v) };
     phys::with_shape_mut(shape, false, |s, _| s.local_velocity = v);
 }
 pub unsafe fn IPhysicsShape_GetLocalVelocity(shape: usize) -> S_Vector3 { phys::v3(phys::with_shape(shape, |s, _| s.local_velocity).unwrap_or_default()) }
-pub unsafe fn IPhysicsShape_SetElasticity(shape: usize, e: f32) { phys::with_shape_mut(shape, false, |_, co| co.set_restitution(e.max(0.0))); }
+pub unsafe fn IPhysicsShape_SetElasticity(shape: usize, e: f32) { phys::set_elasticity(shape, e) }
+pub unsafe fn IPhysicsShape_SetRollingResistance(shape: usize, r: f32) { phys::set_rolling_resistance(shape, r) }
 pub unsafe fn IPhysicsShape_SetIgnoreTraces(shape: usize, on: i32) { phys::with_shape_mut(shape, false, |s, _| s.ignore_traces = on != 0); }
 pub unsafe fn IPhysicsShape_SetHasNoMass(shape: usize, on: i32) { phys::with_shape_mut(shape, true, |s, _| s.no_mass = on != 0); }
 pub unsafe fn IPhysicsShape_BuildBounds(shape: usize) -> S_BBox { phys::shape_bounds(shape, false) }
@@ -1154,6 +1188,19 @@ pub unsafe fn CPhysBdyDscrry_AddSurface(bodies: usize, surface: i32) {
 }
 
 pub unsafe fn CPhysicsData_GetBindingPtr(physics: usize) -> usize { physics }
+/// The surfaces a model's shapes name by index: a built one's, or a model
+/// file's, found by name (none yet: null, which managed reads as "default").
+pub unsafe fn CPhysicsData_GetSurfacePropertiesCount(physics: usize) -> i32 {
+    models::models().bodies(physics).map(|b| b.surfaces.len().max(b.surface_hashes.len()) as i32).unwrap_or(0)
+}
+pub unsafe fn CPhysicsData_GetSurfaceProperties(physics: usize, i: i32) -> usize {
+    let Ok(i) = usize::try_from(i) else { return 0 };
+    let index = models::models().bodies(physics).and_then(|b| match b.surfaces.get(i) {
+        Some(&s) => Some(s),
+        None => b.surface_hashes.get(i).and_then(|&h| surfaces::by_hash(h)),
+    });
+    index.map(surfaces::object).unwrap_or(0)
+}
 pub unsafe fn CPhysicsData_GetPartCount(physics: usize) -> i32 {
     models::models().bodies(physics).map(|b| b.parts.len() as i32).unwrap_or(0)
 }
@@ -1349,9 +1396,9 @@ pub unsafe fn IPhysicsBody_AddHullShape_2(body: usize, m: usize, tx: usize, sett
     add_shape(body, Geometry::Hull(at, points), settings)
 }
 pub unsafe fn IPhysicsBody_AddMeshShape_1(body: usize, m: usize, tx: usize, _materials: i32, settings: usize) -> i32 {
-    let (vertices, triangles) = mesh(m, |m| (m.vertices.clone(), m.triangles.clone()));
+    let (vertices, triangles, materials) = mesh(m, |m| (m.vertices.clone(), m.triangles.clone(), m.materials.clone()));
     let (at, vertices) = unsafe { placed(tx, vertices) };
-    add_shape(body, Geometry::Mesh(at, vertices, triangles), settings)
+    add_shape_of(body, Geometry::Mesh(at, vertices, triangles), &materials, settings)
 }
 
 // traces

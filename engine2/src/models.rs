@@ -112,6 +112,8 @@ pub struct Bodies {
     pub parts: Vec<usize>,
     pub joints: Vec<usize>,
     pub surfaces: Vec<i32>,
+    /// a model file's surfaces instead, by their names' hashes (found when asked for: they may load after it)
+    pub surface_hashes: Vec<u32>,
     /// the bone each part follows, and its bind pose (a model file's; none for a built one)
     pub bones: Vec<(String, Pose)>,
 }
@@ -352,8 +354,19 @@ fn bind_pose(v: &Value) -> Pose {
     Pose::from_parts(Vector::new(f[3], f[7], f[11]), rapier3d::math::Rotation::from_mat3(&m).normalize())
 }
 
+/// A shape description's surface: which of its model's surfaces it is made
+/// of, where managed reads it (`m_nSurfacePropertyIndex`).
+fn surface_of(ptr: usize, desc: &Value, field: u32) -> usize {
+    crate::state::set(ptr, field, desc.i64("m_nSurfacePropertyIndex") as u32);
+    ptr
+}
+
 /// VPhysXAggregateData_t as the objects a built model's physics is.
 fn physics(agg: &Value) -> usize {
+    use crate::slots::{
+        PROP__RnCapsuleDesc_t_m_nSurfacePropertyIndex as CAPSULE, PROP__RnHullDesc_t_m_nSurfacePropertyIndex as HULL,
+        PROP__RnMeshDesc_t_m_nSurfacePropertyIndex as MESH, PROP__RnSphereDesc_t_m_nSurfacePropertyIndex as SPHERE,
+    };
     let mut parts = Vec::new();
     for p in agg.get("m_parts").map(Value::as_array).unwrap_or(&[]) {
         let shape = p.get("m_rnShape");
@@ -371,32 +384,33 @@ fn physics(agg: &Value) -> usize {
         for s in list("m_spheres") {
             let sphere = s.get("m_Sphere");
             let o = Obj::Sphere(vec3(sphere.and_then(|x| x.get("m_vCenter"))), sphere.map(|x| x.f32("m_flRadius")).unwrap_or(0.0));
-            part.spheres.push(make(o));
+            part.spheres.push(surface_of(make(o), &s, SPHERE));
         }
         for c in list("m_capsules") {
             let cap = c.get("m_Capsule");
             let ends = cap.and_then(|x| x.get("m_vCenter")).map(Value::as_array).unwrap_or(&[]);
             let o = Obj::Capsule(vec3(ends.first()), vec3(ends.get(1)), cap.map(|x| x.f32("m_flRadius")).unwrap_or(0.0));
-            part.capsules.push(make(o));
+            part.capsules.push(surface_of(make(o), &c, CAPSULE));
         }
         for h in list("m_hulls") {
             let Some(hull) = h.get("m_Hull") else { continue };
             // explicit vertex indices (2023 on): the positions are apart
             let pts = if hull.get("m_VertexPositions").is_some() { points(hull.get("m_VertexPositions")) } else { points(hull.get("m_Vertices")) };
-            if let Some(hull) = Hull::of(&pts) { part.hulls.push(make(Obj::Hull(hull))); }
+            if let Some(hull) = Hull::of(&pts) { part.hulls.push(surface_of(make(Obj::Hull(hull)), &h, HULL)); }
         }
         for m in list("m_meshes") {
             let Some(mesh) = m.get("m_Mesh") else { continue };
             let materials = mesh.get("m_Materials").map(Value::bytes).unwrap_or_default();
             let o = Obj::Mesh(Mesh { vertices: points(mesh.get("m_Vertices")), triangles: triangles(mesh.get("m_Triangles")), materials });
-            part.meshes.push(make(o));
+            part.meshes.push(surface_of(make(o), &m, MESH));
         }
         parts.push(make(Obj::Part(part)));
     }
     let names: Vec<String> = agg.get("m_boneNames").map(Value::as_array).unwrap_or(&[]).iter().filter_map(|n| n.as_str().map(String::from)).collect();
     let poses: Vec<Pose> = agg.get("m_bindPose").map(Value::as_array).unwrap_or(&[]).iter().map(bind_pose).collect();
     let bones = names.into_iter().enumerate().map(|(i, n)| (n, poses.get(i).copied().unwrap_or(Pose::IDENTITY))).collect();
-    make(Obj::Bodies(Bodies { parts, bones, ..Default::default() }))
+    let surface_hashes = agg.get("m_surfacePropertyHashes").map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_i64).map(|h| h as u32).collect();
+    make(Obj::Bodies(Bodies { parts, bones, surface_hashes, ..Default::default() }))
 }
 
 /// A planar polygon (convex or not, wound either way) as triangles: indices

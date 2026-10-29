@@ -23,6 +23,7 @@ mod siwe;
 mod state;
 mod slots;
 mod steam;
+mod surfaces;
 mod trace;
 
 use std::sync::OnceLock;
