@@ -1,5 +1,5 @@
 diff --git a/engine/Launcher/SboxServer/Launcher.cs b/engine/Launcher/SboxServer/Launcher.cs
-index f8cf0c29..38fa5923 100644
+index f8cf0c29..8205626b 100644
 --- a/engine/Launcher/SboxServer/Launcher.cs
 +++ b/engine/Launcher/SboxServer/Launcher.cs
 @@ -22,6 +22,15 @@ public class DedicatedServerAppSystem : AppSystem
@@ -41,21 +41,27 @@ index f8cf0c29..38fa5923 100644
  		// No game specified, show some help
  		if ( !Environment.CommandLine.Contains( "game " ) )
  		{
-@@ -60,9 +76,18 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -60,9 +76,24 @@ public class DedicatedServerAppSystem : AppSystem
  		console?.Update();
  	}
  
 +	string shimGame;
 +	string shimClient;
 +	int shimFrames;
++	bool shimHosted;
 +
  	protected override bool RunFrame()
  	{
  		console?.Update();
 +		// engine-shim: +game once the game instance has registered its commands
 +		if ( shimGame is not null && ++shimFrames == 30 ) { System.Console.WriteLine( $"engine-shim: dedicated={Application.IsDedicatedServer} editor={Application.IsEditor} headless={Application.IsHeadless}" ); ConVarSystem.Run( $"game {shimGame}" ); }
-+		// engine-shim: +shimhost opens the lobby, as a networked game's NetworkHelper would, once the game has had time to load
-+		if ( shimGame is not null && shimFrames == 330 && Sandbox.Utility.CommandLine.HasSwitch( "+shimhost" ) ) ConVarSystem.Run( "host" );
++		// engine-shim: +shimhost opens the lobby, as a networked game's NetworkHelper would, once the game and its scene have loaded
++		if ( shimGame is not null && !shimHosted && shimFrames > 30 && Sandbox.Utility.CommandLine.HasSwitch( "+shimhost" )
++			&& IGameInstance.Current is { IsLoading: false } && Game.ActiveScene.IsValid() && !Game.ActiveScene.IsLoading )
++		{
++			shimHosted = true;
++			ConVarSystem.Run( "host" );
++		}
 +		if ( shimClient is not null && ++shimFrames == 30 ) { System.Console.WriteLine( $"engine-shim: a player, dedicated={Application.IsDedicatedServer} headless={Application.IsHeadless}, connecting to {shimClient}" ); ConVarSystem.Run( $"connect {shimClient}" ); }
  
  		return base.RunFrame();
@@ -75,6 +81,20 @@ index bfed16cd..b39f352c 100644
  	</ItemGroup>
  
  	<Target Name="_ResolveCopyLocalNuGetPkgXmls" AfterTargets="ResolveReferences">
+diff --git a/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.Connections.cs b/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.Connections.cs
+index e58f6920..40ee220a 100644
+--- a/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.Connections.cs
++++ b/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.Connections.cs
+@@ -95,7 +95,8 @@ internal partial class NetworkSystem
+ 			MaxPlayers = Networking.MaxPlayers,
+ 			MapName = Networking.MapName,
+ 			EngineVersion = 234,
+-			GamePackage = Application.GamePackage?.GetIdent( false, true ) ?? "",
++			// engine-shim: a dedicated server's local project is #local, so its players take the code it sends rather than look for a published package
++			GamePackage = (Application.IsDedicatedServer && Application.GamePackage is LocalPackage ? Application.GamePackage.GetIdent( true, false ) : Application.GamePackage?.GetIdent( false, true )) ?? "",
+ 			GameWorkshopVersion = Application.GamePackage is { InstallsFromWorkshop: true } game ? Workshop.GetInstalledVersion( game.WorkshopId ) : 0,
+ 			Map = Application.Map,
+ 			Host = new ChannelInfo { Id = Connection.Local.Id },
 diff --git a/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.cs b/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.cs
 index f0a3ce38..f655798c 100644
 --- a/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.cs

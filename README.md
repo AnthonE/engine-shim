@@ -196,10 +196,155 @@ writes all of it from the managed interop:
 Measured: Sweeper's scene loads on the server, and on a player who joins
 it, with no error at all, and the physics world steps on both.
 
+**Things move** (`engine2/src/physics.rs`). Where s&box's native engine
+runs Box3D, worlds, bodies and shapes here are Rapier's (MIT/Apache-2.0,
+pure Rust, so the browser too), in s&box's units (inches, kilograms;
+Rapier's tolerances told so). 268 slots are written, the physics ones and
+the result vectors they fill:
+
+- **Bodies**: static, keyframed (sent to a target each step) and dynamic;
+  position, rotation, velocities, impulses and forces (spent each step, as
+  Box3D's are), damping, gravity and its scale, motion locks, sleep, CCD.
+  Mass comes from the shapes at water's density, unless managed sets a
+  mass, a centre or an inertia over it; mass updates defer while a
+  collider builds its shapes.
+- **Shapes**: spheres, capsules, boxes, hulls, triangle meshes and height
+  fields, each with its tags, its surface, friction, elasticity, and
+  whether it is a trigger, ignores traces or weighs nothing.
+- **The step**: `StepSimulation` steps, then tells managed each body that
+  moved (`PhysicsEngine.OnActive`: where, how fast, whether it fell
+  asleep), which is how a `Rigidbody` follows its body.
+  `ProcessIntersections` hands over touches begun, kept and ended and
+  triggers entered and left, in managed's notification layout, each
+  shape's collision mask deciding what it hears.
+- **Collision rules**: the project's `CollisionRules` (the JSON managed
+  sends) decide per pair of tag sets whether two shapes collide, trigger
+  or ignore each other, by managed's own rule (the least colliding pair,
+  else the tags' defaults, else collide).
+- **Traces**: rays, and spheres, boxes, capsules, cylinders and cones
+  swept, or a body's own shapes; the nearest hit or all of them, through
+  managed's tag filters (require, any, exclude), its trigger and object-set
+  masks and its filter delegate, with the hit's body, shape, surface, tags
+  and triangle. Also traces against one given shape, and `FindInPhysics`'s
+  sphere, box and frustum queries.
+- **Joints** (`engine2/src/physics/joints.rs`): all nine of s&box's kinds,
+  each one of Rapier's generic joints, on Box3D's axes (a hinge turns
+  about its frame's z, a slider and a wheel's suspension run along its x):
+  welds (rigid, or soft on their springs), springs and ropes (a range, a
+  rest length, pulling or pushing only), hinges and sliders with limits,
+  springs, motors and friction, ball joints with twist and swing limits,
+  a target rotation or a motor, wheels (suspension, steering, a spinning
+  motor), motor (control) joints, upright joints and filter joints. A
+  joint pulled past its strength is told to managed once
+  (`PhysicsEngine.OnPhysicsJointBreak`); a body removed takes its joints.
+- **Handles**: bodies, shapes and joints removed free their managed
+  handles, so managed's objects stop being valid with them.
+
+Measured under the real server: Sweeper's scene has 72 physics cubes
+stacked on a plane. With `tools/physdrop.sh`'s watcher in it, all 72 start
+awake, settle (the lowest at z 14, half a cube) and are asleep within two
+seconds; managed hears 150 collisions begin; a trace down from above hits
+the top cube, its normal up; a cube kicked up at six seconds (managed's
+`ApplyImpulse`) wakes 30 of them and they settle and sleep again. No error
+on the server, nor on a player who joins it (whose own world steps,
+traces and queries too).
+
+```sh
+sh tools/physdrop.sh ../sbox-public /tmp/physdrop
+SBOX=../sbox-public sh spike.sh 25 +shimgame /tmp/physdrop/.sbproj
+grep watch target/spike/server.log
+```
+
+And joints, by s&box's own joint components (`tools/jointrig.sh`): a
+pendulum on a `HingeJoint` keeps to 100.0 from its pivot and to its plane
+(y 0.00) as it swings from side to side; a chain of three `BallJoint`s
+keeps its links 49.5 apart as it swings; a box on a `SpringJoint` (rest
+100, 2 Hz) settles at 105.4, the 5.4 gravity's pull at that stiffness
+predicts; a box on a vertical `SliderJoint` drops to its limit, -100,
+and no way else; a `FixedJoint` with a break force of 1 breaks at once,
+`OnBreak` fires, and its box falls to the floor.
+
+```sh
+sh tools/jointrig.sh ../sbox-public /tmp/jointrig
+SBOX=../sbox-public sh spike.sh 12 +shimgame /tmp/jointrig/.sbproj
+grep jointrig target/spike/server.log
+```
+
+Also tested the way managed calls it (`cargo test`): a ball dropped
+through the slots alone falls, lands, is heard moving and falling asleep,
+touches the floor, is traced, queried, filtered past, knocked back up and
+removed.
+
+## A real game: Facepunch's Sandbox
+
+[Facepunch/sandbox](https://github.com/Facepunch/sandbox) (MIT), s&box's
+Garry's Mod: 379 C# files, 151 prefabs, its own resource types. Its code
+compiles in the engine, its resources (all JSON but its models and
+materials) load, it hosts, and a player joins it.
+
+Its map (`facepunch.flatgrass`) and some of its content
+(`facepunch.sbox_content`, graffiti) are packages on sbox.game under
+Facepunch's terms, not in the repository, and aren't fetched here. So
+`tools/sandbox.sh` starts its dedicated server in one of its own scenes,
+`zoo.scene` (a test level of editor meshes, props, a jointed car), and
+adds a watcher. Measured (`grep shimwatch target/spike/server.log`):
+
+- The level's 11 editor meshes have collision. Their collision is built
+  at runtime by managed's `ModelBuilder` through the native model builder
+  (`engine2/src/models.rs`: models, their bodies' descriptions, hulls,
+  meshes and the physics container managed reads them back from, and the
+  polygon triangulation the editor mesh is made with).
+- All 18 of its bodies come to rest on them and sleep within two
+  seconds: the car (a hull on four hinged wheels), and props whose
+  collision is their model file's (`ModelCollider`, below).
+- A player joins, spawns, and stands on the floor (`on Block`): the
+  player controller's ground traces run on this library's physics.
+
+```sh
+git clone https://github.com/Facepunch/sandbox ../sandbox
+sh tools/sandbox.sh ../sandbox
+SBOX=../sbox-public sh spike.sh 120 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
+# once "Server started!" (startup waits a while on sbox.game for what it can't have):
+(cd ../sbox-public/game && ./sbox-server +shimclient 127.0.0.1:27015 +instanceid 2)
+grep shimwatch target/spike/server.log
+```
+
+**The size of a server, measured.** The server and a player together call
+485 distinct slots: 167 written by hand, 106 generated (handles and
+remembered properties), 212 still stubs. Of the stubs, 85 are rendering
+and the scene's render objects, 39 the engine's own odds and ends, 32
+Steam's bookkeeping, 29 models (what a model file holds: meshes, bones,
+hitboxes), 15 sound, 12 physics (debug drawing, scrape contacts, the
+navmesh's triangulation, surface properties).
+
+**Model files** (`engine2/src/assets/`, `fs.rs`). A model is a compiled
+Source 2 resource (`.vmdl_c`): a container of blocks, most of them binary
+KeyValues 3. Both are read here as ValveResourceFormat (MIT) reads them
+(KV3 versions 1 to 5, uncompressed or LZ4). A model's collision is its
+`PHYS` block (or the `.vphys_c` its `DATA` names): parts of spheres,
+capsules, hulls and triangle meshes, with their masses and the bones they
+follow, made into the same objects a model built at runtime is, so
+`ModelCollider`, `ModelPhysics` and `Prop` take shapes from it as from
+any. The engine's file system finds the file: managed links each file it
+knows (a project's, one it downloaded) and names its project folders.
+Measured: all 12 of the zoo's model colliders have their collision (a
+washing machine of 80 kg among them), and their props rest.
+
+The models it reads are the ones s&box itself downloads from sbox.game
+into its cache (`game/download`): Facepunch's and creators' content,
+under their terms, read where it lies and never copied into this
+repository. The engine's own core models (`models/dev/box.vmdl`...) and
+the player's (Citizen) come only with Facepunch's closed download, and
+aren't read. `cargo test` checks a downloaded model when
+`ENGINE2_SAMPLE_ASSETS=<sbox-public>/game/download/assets` names a cache.
+
 What the game's components still can't do:
 
-- **Physics.** Bodies, shapes and joints exist and remember what they are
-  told; nothing moves them. About 300 slots; Rapier or Jolt behind them.
+- **The rest of a model.** Its meshes, bones, hitboxes and animation
+  (the `CModel_*` slots): a server's hit detection wants the hitboxes
+  and bones next.
+- **Surfaces.** Every shape has the default friction and density; the
+  project's surfaces (`.surface`) aren't read into physics yet.
 
 ## Reproduce
 
@@ -232,7 +377,7 @@ the checkout's root writes `engine/Sandbox.Engine/Interop.Engine.cs` and
 the C++ under `src/`. The folders the `.def` files name for C++ must exist
 first.
 
-**sbox-public.patch** changes two things locally, neither shipped:
+**sbox-public.patch** changes a few things locally, none shipped:
 
 - `System.Speech` comes from NuGet, not the Windows DLL their setup downloads.
 - The server's launcher prints every managed log line to stdout (and says
@@ -240,15 +385,18 @@ first.
   through the `game` command 30 frames in. The engine runs `+game` itself,
   but only as a package to download from sbox.game; a local project goes
   through the command. A path there is the server's: give it absolute.
-- `+shimhost` runs `host` 300 frames later: it opens the lobby, as a
-  networked game's `NetworkHelper` does for itself.
+- `+shimhost` runs `host` once the game and its scene have loaded: it
+  opens the lobby, as a networked game's `NetworkHelper` does for itself.
 - `+shimclient <address>` boots the same launcher as a headless player (a
   game app, not a dedicated server) and runs `connect <address>`.
 - A dedicated server running a local project counts as a developer host
   (`NetworkSystem.IsDeveloperHost`). It already sends such a game's code
   to its players (`GameInstanceDll`'s code archives), but told them it was
   no developer host, so they looked for a published package and failed.
-  This one is a fix upstream could take.
+  And it names its game `org.ident#local` to them: a local project that
+  shares its ident with a published game (Facepunch's own Sandbox) sent
+  its players to download the published one, through Steam's workshop.
+  These are fixes upstream could take.
 
 `tools/compile.sh` copies a project's scenes and prefabs to their `_c`
 names, which is all a JSON resource needs here. Models, materials and
@@ -266,7 +414,12 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/slots.rs` | generated: 3,578 typed slots, 81 struct layouts, the names |
 | `engine2/src/state.rs` | the properties native objects remember, set by one slot and read by another |
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
-| `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer |
+| `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer, freed |
+| `engine2/src/physics.rs` | physics on Rapier: worlds, bodies, shapes, the step and what touched, collision rules, traces and queries |
+| `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
+| `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
+| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`) and binary KeyValues 3 (`kv3.rs`) |
+| `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders, the game's own |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
 | `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
@@ -276,19 +429,22 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
 | `spike.sh` | one turn of the loop |
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
+| `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
+| `tools/jointrig.sh`, `tools/jointrig/` | five rigs of s&box's joint components, and what each does |
+| `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
 
-1. **A server that runs a game.** The handle protocol, then physics, then
-   a real open-source s&box game: its trace is the measured size of "a
-   server", the slots one game needs.
+1. **A server that runs a game.** Facepunch's Sandbox hosts and is joined
+   (above). What its world still lacks is model files: the assets step.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
    the shard list and the relay are ours now, and a player joins (above).
    Next: lobbies. A relay run for others wants a price, as the stream relay's
    credits do (scry-forge `meter/relay.py`).
-3. **Assets.** Games ship compiled Source 2 resources. ValveResourceFormat
-   (MIT) reads models, materials, textures and maps. A server needs maps
-   and collision first; shaders only matter to a client.
+3. **Assets.** A model's collision is read from its file (above). Next a
+   model's bones and hitboxes (a server's hit detection), then maps
+   (`.vmap_c`: a world's collision and entities). Materials, textures and
+   shaders only matter to a client.
 4. **A client.** Rendering: about 670 scene and render slots onto a renderer
    of our own choosing (Bevy or Godot; see below), then sound and input.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
