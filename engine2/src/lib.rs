@@ -12,6 +12,7 @@ mod elo_overlay;
 mod elo;
 mod handles;
 mod impls;
+mod animation;
 mod assets;
 mod fs;
 mod models;

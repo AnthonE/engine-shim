@@ -28,5 +28,8 @@ Copyright (c) 2026 MoreRight.
 
 engine2/src/assets/kv3.rs reads binary KeyValues 3 as ValveResourceFormat
 does (github.com/ValveResourceFormat/ValveResourceFormat,
-ValveResourceFormat/Resource/ResourceTypes/BinaryKV3.cs), under the MIT
-licence: Copyright (c) 2015 ValveResourceFormat Contributors.
+ValveResourceFormat/Resource/ResourceTypes/BinaryKV3.cs), and
+engine2/src/assets/model.rs and anim.rs read models and decode their
+animations as it does (Model.cs, Mesh.cs, ModelData/, ModelAnimation/:
+AnimationSegmentTable.cs, SegmentDecoders/, SequenceAnimation.cs), under
+the MIT licence: Copyright (c) 2015 ValveResourceFormat Contributors.

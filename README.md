@@ -310,12 +310,9 @@ grep shimwatch target/spike/server.log
 ```
 
 **The size of a server, measured.** The server and a player together call
-485 distinct slots: 167 written by hand, 106 generated (handles and
-remembered properties), 212 still stubs. Of the stubs, 85 are rendering
-and the scene's render objects, 39 the engine's own odds and ends, 32
-Steam's bookkeeping, 29 models (what a model file holds: meshes, bones,
-hitboxes), 15 sound, 12 physics (debug drawing, scrape contacts, the
-navmesh's triangulation, surface properties).
+540 distinct slots: 244 written by hand, 106 generated (handles and
+remembered properties), 190 still stubs, most of them rendering, the
+scene's render objects, Steam's bookkeeping and sound.
 
 **Model files** (`engine2/src/assets/`, `fs.rs`). A model is a compiled
 Source 2 resource (`.vmdl_c`): a container of blocks, most of them binary
@@ -338,11 +335,51 @@ the player's (Citizen) come only with Facepunch's closed download, and
 aren't read. `cargo test` checks a downloaded model when
 `ENGINE2_SAMPLE_ASSETS=<sbox-public>/game/download/assets` names a cache.
 
+**The rest of a model** (`engine2/src/assets/model.rs`, `anim.rs`): its
+skeleton (bones, their parents, their bind pose in their parent's space
+and the model's), its meshes (embedded in the model or `.vmesh_c` files
+of their own: their bounds, draw calls, LODs and the mesh groups that
+make its body groups), the hitbox sets and attachments its meshes carry,
+and its sequences and animations, decoded from the model's ANIM, AGRP and
+ASEQ blocks (ValveResourceFormat's segment decoders: full, static, delta
+and compressed positions, rotations and scales). That is the 70 `CModel_*`,
+`CHitBox*` and `CAttachment` slots a game reads a model through, so
+`Model.Bones`, `Model.HitboxSet`, `Model.Attachments` and body groups read
+as the file says. Every model in the cache reads (185: 656 meshes, 1,227
+bones, 1,409 playable sequences).
+
+And a model in the scene has a pose (`engine2/src/animation.rs`, the
+`CSceneAnimatableObject` slots `SceneModel` drives): its bones in parent
+space, as the sequence playing leaves them (a SkinnedModelRenderer's
+`Sequence`, played straight, looping or not, at its rate) or in bind pose,
+with the renderer's procedural bones over them; carried to the model's
+space, where a ragdoll's physics bones win; and placed in the world by the
+object's transform. Bone merge too (clothing takes its body's pose). A
+model's bones in the world are what `ModelHitboxes` places its hitboxes
+on, in the hitbox system's own physics world, which `UseHitboxes()`
+traces. Before this every scene model fell back to the (absent) error
+model, which has no meshes.
+
+Measured under the real server (`grep shimwatch target/spike/server.log`,
+the watcher `tools/sandbox.sh` adds): the first-person arms s&box
+downloads (70 bones, 48 capsule hitboxes, 114 animations) placed in the
+zoo with a `SkinnedModelRenderer` and `ModelHitboxes`. A trace at a bone
+hits that bone's hitbox (`hit hand_R on shimtarget ... after 198.9`) and
+one 300 above it misses; turned a quarter and moved, the hitboxes follow
+(the same shot at the left arm now hits the right one, in front of it);
+playing `Punching_Right_Hit_01` (0.83s, looping), the hand swings 24 to 30
+from where it rested, a shot where it rested misses, and a shot where it
+is hits `hand_R`. A player joins and stands as before.
+
 What the game's components still can't do:
 
-- **The rest of a model.** Its meshes, bones, hitboxes and animation
-  (the `CModel_*` slots): a server's hit detection wants the hitboxes
-  and bones next.
+- **Animation graphs.** A model's `.vanmgrph` isn't run, so a renderer
+  that uses one (the default, and a player's) stays in its bind pose
+  under its procedural bones; only sequences play. Nor do animation
+  events fire, or sequences blend into one another.
+- **Model data.** A model's key values (`prop_data`: a prop's health,
+  its gibs) aren't made into KeyValues3 yet; nor are a runtime model's
+  bones, hitboxes and meshes (`ModelBuilder`) kept.
 - **Surfaces.** Every shape has the default friction and density; the
   project's surfaces (`.surface`) aren't read into physics yet.
 

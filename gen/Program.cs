@@ -298,6 +298,9 @@ o.AppendLine($"pub const SLOTS: usize = {total};");
 o.AppendLine();
 for (int k = 0; k < callbacks.Count; k++) o.AppendLine($"pub const M_{callbacks[k]}: usize = {k};");
 o.AppendLine();
+// each remembered property's key, by name, for hand-written code reading what managed set
+foreach (var (pk, pv) in propKeys.OrderBy(x => x.Value)) o.AppendLine($"pub const PROP_{Regex.Replace(pk, @"\W", "_")}: u32 = {pv};");
+o.AppendLine();
 o.Append(structDefs);
 o.Append(stubs);
 o.AppendLine();

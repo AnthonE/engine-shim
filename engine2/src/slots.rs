@@ -79,6 +79,346 @@ pub const M_Sandbox_VideoPlayer_OnFinishedInternal: usize = 68;
 pub const M_Sandbox_VideoPlayer_OnRepeatedInternal: usize = 69;
 pub const M_Steamworks_Dispatch_OnClientCallback: usize = 70;
 
+pub const PROP__CAttachment_m_nInfluences: u32 = 1;
+pub const PROP__CAttachment_m_bIgnoreRotation: u32 = 2;
+pub const PROP_SamplePosition: u32 = 3;
+pub const PROP__CCameraRenderer_RenderedProjectionToView: u32 = 4;
+pub const PROP__CCameraRenderer_RenderedViewport: u32 = 5;
+pub const PROP__CCameraRenderer_RenderedDepthRange: u32 = 6;
+pub const PROP__CCameraRenderer_ViewUniqueId: u32 = 7;
+pub const PROP__CCameraRenderer_CameraPosition: u32 = 8;
+pub const PROP__CCameraRenderer_CameraRotation: u32 = 9;
+pub const PROP__CCameraRenderer_FieldOfView: u32 = 10;
+pub const PROP__CCameraRenderer_ZNear: u32 = 11;
+pub const PROP__CCameraRenderer_ZFar: u32 = 12;
+pub const PROP__CCameraRenderer_Rect: u32 = 13;
+pub const PROP__CCameraRenderer_Viewport: u32 = 14;
+pub const PROP__CCameraRenderer_ClipSpaceBounds: u32 = 15;
+pub const PROP__CCameraRenderer_EnablePostprocessing: u32 = 16;
+pub const PROP__CCameraRenderer_EnableEngineOverlays: u32 = 17;
+pub const PROP__CCameraRenderer_EnableUI: u32 = 18;
+pub const PROP__CCameraRenderer_UIOnly: u32 = 19;
+pub const PROP__CCameraRenderer_Ortho: u32 = 20;
+pub const PROP__CCameraRenderer_OrthoSize: u32 = 21;
+pub const PROP__CCameraRenderer_NeedTonemapRenderer: u32 = 22;
+pub const PROP__CCameraRenderer_SceneViewFlags: u32 = 23;
+pub const PROP__CCameraRenderer_IsRenderingStereo: u32 = 24;
+pub const PROP__CCameraRenderer_MiddleEyePosition: u32 = 25;
+pub const PROP__CCameraRenderer_MiddleEyeRotation: u32 = 26;
+pub const PROP__CCameraRenderer_OverrideProjection: u32 = 27;
+pub const PROP__CCameraRenderer_HasOverrideProjection: u32 = 28;
+pub const PROP__CCameraRenderer_FlipX: u32 = 29;
+pub const PROP__CCameraRenderer_FlipY: u32 = 30;
+pub const PROP_Flags: u32 = 31;
+pub const PROP_TintRGBA: u32 = 32;
+pub const PROP_AlphaFade: u32 = 33;
+pub const PROP_Transform: u32 = 34;
+pub const PROP_Bounds: u32 = 35;
+pub const PROP__CDclScnbjct_m_nSortOrder: u32 = 36;
+pub const PROP__CDclScnbjct_m_nExclusionBitMask: u32 = 37;
+pub const PROP__CDclScnbjct_m_vColorTint: u32 = 38;
+pub const PROP__CDclScnbjct_m_flAttenuationAngle: u32 = 39;
+pub const PROP__CDclScnbjct_m_flColorMix: u32 = 40;
+pub const PROP__CDclScnbjct_m_flEmissionEnergy: u32 = 41;
+pub const PROP__CDclScnbjct_m_nSequenceIndex: u32 = 42;
+pub const PROP__CDclScnbjct_m_flParallaxStrength: u32 = 43;
+pub const PROP__CDclScnbjct_m_nSamplerIndex: u32 = 44;
+pub const PROP__CDclScnbjct_m_flCoverageAmount: u32 = 45;
+pub const PROP__CDclScnbjct_m_flCoverageRange: u32 = 46;
+pub const PROP_WorldPosition: u32 = 47;
+pub const PROP_Color: u32 = 48;
+pub const PROP_Radius: u32 = 49;
+pub const PROP_Theta: u32 = 50;
+pub const PROP_Phi: u32 = 51;
+pub const PROP_FallOff: u32 = 52;
+pub const PROP_ShadowTextureResolution: u32 = 53;
+pub const PROP_Shadows: u32 = 54;
+pub const PROP_ConstantAttn: u32 = 55;
+pub const PROP_LinearAttn: u32 = 56;
+pub const PROP_QuadraticAttn: u32 = 57;
+pub const PROP_ShadowCascades: u32 = 58;
+pub const PROP_ShadowCascadeSplitRatio: u32 = 59;
+pub const PROP_CascadeDistanceScale: u32 = 60;
+pub const PROP_FogContributionStength: u32 = 61;
+pub const PROP_FogLightingMode: u32 = 62;
+pub const PROP_ShadowTextureWidth: u32 = 63;
+pub const PROP_ShadowTextureHeight: u32 = 64;
+pub const PROP_LightFlags: u32 = 65;
+pub const PROP_LightShape: u32 = 66;
+pub const PROP__CnvMpScnbjct_m_nProjectionMode: u32 = 67;
+pub const PROP__CnvMpScnbjct_m_vBoxProjectMins: u32 = 68;
+pub const PROP__CnvMpScnbjct_m_vBoxProjectMaxs: u32 = 69;
+pub const PROP__CnvMpScnbjct_m_vColor: u32 = 70;
+pub const PROP__CnvMpScnbjct_m_nRenderPriority: u32 = 71;
+pub const PROP__CnvMpScnbjct_m_vNormalizationSH: u32 = 72;
+pub const PROP__CnvMpScnbjct_m_flFeathering: u32 = 73;
+pub const PROP__CHitBox_m_vMinBounds: u32 = 74;
+pub const PROP__CHitBox_m_vMaxBounds: u32 = 75;
+pub const PROP__CHitBox_m_flShapeRadius: u32 = 76;
+pub const PROP__CHitBox_m_nBoneNameHash: u32 = 77;
+pub const PROP__CHitBox_m_cRenderColor: u32 = 78;
+pub const PROP__CHitBox_m_nHitBoxIndex: u32 = 79;
+pub const PROP__CHitBox_m_nShapeType: u32 = 80;
+pub const PROP__CHitBox_m_bForcedTransform: u32 = 81;
+pub const PROP__CHitBox_m_bTranslationOnly: u32 = 82;
+pub const PROP__CHitBox_m_bVisible: u32 = 83;
+pub const PROP__CHitBox_m_bSelected: u32 = 84;
+pub const PROP_InitializationPhase: u32 = 85;
+pub const PROP_SteamAppId: u32 = 86;
+pub const PROP_DefaultMeshGroupMask: u32 = 87;
+pub const PROP_Mass: u32 = 88;
+pub const PROP__CPhysBodyDesc_m_flMass: u32 = 89;
+pub const PROP__CPhysBodyDesc_m_flInertiaScale: u32 = 90;
+pub const PROP__CPhysBodyDesc_m_flLinearDamping: u32 = 91;
+pub const PROP__CPhysBodyDesc_m_flAngularDamping: u32 = 92;
+pub const PROP__CPhysSrfcPrprts_m_nameHash: u32 = 93;
+pub const PROP__CPhysSrfcPrprts_m_baseNameHash: u32 = 94;
+pub const PROP__CPhysSrfcPrprts_m_nIndex: u32 = 95;
+pub const PROP__CPhysSrfcPrprts_m_nBaseIndex: u32 = 96;
+pub const PROP__CPhysSrfcPrprts_m_AudioSurface: u32 = 97;
+pub const PROP__CPhysSrfcPrprts_m_bHasScrapeSounds: u32 = 98;
+pub const PROP__CPhysSrfcPrprts_m_bHidden: u32 = 99;
+pub const PROP__CPhysicsData_m_nFlags: u32 = 100;
+pub const PROP_ManagedId: u32 = 101;
+pub const PROP__CRndrPplnStp_m_viewport: u32 = 102;
+pub const PROP__CRndrPplnStp_m_skyViewport: u32 = 103;
+pub const PROP__CRndrPplnStp_m_screenViewport: u32 = 104;
+pub const PROP__CRndrPplnStp_m_nWidth: u32 = 105;
+pub const PROP__CRndrPplnStp_m_nHeight: u32 = 106;
+pub const PROP__CRndrPplnStp_m_nOutputMSAA: u32 = 107;
+pub const PROP__CRndrPplnStp_m_nDepthFormat: u32 = 108;
+pub const PROP__CRndrPplnStp_m_nMSAA: u32 = 109;
+pub const PROP__CRndrPplnStp_m_colorSpace: u32 = 110;
+pub const PROP__CRndrPplnStp_m_nClearFlags: u32 = 111;
+pub const PROP__CRndrPplnStp_m_vClearColor: u32 = 112;
+pub const PROP__CRndrPplnStp_m_bToolsView: u32 = 113;
+pub const PROP__CRndrPplnStp_m_bRenderSky: u32 = 114;
+pub const PROP__CRndrPplnStp_m_bRenderOpaque: u32 = 115;
+pub const PROP__CRndrPplnStp_m_bRenderDynamicObjects: u32 = 116;
+pub const PROP__CRndrPplnStp_m_bDrawOverlays: u32 = 117;
+pub const PROP__CRndrPplnStp_m_bRenderDecals: u32 = 118;
+pub const PROP__CRndrPplnStp_m_bRenderTranslucent: u32 = 119;
+pub const PROP__CRndrPplnStp_m_bWireframe: u32 = 120;
+pub const PROP__CRndrPplnStp_m_bResolveToFinal: u32 = 121;
+pub const PROP__CRndrPplnStp_m_bManagedHooks: u32 = 122;
+pub const PROP__CRndrPplnStp_m_bDepthPrepass: u32 = 123;
+pub const PROP__CRndrPplnStp_m_flDepthPrepassCullThreshold: u32 = 124;
+pub const PROP__CRndrPplnStp_m_nUpscalerMode: u32 = 125;
+pub const PROP__CRndrPplnStp_m_upscaleViewport: u32 = 126;
+pub const PROP__CRndrPplnStp_m_nUpscaleRenderWidth: u32 = 127;
+pub const PROP__CRndrPplnStp_m_nUpscaleRenderHeight: u32 = 128;
+pub const PROP__CRndrPplnStp_m_flFsr1Sharpness: u32 = 129;
+pub const PROP_SequenceCycle: u32 = 130;
+pub const PROP_ShouldUseAnimGraph: u32 = 131;
+pub const PROP_PlaybackRate: u32 = 132;
+pub const PROP__CScnnmtblbjct_m_flDeltaTime: u32 = 133;
+pub const PROP__CScnnmtblbjct_m_worldBounds: u32 = 134;
+pub const PROP__CScnnmtblbjct_m_localBounds: u32 = 135;
+pub const PROP__CScnLghtPrbVlmbj_m_vBoxMins: u32 = 136;
+pub const PROP__CScnLghtPrbVlmbj_m_vBoxMaxs: u32 = 137;
+pub const PROP__CScnLghtPrbVlmbj_m_nHandshake: u32 = 138;
+pub const PROP__CScnLghtPrbVlmbj_m_nRenderPriority: u32 = 139;
+pub const PROP_SkyTint: u32 = 140;
+pub const PROP_FogType: u32 = 141;
+pub const PROP__CSmplPCMWvDt_m_nFormat: u32 = 142;
+pub const PROP__CSmplPCMWvDt_m_nSampleRate: u32 = 143;
+pub const PROP__CSmplPCMWvDt_m_nChannels: u32 = 144;
+pub const PROP__CSmplPCMWvDt_m_nSampleCount: u32 = 145;
+pub const PROP__CSmplPCMWvDt_m_nBits: u32 = 146;
+pub const PROP__CSmplPCMWvDt_m_flDuration: u32 = 147;
+pub const PROP__CVfxCombo_m_nMin: u32 = 148;
+pub const PROP__CVfxCombo_m_nMax: u32 = 149;
+pub const PROP__CVfxProgramData_m_bLoadedFromVcsFile: u32 = 150;
+pub const PROP_Repeat: u32 = 151;
+pub const PROP_Value: u32 = 152;
+pub const PROP_AngularVelocity: u32 = 153;
+pub const PROP_TotalMass: u32 = 154;
+pub const PROP_LinearDamping: u32 = 155;
+pub const PROP_AngularDamping: u32 = 156;
+pub const PROP_GravityScale: u32 = 157;
+pub const PROP_LocalMassCenter: u32 = 158;
+pub const PROP_OverrideMassCenter: u32 = 159;
+pub const PROP_Position: u32 = 160;
+pub const PROP_Orientation: u32 = 161;
+pub const PROP_LinearVelocity: u32 = 162;
+pub const PROP_SleepThreshold: u32 = 163;
+pub const PROP_Type: u32 = 164;
+pub const PROP_LinearSpring: u32 = 165;
+pub const PROP_AngularSpring: u32 = 166;
+pub const PROP_MinLength: u32 = 167;
+pub const PROP_MaxLength: u32 = 168;
+pub const PROP_MinForce: u32 = 169;
+pub const PROP_MaxForce: u32 = 170;
+pub const PROP_Friction: u32 = 171;
+pub const PROP_MaxLinearImpulse: u32 = 172;
+pub const PROP_MaxAngularImpulse: u32 = 173;
+pub const PROP_MaxVelocityForce: u32 = 174;
+pub const PROP_MaxVelocityTorque: u32 = 175;
+pub const PROP_LinearHertz: u32 = 176;
+pub const PROP_LinearDampingRatio: u32 = 177;
+pub const PROP_AngularHertz: u32 = 178;
+pub const PROP_AngularDampingRatio: u32 = 179;
+pub const PROP_MaxSpringForce: u32 = 180;
+pub const PROP_MaxSpringTorque: u32 = 181;
+pub const PROP_SuspensionHertz: u32 = 182;
+pub const PROP_SuspensionDampingRatio: u32 = 183;
+pub const PROP_SpinMotorSpeed: u32 = 184;
+pub const PROP_MaxSpinTorque: u32 = 185;
+pub const PROP_SteeringHertz: u32 = 186;
+pub const PROP_SteeringDampingRatio: u32 = 187;
+pub const PROP_MaxSteeringTorque: u32 = 188;
+pub const PROP_TargetSteeringAngle: u32 = 189;
+pub const PROP_Hertz: u32 = 190;
+pub const PROP_DampingRatio: u32 = 191;
+pub const PROP_MaxTorque: u32 = 192;
+pub const PROP_LocalVelocity: u32 = 193;
+pub const PROP_Gravity: u32 = 194;
+pub const PROP_Simulation: u32 = 195;
+pub const PROP__ISceneLayer_m_nLayerFlags: u32 = 196;
+pub const PROP__ISceneLayer_LayerEnum: u32 = 197;
+pub const PROP__ISceneLayer_m_viewport: u32 = 198;
+pub const PROP__ISceneLayer_m_nClearFlags: u32 = 199;
+pub const PROP_DefaultLayerObjectRequiredFlags: u32 = 200;
+pub const PROP_DefaultLayerObjectExcludedFlags: u32 = 201;
+pub const PROP_Priority: u32 = 202;
+pub const PROP__ISceneView_m_ViewUniqueId: u32 = 203;
+pub const PROP__ISceneView_m_ManagedCameraId: u32 = 204;
+pub const PROP_DeleteAtEndOfFrame: u32 = 205;
+pub const PROP_ValueBool: u32 = 206;
+pub const PROP_ValueInt: u32 = 207;
+pub const PROP_ValueFloat: u32 = 208;
+pub const PROP__RnCapsuleDesc_t_m_Capsule: u32 = 209;
+pub const PROP__RnCapsuleDesc_t_m_nCollisionAttributeIndex: u32 = 210;
+pub const PROP__RnCapsuleDesc_t_m_nSurfacePropertyIndex: u32 = 211;
+pub const PROP__RnHullDesc_t_m_nCollisionAttributeIndex: u32 = 212;
+pub const PROP__RnHullDesc_t_m_nSurfacePropertyIndex: u32 = 213;
+pub const PROP__RnMeshDesc_t_m_nCollisionAttributeIndex: u32 = 214;
+pub const PROP__RnMeshDesc_t_m_nSurfacePropertyIndex: u32 = 215;
+pub const PROP__RnSphereDesc_t_m_Sphere: u32 = 216;
+pub const PROP__RnSphereDesc_t_m_nCollisionAttributeIndex: u32 = 217;
+pub const PROP__RnSphereDesc_t_m_nSurfacePropertyIndex: u32 = 218;
+pub const PROP__ScnSystmPrFrmStt_m_nTrianglesRendered: u32 = 219;
+pub const PROP__ScnSystmPrFrmStt_m_nArtistTrianglesRendered: u32 = 220;
+pub const PROP__ScnSystmPrFrmStt_m_nRenderBatchDraws: u32 = 221;
+pub const PROP__ScnSystmPrFrmStt_m_nDrawCalls: u32 = 222;
+pub const PROP__ScnSystmPrFrmStt_m_nDrawPrimitives: u32 = 223;
+pub const PROP__ScnSystmPrFrmStt_m_nBaseSceneObjectPrimDraws: u32 = 224;
+pub const PROP__ScnSystmPrFrmStt_m_nAnimatableObjectPrimDraws: u32 = 225;
+pub const PROP__ScnSystmPrFrmStt_m_nAggregateSceneObjectPrimDraws: u32 = 226;
+pub const PROP__ScnSystmPrFrmStt_m_nAggregateSceneObjectsFullyCulled: u32 = 227;
+pub const PROP__ScnSystmPrFrmStt_m_nAggregateSceneObjectDrawCalls: u32 = 228;
+pub const PROP__ScnSystmPrFrmStt_m_nAggregateSceneObjectIndirectSubmits: u32 = 229;
+pub const PROP__ScnSystmPrFrmStt_m_nAggregateSceneObjectIndirectFragments: u32 = 230;
+pub const PROP__ScnSystmPrFrmStt_m_nNumMaterialCompute: u32 = 231;
+pub const PROP__ScnSystmPrFrmStt_m_nNumMaterialSet: u32 = 232;
+pub const PROP__ScnSystmPrFrmStt_m_nNumSimilarMaterialSet: u32 = 233;
+pub const PROP__ScnSystmPrFrmStt_m_nNumTextureOnlyMaterialSet: u32 = 234;
+pub const PROP__ScnSystmPrFrmStt_m_nNumVfxEval: u32 = 235;
+pub const PROP__ScnSystmPrFrmStt_m_nNumVfxRule: u32 = 236;
+pub const PROP__ScnSystmPrFrmStt_m_nNumConstantBufferUpdates: u32 = 237;
+pub const PROP__ScnSystmPrFrmStt_m_nNumConstantBufferBytes: u32 = 238;
+pub const PROP__ScnSystmPrFrmStt_m_nMaterialChangesNonShadow: u32 = 239;
+pub const PROP__ScnSystmPrFrmStt_m_nMaterialChangesNonShadowInitial: u32 = 240;
+pub const PROP__ScnSystmPrFrmStt_m_nMaterialChangesShadow: u32 = 241;
+pub const PROP__ScnSystmPrFrmStt_m_nMaterialChangesShadowInitial: u32 = 242;
+pub const PROP__ScnSystmPrFrmStt_m_nMaterialChangesShadowAlphaTested: u32 = 243;
+pub const PROP__ScnSystmPrFrmStt_m_nCopyMaterialChangesNonShadow: u32 = 244;
+pub const PROP__ScnSystmPrFrmStt_m_nMaxTransformRow: u32 = 245;
+pub const PROP__ScnSystmPrFrmStt_m_nNumRowsUsed: u32 = 246;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsTested: u32 = 247;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsPreCullCheck: u32 = 248;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsPassingCullCheck: u32 = 249;
+pub const PROP__ScnSystmPrFrmStt_m_nNumVerticesReferenced: u32 = 250;
+pub const PROP__ScnSystmPrFrmStt_m_nNumPrimaryContexts: u32 = 251;
+pub const PROP__ScnSystmPrFrmStt_m_nNumSecondaryContexts: u32 = 252;
+pub const PROP__ScnSystmPrFrmStt_m_nNumDisplayListsSubmitted: u32 = 253;
+pub const PROP__ScnSystmPrFrmStt_m_nNumViewsRendered: u32 = 254;
+pub const PROP__ScnSystmPrFrmStt_m_nNumResolves: u32 = 255;
+pub const PROP__ScnSystmPrFrmStt_m_nNumCullBoxes: u32 = 256;
+pub const PROP__ScnSystmPrFrmStt_m_nCullingBoxCycleCount: u32 = 257;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsTestedAgainstCullingBoxes: u32 = 258;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsRejectedByBoundsIndex: u32 = 259;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsRejectedByCullBoxes: u32 = 260;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsRejectedByVis: u32 = 261;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsRejectedByBackfaceCulling: u32 = 262;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsRejectedByScreenSizeCulling: u32 = 263;
+pub const PROP__ScnSystmPrFrmStt_m_nNumObjectsRejectedByFading: u32 = 264;
+pub const PROP__ScnSystmPrFrmStt_m_nNumFadingObjects: u32 = 265;
+pub const PROP__ScnSystmPrFrmStt_m_nNumUniqueMaterialsSeen: u32 = 266;
+pub const PROP__ScnSystmPrFrmStt_m_nNumUnshadowedLightsInView: u32 = 267;
+pub const PROP__ScnSystmPrFrmStt_m_nNumShadowedLightsInView: u32 = 268;
+pub const PROP__ScnSystmPrFrmStt_m_nNumShadowMaps: u32 = 269;
+pub const PROP__ScnSystmPrFrmStt_m_nNumRenderTargetBinds: u32 = 270;
+pub const PROP__ScnSystmPrFrmStt_m_nPushConstantSets: u32 = 271;
+pub const PROP__ShtSqncFrm_t_m_flDisplayTime: u32 = 272;
+pub const PROP__SheetSequence_t_m_nId: u32 = 273;
+pub const PROP__SheetSequence_t_m_bClamp: u32 = 274;
+pub const PROP__SheetSequence_t_m_bAlphaCrop: u32 = 275;
+pub const PROP__SheetSequence_t_m_bNoColor: u32 = 276;
+pub const PROP__SheetSequence_t_m_bNoAlpha: u32 = 277;
+pub const PROP__SheetSequence_t_m_flTotalTime: u32 = 278;
+pub const PROP__SteamUgc_CUgcQuery_m_complete: u32 = 279;
+pub const PROP__SteamUgc_CUgcQuery_m_success: u32 = 280;
+pub const PROP__SteamUgc_CUgcQuery_m_resultCode: u32 = 281;
+pub const PROP__SteamUgc_CUgcUpdate_m_creating: u32 = 282;
+pub const PROP__SteamUgc_CUgcUpdate_m_created: u32 = 283;
+pub const PROP__SteamUgc_CUgcUpdate_m_submitted: u32 = 284;
+pub const PROP__SteamUgc_CUgcUpdate_m_complete: u32 = 285;
+pub const PROP__SteamUgc_CUgcUpdate_m_success: u32 = 286;
+pub const PROP__SteamUgc_CUgcUpdate_m_bNeedsLegalAgreement: u32 = 287;
+pub const PROP__SteamUgc_CUgcUpdate_m_resultCode: u32 = 288;
+pub const PROP__SteamUgc_CUgcVote_m_complete: u32 = 289;
+pub const PROP__SteamUgc_CUgcVote_m_success: u32 = 290;
+pub const PROP__SteamUgc_CUgcVote_m_resultCode: u32 = 291;
+pub const PROP__SteamUgc_CUgcVote_m_votedUp: u32 = 292;
+pub const PROP__SteamUgc_CUgcVote_m_votedDown: u32 = 293;
+pub const PROP__VPhysXBodyPart_t_m_nFlags: u32 = 294;
+pub const PROP__VPhysXBodyPart_t_m_flMass: u32 = 295;
+pub const PROP__VPhysXBodyPart_t_m_nCollisionAttributeIndex: u32 = 296;
+pub const PROP__VPhysXBodyPart_t_m_flInertiaScale: u32 = 297;
+pub const PROP__VPhysXBodyPart_t_m_flLinearDamping: u32 = 298;
+pub const PROP__VPhysXBodyPart_t_m_flAngularDamping: u32 = 299;
+pub const PROP__VPhysXBodyPart_t_m_flGravityScale: u32 = 300;
+pub const PROP__VPhysXBodyPart_t_m_bOverrideMassCenter: u32 = 301;
+pub const PROP__VPhysXBodyPart_t_m_vMassCenterOverride: u32 = 302;
+pub const PROP_LinearLimitMin: u32 = 303;
+pub const PROP_LinearLimitMax: u32 = 304;
+pub const PROP_SwingLimitMin: u32 = 305;
+pub const PROP_SwingLimitMax: u32 = 306;
+pub const PROP_TwistLimitMin: u32 = 307;
+pub const PROP_TwistLimitMax: u32 = 308;
+pub const PROP__VPhysXJoint_t_m_nType: u32 = 309;
+pub const PROP__VPhysXJoint_t_m_nBody1: u32 = 310;
+pub const PROP__VPhysXJoint_t_m_nBody2: u32 = 311;
+pub const PROP__VPhysXJoint_t_m_nFlags: u32 = 312;
+pub const PROP__VPhysXJoint_t_m_bEnableCollision: u32 = 313;
+pub const PROP__VPhysXJoint_t_m_bEnableLinearLimit: u32 = 314;
+pub const PROP__VPhysXJoint_t_m_bEnableLinearMotor: u32 = 315;
+pub const PROP__VPhysXJoint_t_m_vLinearTargetVelocity: u32 = 316;
+pub const PROP__VPhysXJoint_t_m_flMaxForce: u32 = 317;
+pub const PROP__VPhysXJoint_t_m_bEnableSwingLimit: u32 = 318;
+pub const PROP__VPhysXJoint_t_m_bEnableTwistLimit: u32 = 319;
+pub const PROP__VPhysXJoint_t_m_bEnableAngularMotor: u32 = 320;
+pub const PROP__VPhysXJoint_t_m_vAngularTargetVelocity: u32 = 321;
+pub const PROP__VPhysXJoint_t_m_flMaxTorque: u32 = 322;
+pub const PROP__VPhysXJoint_t_m_flLinearFrequency: u32 = 323;
+pub const PROP__VPhysXJoint_t_m_flLinearDampingRatio: u32 = 324;
+pub const PROP__VPhysXJoint_t_m_flAngularFrequency: u32 = 325;
+pub const PROP__VPhysXJoint_t_m_flAngularDampingRatio: u32 = 326;
+pub const PROP__VPhysXJoint_t_m_flLinearStrength: u32 = 327;
+pub const PROP__VPhysXJoint_t_m_flAngularStrength: u32 = 328;
+pub const PROP__VPhysXJoint_t_m_bLinearMotorIsSpring: u32 = 329;
+pub const PROP__VPhysXJoint_t_m_bAngularMotorIsSpring: u32 = 330;
+pub const PROP__VPhysXJoint_t_m_flLinearTargetPosition: u32 = 331;
+pub const PROP__VPhysXJoint_t_m_flAngularTargetAngle: u32 = 332;
+pub const PROP__VPhysXJoint_t_m_qAngularTargetRotation: u32 = 333;
+pub const PROP__VPhysXJoint_t_m_bOverrideFriction: u32 = 334;
+pub const PROP__VPhysXJoint_t_m_flFriction: u32 = 335;
+pub const PROP__VPhysXJoint_t_m_Frame1: u32 = 336;
+pub const PROP__VPhysXJoint_t_m_Frame2: u32 = 337;
+pub const PROP__VertexLayout_m_Size: u32 = 338;
+pub const PROP__VfxCmpldShdrnf_t_compileFailed: u32 = 339;
+
 /// System.Numerics.Vector3, 12 bytes
 #[repr(C)] #[derive(Clone, Copy)]
 pub struct S_System_Numerics_Vector3 {
@@ -1051,14 +1391,14 @@ unsafe extern "C" fn s8(_a0: usize, _a1: i32, _a2: f32) { hit(8);  }
 unsafe extern "C" fn s9(_a0: usize, _a1: i32, _a2: i32) { hit(9);  }
 unsafe extern "C" fn s10(_a0: usize, _a1: i32, _a2: i32) { hit(10);  }
 unsafe extern "C" fn s11(_a0: usize, _a1: i32, _a2: i32) { hit(11);  }
-unsafe extern "C" fn s12(_a0: usize, _a1: i32) -> usize { hit(12); crate::trace::object(12) }
-unsafe extern "C" fn s13(_a0: usize, _a1: i32) -> S_Vector3 { hit(13); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s14(_a0: usize, _a1: i32) -> S_Rotation { hit(14); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s15(_a0: usize) -> usize { hit(15); crate::trace::object(15) }
+unsafe extern "C" fn s12(_a0: usize, _a1: i32) -> usize { hit(12); unsafe { crate::impls::CAttachment_GetInfluenceName(_a0, _a1) } }
+unsafe extern "C" fn s13(_a0: usize, _a1: i32) -> S_Vector3 { hit(13); unsafe { crate::impls::CAttachment_GetInfluenceOffset(_a0, _a1) } }
+unsafe extern "C" fn s14(_a0: usize, _a1: i32) -> S_Rotation { hit(14); unsafe { crate::impls::CAttachment_GetInfluenceRotation(_a0, _a1) } }
+unsafe extern "C" fn s15(_a0: usize) -> usize { hit(15); unsafe { crate::impls::Get__CAttachment_m_name(_a0) } }
 unsafe extern "C" fn s16(_a0: usize, _a1: usize) { hit(16);  }
-unsafe extern "C" fn s17(_a0: usize) -> u8 { hit(17); crate::state::get::<u8>(_a0, 1) }
+unsafe extern "C" fn s17(_a0: usize) -> u8 { hit(17); unsafe { crate::impls::Get__CAttachment_m_nInfluences(_a0) } }
 unsafe extern "C" fn s18(_a0: usize, _a1: u8) { hit(18); crate::state::set(_a0, 1, _a1) }
-unsafe extern "C" fn s19(_a0: usize) -> i32 { hit(19); crate::state::get::<i32>(_a0, 2) }
+unsafe extern "C" fn s19(_a0: usize) -> i32 { hit(19); unsafe { crate::impls::Get__CAttachment_m_bIgnoreRotation(_a0) } }
 unsafe extern "C" fn s20(_a0: usize, _a1: i32) { hit(20); crate::state::set(_a0, 2, _a1) }
 unsafe extern "C" fn s21() -> usize { hit(21); crate::trace::object(21) }
 unsafe extern "C" fn s22(_a0: usize) { hit(22);  }
@@ -1476,40 +1816,40 @@ unsafe extern "C" fn s433(_a0: usize) -> f32 { hit(433); unsafe { core::mem::zer
 unsafe extern "C" fn s434(_a0: usize) -> f32 { hit(434); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s435(_a0: usize, _a1: i32, _a2: usize, _a3: usize) { hit(435);  }
 unsafe extern "C" fn s436(_a0: usize, _a1: usize, _a2: f32) -> f32 { hit(436); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s437(_a0: usize, _a1: i32) -> usize { hit(437); crate::trace::object(437) }
-unsafe extern "C" fn s438(_a0: usize) -> S_Vector3 { hit(438); crate::state::get::<S_Vector3>(_a0, 74) }
+unsafe extern "C" fn s437(_a0: usize, _a1: i32) -> usize { hit(437); unsafe { crate::impls::CHitBox_GetTag(_a0, _a1) } }
+unsafe extern "C" fn s438(_a0: usize) -> S_Vector3 { hit(438); unsafe { crate::impls::Get__CHitBox_m_vMinBounds(_a0) } }
 unsafe extern "C" fn s439(_a0: usize, _a1: usize) { hit(439); unsafe { crate::state::set_from::<S_Vector3>(_a0, 74, _a1) } }
-unsafe extern "C" fn s440(_a0: usize) -> S_Vector3 { hit(440); crate::state::get::<S_Vector3>(_a0, 75) }
+unsafe extern "C" fn s440(_a0: usize) -> S_Vector3 { hit(440); unsafe { crate::impls::Get__CHitBox_m_vMaxBounds(_a0) } }
 unsafe extern "C" fn s441(_a0: usize, _a1: usize) { hit(441); unsafe { crate::state::set_from::<S_Vector3>(_a0, 75, _a1) } }
-unsafe extern "C" fn s442(_a0: usize) -> usize { hit(442); crate::trace::object(442) }
+unsafe extern "C" fn s442(_a0: usize) -> usize { hit(442); unsafe { crate::impls::Get__CHitBox_m_name(_a0) } }
 unsafe extern "C" fn s443(_a0: usize, _a1: usize) { hit(443);  }
-unsafe extern "C" fn s444(_a0: usize) -> usize { hit(444); crate::trace::object(444) }
+unsafe extern "C" fn s444(_a0: usize) -> usize { hit(444); unsafe { crate::impls::Get__CHitBox_m_sSurfaceProperty(_a0) } }
 unsafe extern "C" fn s445(_a0: usize, _a1: usize) { hit(445);  }
-unsafe extern "C" fn s446(_a0: usize) -> usize { hit(446); crate::trace::object(446) }
+unsafe extern "C" fn s446(_a0: usize) -> usize { hit(446); unsafe { crate::impls::Get__CHitBox_m_sBoneName(_a0) } }
 unsafe extern "C" fn s447(_a0: usize, _a1: usize) { hit(447);  }
-unsafe extern "C" fn s448(_a0: usize) -> f32 { hit(448); crate::state::get::<f32>(_a0, 76) }
+unsafe extern "C" fn s448(_a0: usize) -> f32 { hit(448); unsafe { crate::impls::Get__CHitBox_m_flShapeRadius(_a0) } }
 unsafe extern "C" fn s449(_a0: usize, _a1: f32) { hit(449); crate::state::set(_a0, 76, _a1) }
-unsafe extern "C" fn s450(_a0: usize) -> u32 { hit(450); crate::state::get::<u32>(_a0, 77) }
+unsafe extern "C" fn s450(_a0: usize) -> u32 { hit(450); unsafe { crate::impls::Get__CHitBox_m_nBoneNameHash(_a0) } }
 unsafe extern "C" fn s451(_a0: usize, _a1: u32) { hit(451); crate::state::set(_a0, 77, _a1) }
-unsafe extern "C" fn s452(_a0: usize) -> S_Color32 { hit(452); crate::state::get::<S_Color32>(_a0, 78) }
+unsafe extern "C" fn s452(_a0: usize) -> S_Color32 { hit(452); unsafe { crate::impls::Get__CHitBox_m_cRenderColor(_a0) } }
 unsafe extern "C" fn s453(_a0: usize, _a1: S_Color32) { hit(453); crate::state::set(_a0, 78, _a1) }
-unsafe extern "C" fn s454(_a0: usize) -> u16 { hit(454); crate::state::get::<u16>(_a0, 79) }
+unsafe extern "C" fn s454(_a0: usize) -> u16 { hit(454); unsafe { crate::impls::Get__CHitBox_m_nHitBoxIndex(_a0) } }
 unsafe extern "C" fn s455(_a0: usize, _a1: u16) { hit(455); crate::state::set(_a0, 79, _a1) }
-unsafe extern "C" fn s456(_a0: usize) -> u8 { hit(456); crate::state::get::<u8>(_a0, 80) }
+unsafe extern "C" fn s456(_a0: usize) -> u8 { hit(456); unsafe { crate::impls::Get__CHitBox_m_nShapeType(_a0) } }
 unsafe extern "C" fn s457(_a0: usize, _a1: u8) { hit(457); crate::state::set(_a0, 80, _a1) }
-unsafe extern "C" fn s458(_a0: usize) -> i32 { hit(458); crate::state::get::<i32>(_a0, 81) }
+unsafe extern "C" fn s458(_a0: usize) -> i32 { hit(458); unsafe { crate::impls::Get__CHitBox_m_bForcedTransform(_a0) } }
 unsafe extern "C" fn s459(_a0: usize, _a1: i32) { hit(459); crate::state::set(_a0, 81, _a1) }
-unsafe extern "C" fn s460(_a0: usize) -> i32 { hit(460); crate::state::get::<i32>(_a0, 82) }
+unsafe extern "C" fn s460(_a0: usize) -> i32 { hit(460); unsafe { crate::impls::Get__CHitBox_m_bTranslationOnly(_a0) } }
 unsafe extern "C" fn s461(_a0: usize, _a1: i32) { hit(461); crate::state::set(_a0, 82, _a1) }
-unsafe extern "C" fn s462(_a0: usize) -> i32 { hit(462); crate::state::get::<i32>(_a0, 83) }
+unsafe extern "C" fn s462(_a0: usize) -> i32 { hit(462); unsafe { crate::impls::Get__CHitBox_m_bVisible(_a0) } }
 unsafe extern "C" fn s463(_a0: usize, _a1: i32) { hit(463); crate::state::set(_a0, 83, _a1) }
-unsafe extern "C" fn s464(_a0: usize) -> i32 { hit(464); crate::state::get::<i32>(_a0, 84) }
+unsafe extern "C" fn s464(_a0: usize) -> i32 { hit(464); unsafe { crate::impls::Get__CHitBox_m_bSelected(_a0) } }
 unsafe extern "C" fn s465(_a0: usize, _a1: i32) { hit(465); crate::state::set(_a0, 84, _a1) }
-unsafe extern "C" fn s466(_a0: usize) -> i32 { hit(466); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s467(_a0: usize, _a1: i32) -> usize { hit(467); crate::trace::object(467) }
-unsafe extern "C" fn s468(_a0: usize) -> usize { hit(468); crate::trace::object(468) }
+unsafe extern "C" fn s466(_a0: usize) -> i32 { hit(466); unsafe { crate::impls::CHitBoxSet_numhitboxes(_a0) } }
+unsafe extern "C" fn s467(_a0: usize, _a1: i32) -> usize { hit(467); unsafe { crate::impls::CHitBoxSet_pHitbox(_a0, _a1) } }
+unsafe extern "C" fn s468(_a0: usize) -> usize { hit(468); unsafe { crate::impls::Get__CHitBoxSet_m_name(_a0) } }
 unsafe extern "C" fn s469(_a0: usize, _a1: usize) { hit(469);  }
-unsafe extern "C" fn s470(_a0: usize) -> usize { hit(470); crate::trace::object(470) }
+unsafe extern "C" fn s470(_a0: usize) -> usize { hit(470); unsafe { crate::impls::Get__CHitBoxSet_m_SourceFilename(_a0) } }
 unsafe extern "C" fn s471(_a0: usize, _a1: usize) { hit(471);  }
 unsafe extern "C" fn s472(_a0: usize) -> usize { hit(472); _a0 }
 unsafe extern "C" fn s473(_a0: usize) -> usize { hit(473); _a0 }
@@ -1615,81 +1955,81 @@ unsafe extern "C" fn s572(_a0: usize) -> u32 { hit(572); crate::state::get::<u32
 unsafe extern "C" fn s573(_a0: usize) { hit(573);  }
 unsafe extern "C" fn s574(_a0: usize) -> i32 { hit(574); 1 }
 unsafe extern "C" fn s575(_a0: usize) -> i32 { hit(575); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s576(_a0: usize) -> i32 { hit(576); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s576(_a0: usize) -> i32 { hit(576); unsafe { crate::impls::CModel_IsStrongHandleLoaded(_a0) } }
 unsafe extern "C" fn s577(_a0: usize) -> usize { hit(577); crate::trace::object(577) }
 unsafe extern "C" fn s578(_a0: usize) -> usize { hit(578); unsafe { crate::impls::CModel_GetBindingPtr(_a0) } }
 unsafe extern "C" fn s579(_a0: usize) -> S_System_Guid { hit(579); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s580(_a0: usize) -> usize { hit(580); crate::trace::object(580) }
-unsafe extern "C" fn s581(_a0: usize) -> usize { hit(581); crate::trace::object(581) }
-unsafe extern "C" fn s582(_a0: usize) -> usize { hit(582); crate::trace::object(582) }
-unsafe extern "C" fn s583(_a0: usize) -> i32 { hit(583); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s584(_a0: usize) -> i32 { hit(584); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s585(_a0: usize) -> i32 { hit(585); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s586(_a0: usize, _a1: usize) -> usize { hit(586); crate::trace::object(586) }
-unsafe extern "C" fn s587(_a0: usize, _a1: S_Sandbox_StringToken, _a2: usize) -> i32 { hit(587); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s588(_a0: usize, _a1: i32) -> usize { hit(588); crate::trace::object(588) }
-unsafe extern "C" fn s589(_a0: usize, _a1: usize) -> i32 { hit(589); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s590(_a0: usize, _a1: i32) -> usize { hit(590); crate::trace::object(590) }
-unsafe extern "C" fn s591(_a0: usize) -> i32 { hit(591); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s592(_a0: usize, _a1: i32) -> i32 { hit(592); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s593(_a0: usize, _a1: i32) -> u64 { hit(593); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s594(_a0: usize, _a1: i32, _a2: i32) -> u64 { hit(594); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s595(_a0: usize, _a1: i32, _a2: u64) -> i32 { hit(595); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s596(_a0: usize) -> i32 { hit(596); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s597(_a0: usize) -> u64 { hit(597); crate::state::get::<u64>(_a0, 87) }
-unsafe extern "C" fn s598(_a0: usize, _a1: i32) -> u64 { hit(598); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s599(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(599); crate::trace::object(599) }
-unsafe extern "C" fn s600(_a0: usize) -> i32 { hit(600); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s601(_a0: usize, _a1: i32) -> usize { hit(601); crate::trace::object(601) }
-unsafe extern "C" fn s602(_a0: usize, _a1: S_Sandbox_StringToken) -> i32 { hit(602); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s603(_a0: usize, _a1: i32) -> i32 { hit(603); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s604(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(604); crate::trace::object(604) }
-unsafe extern "C" fn s605(_a0: usize, _a1: i32) -> i32 { hit(605); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s606(_a0: usize, _a1: i32, _a2: i32) -> i32 { hit(606); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s607(_a0: usize, _a1: i32, _a2: i32, _a3: i32) -> usize { hit(607); crate::trace::object(607) }
-unsafe extern "C" fn s608(_a0: usize, _a1: usize, _a2: usize, _a3: usize) { hit(608);  }
-unsafe extern "C" fn s609(_a0: usize, _a1: i32, _a2: usize, _a3: usize, _a4: usize, _a5: usize, _a6: usize, _a7: usize, _a8: usize) { hit(609);  }
-unsafe extern "C" fn s610(_a0: usize, _a1: i32) -> usize { hit(610); crate::trace::object(610) }
-unsafe extern "C" fn s611(_a0: usize, _a1: i32, _a2: i32, _a3: usize, _a4: usize, _a5: usize, _a6: usize, _a7: usize, _a8: usize, _a9: usize, _a10: usize) { hit(611);  }
-unsafe extern "C" fn s612(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(612); crate::trace::object(612) }
-unsafe extern "C" fn s613(_a0: usize) -> i32 { hit(613); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s614(_a0: usize) -> i32 { hit(614); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s615(_a0: usize, _a1: f32, _a2: f32) -> i32 { hit(615); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s616(_a0: usize) -> i32 { hit(616); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s617(_a0: usize, _a1: i32) -> f32 { hit(617); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s618(_a0: usize) -> S_BBox { hit(618); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s619(_a0: usize) -> S_BBox { hit(619); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s620(_a0: usize) -> S_BBox { hit(620); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s621(_a0: usize) -> i32 { hit(621); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s622(_a0: usize, _a1: usize) -> i32 { hit(622); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s623(_a0: usize, _a1: i32) -> usize { hit(623); crate::trace::object(623) }
-unsafe extern "C" fn s624(_a0: usize, _a1: i32) -> i32 { hit(624); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s625(_a0: usize, _a1: i32) -> S_Transform { hit(625); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s626(_a0: usize, _a1: i32) -> S_Vector3 { hit(626); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s627(_a0: usize, _a1: i32) -> S_Rotation { hit(627); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s628(_a0: usize) -> i32 { hit(628); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s580(_a0: usize) -> usize { hit(580); unsafe { crate::impls::CModel_GetModelName(_a0) } }
+unsafe extern "C" fn s581(_a0: usize) -> usize { hit(581); unsafe { crate::impls::CModel_GetBaseModelName(_a0) } }
+unsafe extern "C" fn s582(_a0: usize) -> usize { hit(582); unsafe { crate::impls::CModel_GetBaseModel(_a0) } }
+unsafe extern "C" fn s583(_a0: usize) -> i32 { hit(583); unsafe { crate::impls::CModel_IsTranslucent(_a0) } }
+unsafe extern "C" fn s584(_a0: usize) -> i32 { hit(584); unsafe { crate::impls::CModel_IsTranslucentTwoPass(_a0) } }
+unsafe extern "C" fn s585(_a0: usize) -> i32 { hit(585); unsafe { crate::impls::CModel_HasPhysics(_a0) } }
+unsafe extern "C" fn s586(_a0: usize, _a1: usize) -> usize { hit(586); unsafe { crate::impls::CModel_FindModelSubKey(_a0, _a1) } }
+unsafe extern "C" fn s587(_a0: usize, _a1: S_Sandbox_StringToken, _a2: usize) -> i32 { hit(587); unsafe { crate::impls::CModel_GetAttachmentTransform(_a0, _a1, _a2) } }
+unsafe extern "C" fn s588(_a0: usize, _a1: i32) -> usize { hit(588); unsafe { crate::impls::CModel_GetAttachmentNameFromIndex(_a0, _a1) } }
+unsafe extern "C" fn s589(_a0: usize, _a1: usize) -> i32 { hit(589); unsafe { crate::impls::CModel_GetBodyPartForName(_a0, _a1) } }
+unsafe extern "C" fn s590(_a0: usize, _a1: i32) -> usize { hit(590); unsafe { crate::impls::CModel_GetBodyPartName(_a0, _a1) } }
+unsafe extern "C" fn s591(_a0: usize) -> i32 { hit(591); unsafe { crate::impls::CModel_GetNumBodyParts(_a0) } }
+unsafe extern "C" fn s592(_a0: usize, _a1: i32) -> i32 { hit(592); unsafe { crate::impls::CModel_GetNumBodyPartMeshes(_a0, _a1) } }
+unsafe extern "C" fn s593(_a0: usize, _a1: i32) -> u64 { hit(593); unsafe { crate::impls::CModel_GetBodyPartMask(_a0, _a1) } }
+unsafe extern "C" fn s594(_a0: usize, _a1: i32, _a2: i32) -> u64 { hit(594); unsafe { crate::impls::CModel_GetBodyPartMeshMask(_a0, _a1, _a2) } }
+unsafe extern "C" fn s595(_a0: usize, _a1: i32, _a2: u64) -> i32 { hit(595); unsafe { crate::impls::CModel_FindMeshIndexForMask(_a0, _a1, _a2) } }
+unsafe extern "C" fn s596(_a0: usize) -> i32 { hit(596); unsafe { crate::impls::CModel_GetNumMeshGroups(_a0) } }
+unsafe extern "C" fn s597(_a0: usize) -> u64 { hit(597); unsafe { crate::impls::CModel_GetDefaultMeshGroupMask(_a0) } }
+unsafe extern "C" fn s598(_a0: usize, _a1: i32) -> u64 { hit(598); unsafe { crate::impls::CModel_GetMeshGroupMaskForMesh(_a0, _a1) } }
+unsafe extern "C" fn s599(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(599); unsafe { crate::impls::CModel_GetBodyPartMeshName(_a0, _a1, _a2) } }
+unsafe extern "C" fn s600(_a0: usize) -> i32 { hit(600); unsafe { crate::impls::CModel_GetNumMaterialGroups(_a0) } }
+unsafe extern "C" fn s601(_a0: usize, _a1: i32) -> usize { hit(601); unsafe { crate::impls::CModel_GetMaterialGroupName(_a0, _a1) } }
+unsafe extern "C" fn s602(_a0: usize, _a1: S_Sandbox_StringToken) -> i32 { hit(602); unsafe { crate::impls::CModel_GetMaterialGroupIndex(_a0, _a1) } }
+unsafe extern "C" fn s603(_a0: usize, _a1: i32) -> i32 { hit(603); unsafe { crate::impls::CModel_GetNumMaterialsInGroup(_a0, _a1) } }
+unsafe extern "C" fn s604(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(604); unsafe { crate::impls::CModel_GetMaterialInGroup(_a0, _a1, _a2) } }
+unsafe extern "C" fn s605(_a0: usize, _a1: i32) -> i32 { hit(605); unsafe { crate::impls::CModel_GetNumSceneObjects(_a0, _a1) } }
+unsafe extern "C" fn s606(_a0: usize, _a1: i32, _a2: i32) -> i32 { hit(606); unsafe { crate::impls::CModel_GetNumDrawCalls(_a0, _a1, _a2) } }
+unsafe extern "C" fn s607(_a0: usize, _a1: i32, _a2: i32, _a3: i32) -> usize { hit(607); unsafe { crate::impls::CModel_GetMaterial(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s608(_a0: usize, _a1: usize, _a2: usize, _a3: usize) { hit(608); unsafe { crate::impls::CModel_GetTotalMeshCounts(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s609(_a0: usize, _a1: i32, _a2: usize, _a3: usize, _a4: usize, _a5: usize, _a6: usize, _a7: usize, _a8: usize) { hit(609); unsafe { crate::impls::CModel_GetMeshInfo(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8) } }
+unsafe extern "C" fn s610(_a0: usize, _a1: i32) -> usize { hit(610); unsafe { crate::impls::CModel_GetMeshName(_a0, _a1) } }
+unsafe extern "C" fn s611(_a0: usize, _a1: i32, _a2: i32, _a3: usize, _a4: usize, _a5: usize, _a6: usize, _a7: usize, _a8: usize, _a9: usize, _a10: usize) { hit(611); unsafe { crate::impls::CModel_GetDrawCallInfo(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8, _a9, _a10) } }
+unsafe extern "C" fn s612(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(612); unsafe { crate::impls::CModel_GetDrawCallMaterial(_a0, _a1, _a2) } }
+unsafe extern "C" fn s613(_a0: usize) -> i32 { hit(613); unsafe { crate::impls::CModel_GetNumMeshes(_a0) } }
+unsafe extern "C" fn s614(_a0: usize) -> i32 { hit(614); unsafe { crate::impls::CModel_ComputeMaxLODLevelUsedByModel(_a0) } }
+unsafe extern "C" fn s615(_a0: usize, _a1: f32, _a2: f32) -> i32 { hit(615); unsafe { crate::impls::CModel_LODLevelForScreenSize(_a0, _a1, _a2) } }
+unsafe extern "C" fn s616(_a0: usize) -> i32 { hit(616); unsafe { crate::impls::CModel_GetLODSwitchDistanceCount(_a0) } }
+unsafe extern "C" fn s617(_a0: usize, _a1: i32) -> f32 { hit(617); unsafe { crate::impls::CModel_GetLODSwitchDistance(_a0, _a1) } }
+unsafe extern "C" fn s618(_a0: usize) -> S_BBox { hit(618); unsafe { crate::impls::CModel_GetMeshBounds(_a0) } }
+unsafe extern "C" fn s619(_a0: usize) -> S_BBox { hit(619); unsafe { crate::impls::CModel_GetPhysicsBounds(_a0) } }
+unsafe extern "C" fn s620(_a0: usize) -> S_BBox { hit(620); unsafe { crate::impls::CModel_GetModelRenderBounds(_a0) } }
+unsafe extern "C" fn s621(_a0: usize) -> i32 { hit(621); unsafe { crate::impls::CModel_NumBones(_a0) } }
+unsafe extern "C" fn s622(_a0: usize, _a1: usize) -> i32 { hit(622); unsafe { crate::impls::CModel_FindBoneIndex(_a0, _a1) } }
+unsafe extern "C" fn s623(_a0: usize, _a1: i32) -> usize { hit(623); unsafe { crate::impls::CModel_boneName(_a0, _a1) } }
+unsafe extern "C" fn s624(_a0: usize, _a1: i32) -> i32 { hit(624); unsafe { crate::impls::CModel_boneParent(_a0, _a1) } }
+unsafe extern "C" fn s625(_a0: usize, _a1: i32) -> S_Transform { hit(625); unsafe { crate::impls::CModel_GetBoneTransform(_a0, _a1) } }
+unsafe extern "C" fn s626(_a0: usize, _a1: i32) -> S_Vector3 { hit(626); unsafe { crate::impls::CModel_bonePosParentSpace(_a0, _a1) } }
+unsafe extern "C" fn s627(_a0: usize, _a1: i32) -> S_Rotation { hit(627); unsafe { crate::impls::CModel_boneRotParentSpace(_a0, _a1) } }
+unsafe extern "C" fn s628(_a0: usize) -> i32 { hit(628); unsafe { crate::impls::CModel_NumFlexControllers(_a0) } }
 unsafe extern "C" fn s629(_a0: usize, _a1: i32) -> usize { hit(629); crate::trace::object(629) }
-unsafe extern "C" fn s630(_a0: usize, _a1: usize) -> i32 { hit(630); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s630(_a0: usize, _a1: usize) -> i32 { hit(630); unsafe { crate::impls::CModel_GetVisemeIndex(_a0, _a1) } }
 unsafe extern "C" fn s631(_a0: usize, _a1: i32, _a2: i32) -> f32 { hit(631); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s632(_a0: usize) -> i32 { hit(632); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s633(_a0: usize, _a1: i32) -> usize { hit(633); crate::trace::object(633) }
-unsafe extern "C" fn s634(_a0: usize, _a1: usize) { hit(634);  }
-unsafe extern "C" fn s635(_a0: usize) -> i32 { hit(635); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s636(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(636); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s637(_a0: usize) -> usize { hit(637); crate::trace::object(637) }
+unsafe extern "C" fn s632(_a0: usize) -> i32 { hit(632); unsafe { crate::impls::CModel_GetNumAnim(_a0) } }
+unsafe extern "C" fn s633(_a0: usize, _a1: i32) -> usize { hit(633); unsafe { crate::impls::CModel_GetAnimationName(_a0, _a1) } }
+unsafe extern "C" fn s634(_a0: usize, _a1: usize) { hit(634); unsafe { crate::impls::CModel_GetSequenceNames(_a0, _a1) } }
+unsafe extern "C" fn s635(_a0: usize) -> i32 { hit(635); unsafe { crate::impls::CModel_HasSceneObjects(_a0) } }
+unsafe extern "C" fn s636(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(636); unsafe { crate::impls::CModel_MeshTrace(_a0, _a1, _a2) } }
+unsafe extern "C" fn s637(_a0: usize) -> usize { hit(637); unsafe { crate::impls::CModel_GetAnimationGraph(_a0) } }
 unsafe extern "C" fn s638(_a0: usize) -> usize { hit(638); unsafe { crate::impls::CModel_GetPhysicsContainer(_a0) } }
-unsafe extern "C" fn s639(_a0: usize, _a1: usize, _a2: i32) -> usize { hit(639); crate::trace::object(639) }
-unsafe extern "C" fn s640(_a0: usize, _a1: usize, _a2: i32) -> i32 { hit(640); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s641(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(641); crate::trace::object(641) }
-unsafe extern "C" fn s642(_a0: usize, _a1: usize) -> i32 { hit(642); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s643(_a0: usize, _a1: i32) -> i32 { hit(643); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s644(_a0: usize) -> i32 { hit(644); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s645(_a0: usize) -> i32 { hit(645); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s646(_a0: usize, _a1: i32) -> i64 { hit(646); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s647(_a0: usize) -> i32 { hit(647); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s648(_a0: usize, _a1: i32) -> usize { hit(648); crate::trace::object(648) }
-unsafe extern "C" fn s649(_a0: usize) -> i32 { hit(649); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s650(_a0: usize, _a1: i32) -> usize { hit(650); crate::trace::object(650) }
+unsafe extern "C" fn s639(_a0: usize, _a1: usize, _a2: i32) -> usize { hit(639); unsafe { crate::impls::CModel_FindHitboxSetByName(_a0, _a1, _a2) } }
+unsafe extern "C" fn s640(_a0: usize, _a1: usize, _a2: i32) -> i32 { hit(640); unsafe { crate::impls::CModel_FindHitboxSetIndexByName(_a0, _a1, _a2) } }
+unsafe extern "C" fn s641(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(641); unsafe { crate::impls::CModel_GetHitboxSetByIndex(_a0, _a1, _a2) } }
+unsafe extern "C" fn s642(_a0: usize, _a1: usize) -> i32 { hit(642); unsafe { crate::impls::CModel_GetBoneIndexForHitbox(_a0, _a1) } }
+unsafe extern "C" fn s643(_a0: usize, _a1: i32) -> i32 { hit(643); unsafe { crate::impls::CModel_GetHitboxSetCount(_a0, _a1) } }
+unsafe extern "C" fn s644(_a0: usize) -> i32 { hit(644); unsafe { crate::impls::CModel_HasSkinnedMeshes(_a0) } }
+unsafe extern "C" fn s645(_a0: usize) -> i32 { hit(645); unsafe { crate::impls::CModel_HasAnimationDrivenFlexes(_a0) } }
+unsafe extern "C" fn s646(_a0: usize, _a1: i32) -> i64 { hit(646); unsafe { crate::impls::CModel_boneFlags(_a0, _a1) } }
+unsafe extern "C" fn s647(_a0: usize) -> i32 { hit(647); unsafe { crate::impls::CModel_GetNumAttachments(_a0) } }
+unsafe extern "C" fn s648(_a0: usize, _a1: i32) -> usize { hit(648); unsafe { crate::impls::CModel_GetAttachment(_a0, _a1) } }
+unsafe extern "C" fn s649(_a0: usize) -> i32 { hit(649); unsafe { crate::impls::CModel_GetMaterialIndexCount(_a0) } }
+unsafe extern "C" fn s650(_a0: usize, _a1: i32) -> usize { hit(650); unsafe { crate::impls::CModel_GetMaterialByIndex(_a0, _a1) } }
 unsafe extern "C" fn s651(_a0: usize) { hit(651); unsafe { crate::impls::CModelBuilder_DeleteThis(_a0) } }
 unsafe extern "C" fn s652() -> usize { hit(652); unsafe { crate::impls::CModelBuilder_Create() } }
 unsafe extern "C" fn s653(_a0: usize, _a1: f32) { hit(653); crate::state::set(_a0, 88, _a1) }
@@ -1937,30 +2277,30 @@ unsafe extern "C" fn s894(_a0: usize) -> usize { hit(894); _a0 }
 unsafe extern "C" fn s895(_a0: usize) -> usize { hit(895); _a0 }
 unsafe extern "C" fn s896(_a0: usize, _a1: i32, _a2: usize) { hit(896);  }
 unsafe extern "C" fn s897(_a0: usize, _a1: i32, _a2: usize) { hit(897);  }
-unsafe extern "C" fn s898(_a0: usize, _a1: i32, _a2: usize) { hit(898);  }
-unsafe extern "C" fn s899(_a0: usize, _a1: i32) -> S_Transform { hit(899); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s900(_a0: usize, _a1: usize) -> S_Transform { hit(900); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s901(_a0: usize, _a1: i32) -> S_Transform { hit(901); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s902(_a0: usize, _a1: usize) -> S_Transform { hit(902); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s903(_a0: usize, _a1: i32) -> S_Transform { hit(903); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s904(_a0: usize, _a1: usize) -> S_Transform { hit(904); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s905(_a0: usize, _a1: i32) -> S_Transform { hit(905); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s906(_a0: usize, _a1: i32, _a2: usize) { hit(906);  }
-unsafe extern "C" fn s907(_a0: usize, _a1: i32, _a2: usize) { hit(907);  }
-unsafe extern "C" fn s908(_a0: usize, _a1: usize) -> i32 { hit(908); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s909(_a0: usize, _a1: f32) { hit(909);  }
-unsafe extern "C" fn s910(_a0: usize, _a1: usize) { hit(910);  }
-unsafe extern "C" fn s911(_a0: usize) { hit(911);  }
-unsafe extern "C" fn s912(_a0: usize) { hit(912);  }
-unsafe extern "C" fn s913(_a0: usize) { hit(913);  }
+unsafe extern "C" fn s898(_a0: usize, _a1: i32, _a2: usize) { hit(898); unsafe { crate::impls::CScnnmtblbjct_SetWorldSpaceRenderBoneTransform(_a0, _a1, _a2) } }
+unsafe extern "C" fn s899(_a0: usize, _a1: i32) -> S_Transform { hit(899); unsafe { crate::impls::CScnnmtblbjct_GetWorldSpaceRenderBoneTransform(_a0, _a1) } }
+unsafe extern "C" fn s900(_a0: usize, _a1: usize) -> S_Transform { hit(900); unsafe { crate::impls::CScnnmtblbjct_GetWorldSpaceRenderBoneTransform_1(_a0, _a1) } }
+unsafe extern "C" fn s901(_a0: usize, _a1: i32) -> S_Transform { hit(901); unsafe { crate::impls::CScnnmtblbjct_GetWorldSpaceRenderBonePreviousTransform(_a0, _a1) } }
+unsafe extern "C" fn s902(_a0: usize, _a1: usize) -> S_Transform { hit(902); unsafe { crate::impls::CScnnmtblbjct_GetWorldSpaceRenderBonePreviousTransform_1(_a0, _a1) } }
+unsafe extern "C" fn s903(_a0: usize, _a1: i32) -> S_Transform { hit(903); unsafe { crate::impls::CScnnmtblbjct_GetLocalSpaceRenderBoneTransform(_a0, _a1) } }
+unsafe extern "C" fn s904(_a0: usize, _a1: usize) -> S_Transform { hit(904); unsafe { crate::impls::CScnnmtblbjct_GetLocalSpaceRenderBoneTransform_1(_a0, _a1) } }
+unsafe extern "C" fn s905(_a0: usize, _a1: i32) -> S_Transform { hit(905); unsafe { crate::impls::CScnnmtblbjct_GetWorldSpaceAnimationTransform(_a0, _a1) } }
+unsafe extern "C" fn s906(_a0: usize, _a1: i32, _a2: usize) { hit(906); unsafe { crate::impls::CScnnmtblbjct_GetWorldSpaceRenderBoneTransforms(_a0, _a1, _a2) } }
+unsafe extern "C" fn s907(_a0: usize, _a1: i32, _a2: usize) { hit(907); unsafe { crate::impls::CScnnmtblbjct_GetWorldSpaceRenderBonePreviousTransforms(_a0, _a1, _a2) } }
+unsafe extern "C" fn s908(_a0: usize, _a1: usize) -> i32 { hit(908); unsafe { crate::impls::CScnnmtblbjct_GetClosestBoneIndex(_a0, _a1) } }
+unsafe extern "C" fn s909(_a0: usize, _a1: f32) { hit(909); unsafe { crate::impls::CScnnmtblbjct_Update(_a0, _a1) } }
+unsafe extern "C" fn s910(_a0: usize, _a1: usize) { hit(910); unsafe { crate::impls::CScnnmtblbjct_MergeFrom(_a0, _a1) } }
+unsafe extern "C" fn s911(_a0: usize) { hit(911); unsafe { crate::impls::CScnnmtblbjct_SetBindPose(_a0) } }
+unsafe extern "C" fn s912(_a0: usize) { hit(912); unsafe { crate::impls::CScnnmtblbjct_CalculateWorldSpaceBones(_a0) } }
+unsafe extern "C" fn s913(_a0: usize) { hit(913); unsafe { crate::impls::CScnnmtblbjct_FinishUpdate(_a0) } }
 unsafe extern "C" fn s914(_a0: usize) { hit(914);  }
-unsafe extern "C" fn s915(_a0: usize, _a1: i32) -> S_Transform { hit(915); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s916(_a0: usize, _a1: i32, _a2: usize) { hit(916);  }
-unsafe extern "C" fn s917(_a0: usize, _a1: i32, _a2: usize) { hit(917);  }
+unsafe extern "C" fn s915(_a0: usize, _a1: i32) -> S_Transform { hit(915); unsafe { crate::impls::CScnnmtblbjct_GetParentSpaceBone(_a0, _a1) } }
+unsafe extern "C" fn s916(_a0: usize, _a1: i32, _a2: usize) { hit(916); unsafe { crate::impls::CScnnmtblbjct_GetParentSpaceBones(_a0, _a1, _a2) } }
+unsafe extern "C" fn s917(_a0: usize, _a1: i32, _a2: usize) { hit(917); unsafe { crate::impls::CScnnmtblbjct_SetParentSpaceBone(_a0, _a1, _a2) } }
 unsafe extern "C" fn s918(_a0: usize, _a1: usize) { hit(918);  }
 unsafe extern "C" fn s919(_a0: usize, _a1: usize) { hit(919);  }
 unsafe extern "C" fn s920(_a0: usize, _a1: usize) { hit(920);  }
-unsafe extern "C" fn s921(_a0: usize) -> usize { hit(921); crate::trace::object(921) }
+unsafe extern "C" fn s921(_a0: usize) -> usize { hit(921); unsafe { crate::impls::CScnnmtblbjct_GetAnimGraph(_a0) } }
 unsafe extern "C" fn s922(_a0: usize, _a1: S_Sandbox_StringToken, _a2: f32, _a3: f32) { hit(922);  }
 unsafe extern "C" fn s923(_a0: usize, _a1: i32, _a2: f32, _a3: f32) { hit(923);  }
 unsafe extern "C" fn s924(_a0: usize, _a1: i32) -> f32 { hit(924); unsafe { core::mem::zeroed() } }
@@ -1975,26 +2315,26 @@ unsafe extern "C" fn s932(_a0: usize) -> f32 { hit(932); crate::state::get::<f32
 unsafe extern "C" fn s933(_a0: usize) -> usize { hit(933); crate::trace::object(933) }
 unsafe extern "C" fn s934(_a0: usize, _a1: f32) { hit(934);  }
 unsafe extern "C" fn s935(_a0: usize) -> f32 { hit(935); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s936(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32, _a3: usize) -> i32 { hit(936); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s936(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32, _a3: usize) -> i32 { hit(936); unsafe { crate::impls::CScnnmtblbjct_SBox_GetAttachment(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s937(_a0: usize, _a1: i32) { hit(937); crate::state::set(_a0, 131, _a1) }
 unsafe extern "C" fn s938(_a0: usize) -> i32 { hit(938); crate::state::get::<i32>(_a0, 131) }
-unsafe extern "C" fn s939(_a0: usize) -> usize { hit(939); crate::trace::object(939) }
-unsafe extern "C" fn s940(_a0: usize, _a1: usize) { hit(940);  }
-unsafe extern "C" fn s941(_a0: usize) -> f32 { hit(941); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s942(_a0: usize) -> f32 { hit(942); crate::state::get::<f32>(_a0, 130) }
-unsafe extern "C" fn s943(_a0: usize, _a1: f32) { hit(943); crate::state::set(_a0, 130, _a1) }
-unsafe extern "C" fn s944(_a0: usize, _a1: i32) { hit(944);  }
-unsafe extern "C" fn s945(_a0: usize) -> i32 { hit(945); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s946(_a0: usize, _a1: i32) { hit(946);  }
-unsafe extern "C" fn s947(_a0: usize) -> f32 { hit(947); crate::state::get::<f32>(_a0, 132) }
-unsafe extern "C" fn s948(_a0: usize, _a1: f32) { hit(948); crate::state::set(_a0, 132, _a1) }
+unsafe extern "C" fn s939(_a0: usize) -> usize { hit(939); unsafe { crate::impls::CScnnmtblbjct_GetSequence(_a0) } }
+unsafe extern "C" fn s940(_a0: usize, _a1: usize) { hit(940); unsafe { crate::impls::CScnnmtblbjct_SetSequence(_a0, _a1) } }
+unsafe extern "C" fn s941(_a0: usize) -> f32 { hit(941); unsafe { crate::impls::CScnnmtblbjct_GetSequenceDuration(_a0) } }
+unsafe extern "C" fn s942(_a0: usize) -> f32 { hit(942); unsafe { crate::impls::CScnnmtblbjct_GetSequenceCycle(_a0) } }
+unsafe extern "C" fn s943(_a0: usize, _a1: f32) { hit(943); unsafe { crate::impls::CScnnmtblbjct_SetSequenceCycle(_a0, _a1) } }
+unsafe extern "C" fn s944(_a0: usize, _a1: i32) { hit(944); unsafe { crate::impls::CScnnmtblbjct_SetSequenceLooping(_a0, _a1) } }
+unsafe extern "C" fn s945(_a0: usize) -> i32 { hit(945); unsafe { crate::impls::CScnnmtblbjct_IsSequenceFinished(_a0) } }
+unsafe extern "C" fn s946(_a0: usize, _a1: i32) { hit(946); unsafe { crate::impls::CScnnmtblbjct_SetSequenceBlending(_a0, _a1) } }
+unsafe extern "C" fn s947(_a0: usize) -> f32 { hit(947); unsafe { crate::impls::CScnnmtblbjct_GetPlaybackRate(_a0) } }
+unsafe extern "C" fn s948(_a0: usize, _a1: f32) { hit(948); unsafe { crate::impls::CScnnmtblbjct_SetPlaybackRate(_a0, _a1) } }
 unsafe extern "C" fn s949(_a0: usize) -> i32 { hit(949); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s950(_a0: usize, _a1: usize) { hit(950);  }
 unsafe extern "C" fn s951(_a0: usize, _a1: usize) { hit(951);  }
-unsafe extern "C" fn s952(_a0: usize) { hit(952);  }
-unsafe extern "C" fn s953(_a0: usize, _a1: u16, _a2: usize) { hit(953);  }
+unsafe extern "C" fn s952(_a0: usize) { hit(952); unsafe { crate::impls::CScnnmtblbjct_ClearPhysicsBones(_a0) } }
+unsafe extern "C" fn s953(_a0: usize, _a1: u16, _a2: usize) { hit(953); unsafe { crate::impls::CScnnmtblbjct_SetPhysicsBone(_a0, _a1, _a2) } }
 unsafe extern "C" fn s954(_a0: usize) -> S_Transform { hit(954); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s955(_a0: usize) -> i32 { hit(955); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s955(_a0: usize) -> i32 { hit(955); unsafe { crate::impls::CScnnmtblbjct_HasPhysicsBones(_a0) } }
 unsafe extern "C" fn s956(_a0: usize, _a1: usize) -> usize { hit(956); crate::trace::object(956) }
 unsafe extern "C" fn s957(_a0: usize, _a1: i32) -> usize { hit(957); crate::trace::object(957) }
 unsafe extern "C" fn s958(_a0: usize, _a1: i64, _a2: i64) { hit(958);  }
@@ -2024,7 +2364,7 @@ unsafe extern "C" fn s981(_a0: usize) { hit(981);  }
 unsafe extern "C" fn s982(_a0: usize, _a1: i32) { hit(982);  }
 unsafe extern "C" fn s983(_a0: usize) -> f32 { hit(983); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s984(_a0: usize, _a1: usize) { hit(984); unsafe { crate::state::set_from::<S_Transform>(_a0, 34, _a1) } }
-unsafe extern "C" fn s985(_a0: usize) -> S_Transform { hit(985); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s985(_a0: usize) -> S_Transform { hit(985); unsafe { crate::impls::CScnnmtblbjct_GetCTransform(_a0) } }
 unsafe extern "C" fn s986(_a0: usize, _a1: usize) { hit(986); unsafe { crate::state::set_from::<S_BBox>(_a0, 35, _a1) } }
 unsafe extern "C" fn s987(_a0: usize) -> S_BBox { hit(987); crate::state::get::<S_BBox>(_a0, 35) }
 unsafe extern "C" fn s988(_a0: usize) { hit(988);  }
@@ -2041,7 +2381,7 @@ unsafe extern "C" fn s998(_a0: usize, _a1: i32) { hit(998);  }
 unsafe extern "C" fn s999(_a0: usize) { hit(999);  }
 unsafe extern "C" fn s1000(_a0: usize) -> u64 { hit(1000); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1001(_a0: usize) -> i32 { hit(1001); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1002(_a0: usize) -> usize { hit(1002); crate::trace::object(1002) }
+unsafe extern "C" fn s1002(_a0: usize) -> usize { hit(1002); unsafe { crate::impls::CScnnmtblbjct_GetModelHandle(_a0) } }
 unsafe extern "C" fn s1003(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1003);  }
 unsafe extern "C" fn s1004(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { hit(1004);  }
 unsafe extern "C" fn s1005(_a0: usize, _a1: i32) { hit(1005);  }
@@ -2059,7 +2399,7 @@ unsafe extern "C" fn s1016(_a0: usize) -> u32 { hit(1016); unsafe { core::mem::z
 unsafe extern "C" fn s1017(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) -> i32 { hit(1017); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1018(_a0: usize) { hit(1018);  }
 unsafe extern "C" fn s1019(_a0: usize, _a1: i32, _a2: usize) { hit(1019);  }
-unsafe extern "C" fn s1020(_a0: usize) -> f32 { hit(1020); crate::state::get::<f32>(_a0, 133) }
+unsafe extern "C" fn s1020(_a0: usize) -> f32 { hit(1020); unsafe { crate::impls::Get__CScnnmtblbjct_m_flDeltaTime(_a0) } }
 unsafe extern "C" fn s1021(_a0: usize, _a1: f32) { hit(1021); crate::state::set(_a0, 133, _a1) }
 unsafe extern "C" fn s1022(_a0: usize) -> S_BBox { hit(1022); crate::state::get::<S_BBox>(_a0, 134) }
 unsafe extern "C" fn s1023(_a0: usize, _a1: usize) { hit(1023); unsafe { crate::state::set_from::<S_BBox>(_a0, 134, _a1) } }
@@ -2292,7 +2632,7 @@ unsafe extern "C" fn s1249(_a0: usize) { hit(1249);  }
 unsafe extern "C" fn s1250(_a0: usize, _a1: i32) { hit(1250);  }
 unsafe extern "C" fn s1251(_a0: usize) -> f32 { hit(1251); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1252(_a0: usize, _a1: usize) { hit(1252); unsafe { crate::state::set_from::<S_Transform>(_a0, 34, _a1) } }
-unsafe extern "C" fn s1253(_a0: usize) -> S_Transform { hit(1253); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1253(_a0: usize) -> S_Transform { hit(1253); unsafe { crate::impls::CSceneObject_GetCTransform(_a0) } }
 unsafe extern "C" fn s1254(_a0: usize, _a1: usize) { hit(1254); unsafe { crate::state::set_from::<S_BBox>(_a0, 35, _a1) } }
 unsafe extern "C" fn s1255(_a0: usize) -> S_BBox { hit(1255); crate::state::get::<S_BBox>(_a0, 35) }
 unsafe extern "C" fn s1256(_a0: usize) { hit(1256);  }
@@ -2309,7 +2649,7 @@ unsafe extern "C" fn s1266(_a0: usize, _a1: i32) { hit(1266);  }
 unsafe extern "C" fn s1267(_a0: usize) { hit(1267);  }
 unsafe extern "C" fn s1268(_a0: usize) -> u64 { hit(1268); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1269(_a0: usize) -> i32 { hit(1269); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1270(_a0: usize) -> usize { hit(1270); crate::trace::object(1270) }
+unsafe extern "C" fn s1270(_a0: usize) -> usize { hit(1270); unsafe { crate::impls::CSceneObject_GetModelHandle(_a0) } }
 unsafe extern "C" fn s1271(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1271);  }
 unsafe extern "C" fn s1272(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { hit(1272);  }
 unsafe extern "C" fn s1273(_a0: usize, _a1: i32) { hit(1273);  }
@@ -2457,11 +2797,11 @@ unsafe extern "C" fn s1414(_a0: usize) { hit(1414);  }
 unsafe extern "C" fn s1415(_a0: usize) -> usize { hit(1415); crate::trace::object(1415) }
 unsafe extern "C" fn s1416(_a0: usize) -> i32 { hit(1416); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1417(_a0: usize, _a1: usize) { hit(1417);  }
-unsafe extern "C" fn s1418(_a0: usize) { hit(1418);  }
-unsafe extern "C" fn s1419(_a0: i32, _a1: i32) -> usize { hit(1419); crate::trace::object(1419) }
-unsafe extern "C" fn s1420(_a0: usize) -> i32 { hit(1420); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1421(_a0: usize, _a1: i32) { hit(1421);  }
-unsafe extern "C" fn s1422(_a0: usize, _a1: i32) -> usize { hit(1422); crate::trace::object(1422) }
+unsafe extern "C" fn s1418(_a0: usize) { hit(1418); unsafe { crate::impls::CtlVctrCtlStrng_DeleteThis(_a0) } }
+unsafe extern "C" fn s1419(_a0: i32, _a1: i32) -> usize { hit(1419); unsafe { crate::impls::CtlVctrCtlStrng_Create(_a0, _a1) } }
+unsafe extern "C" fn s1420(_a0: usize) -> i32 { hit(1420); unsafe { crate::impls::CtlVctrCtlStrng_Count(_a0) } }
+unsafe extern "C" fn s1421(_a0: usize, _a1: i32) { hit(1421); unsafe { crate::impls::CtlVctrCtlStrng_SetCount(_a0, _a1) } }
+unsafe extern "C" fn s1422(_a0: usize, _a1: i32) -> usize { hit(1422); unsafe { crate::impls::CtlVctrCtlStrng_Element(_a0, _a1) } }
 unsafe extern "C" fn s1423(_a0: usize) { hit(1423);  }
 unsafe extern "C" fn s1424(_a0: i32, _a1: i32) -> usize { hit(1424); crate::trace::object(1424) }
 unsafe extern "C" fn s1425(_a0: usize) -> i32 { hit(1425); unsafe { core::mem::zeroed() } }
@@ -3934,8 +4274,8 @@ unsafe extern "C" fn s2891(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(2891);
 unsafe extern "C" fn s2892(_a0: usize) -> usize { hit(2892); crate::trace::object(2892) }
 unsafe extern "C" fn s2893() { hit(2893);  }
 unsafe extern "C" fn s2894(_a0: usize, _a1: usize, _a2: usize, _a3: i32, _a4: i32, _a5: i32, _a6: i32, _a7: f32, _a8: f32, _a9: f32, _a10: f32, _a11: i32, _a12: i32) { hit(2894);  }
-unsafe extern "C" fn s2895(_a0: usize, _a1: usize, _a2: usize, _a3: i64, _a4: i64, _a5: usize, _a6: i32) -> i32 { hit(2895); crate::handles::create(2895, "SceneObject", &[_a0, _a1, _a2, _a5]) }
-unsafe extern "C" fn s2896(_a0: usize, _a1: usize) { hit(2896);  }
+unsafe extern "C" fn s2895(_a0: usize, _a1: usize, _a2: usize, _a3: i64, _a4: i64, _a5: usize, _a6: i32) -> i32 { hit(2895); unsafe { crate::impls::g_pMeshSystem_CreateSceneObject(_a0, _a1, _a2, _a3, _a4, _a5, _a6) } }
+unsafe extern "C" fn s2896(_a0: usize, _a1: usize) { hit(2896); unsafe { crate::impls::g_pMeshSystem_ChangeModel(_a0, _a1) } }
 unsafe extern "C" fn s2897() -> i32 { hit(2897); unsafe { crate::impls::g_pPhysicsSystem_NumWorlds() } }
 unsafe extern "C" fn s2898() -> i32 { hit(2898); unsafe { crate::impls::g_pPhysicsSystem_CreateWorld() } }
 unsafe extern "C" fn s2899(_a0: usize) { hit(2899); unsafe { crate::impls::g_pPhysicsSystem_DestroyWorld(_a0) } }

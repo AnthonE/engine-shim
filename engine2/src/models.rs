@@ -124,7 +124,16 @@ pub enum Obj {
     Capsule(Vector, Vector, f32),
     Hull(Hull),
     Mesh(Mesh),
-    Model { physics: usize },
+    Model { physics: usize, file: Option<&'static ModelFile> },
+}
+
+/// What a model file holds that managed reads by pointer: a hitbox set, a
+/// hitbox, an attachment (each the model's own, at its own address).
+#[derive(Clone, Copy)]
+pub enum Piece {
+    HitBoxSet(&'static HitBoxSet),
+    HitBox(&'static HitBox),
+    Attachment(&'static Attachment),
 }
 
 pub struct Models {
@@ -132,11 +141,12 @@ pub struct Models {
     /// models loaded from files, by name, and each one's name
     pub by_name: HashMap<String, usize>,
     pub names: HashMap<usize, String>,
+    pub pieces: HashMap<usize, Piece>,
 }
 
 pub fn models() -> MutexGuard<'static, Models> {
     static M: OnceLock<Mutex<Models>> = OnceLock::new();
-    M.get_or_init(|| Mutex::new(Models { objs: HashMap::new(), by_name: HashMap::new(), names: HashMap::new() })).lock().unwrap_or_else(|e| e.into_inner())
+    M.get_or_init(|| Mutex::new(Models { objs: HashMap::new(), by_name: HashMap::new(), names: HashMap::new(), pieces: HashMap::new() })).lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// A new object: its pointer.
@@ -178,9 +188,39 @@ impl Models {
     /// The physics container of a model (0 if none).
     pub fn physics_of(&self, model: usize) -> usize {
         match self.objs.get(&model) {
-            Some(Obj::Model { physics }) => *physics,
+            Some(Obj::Model { physics, .. }) => *physics,
             _ => 0,
         }
+    }
+
+    /// What a model's file holds (None for a model built at runtime, or one
+    /// whose file isn't here).
+    pub fn file(&self, model: usize) -> Option<&'static ModelFile> {
+        match self.objs.get(&model) {
+            Some(Obj::Model { file, .. }) => *file,
+            _ => None,
+        }
+    }
+}
+
+/// What a model's file holds, by the model's pointer.
+pub fn file(model: usize) -> Option<&'static ModelFile> {
+    models().file(model)
+}
+
+/// A piece of a model file, by the pointer managed was given for it.
+pub fn piece(p: usize) -> Option<Piece> {
+    models().pieces.get(&p).copied()
+}
+
+/// A model file's pieces, known by their addresses.
+fn index_pieces(m: &mut Models, f: &'static ModelFile) {
+    for mesh in &f.meshes {
+        for set in &mesh.hitbox_sets {
+            m.pieces.insert(set as *const HitBoxSet as usize, Piece::HitBoxSet(set));
+            for b in &set.boxes { m.pieces.insert(b as *const HitBox as usize, Piece::HitBox(b)); }
+        }
+        for a in &mesh.attachments { m.pieces.insert(a as *const Attachment as usize, Piece::Attachment(a)); }
     }
 }
 
@@ -202,12 +242,13 @@ pub fn build(builder: usize) -> usize {
     let copy = m.bodies(physics).cloned();
     drop(m);
     let physics = copy.map(|b| make(Obj::Bodies(b))).unwrap_or(0);
-    make(Obj::Model { physics })
+    make(Obj::Model { physics, file: None })
 }
 
 // ---- models from files: a compiled model (`.vmdl_c`) as the same objects
 
 use crate::assets::kv3::Value;
+use crate::assets::model::{Attachment, HitBox, HitBoxSet, ModelFile};
 
 /// The model a name names: loaded once, the same object after. A name with
 /// no file yet (one still downloading), or one that can't be read, is a
@@ -215,15 +256,25 @@ use crate::assets::kv3::Value;
 pub fn load(name: &str) -> usize {
     let key = crate::fs::normal(name);
     if let Some(&m) = models().by_name.get(&key) { return m; }
-    let loaded = read_model(name);
-    let physics = *loaded.as_ref().unwrap_or(&0);
-    let m = make(Obj::Model { physics });
+    let (m, error) = match read_model(name) {
+        Ok((physics, file)) => (from_file(physics, file), None),
+        Err(e) => (from_file(0, None), Some(e)),
+    };
     let mut all = models();
     all.names.insert(m, name.to_string());
-    match loaded {
-        Ok(_) => { all.by_name.insert(key, m); }
-        Err(e) => crate::trace::note(&format!("models: {name}: {e}")),
+    match error {
+        None => { all.by_name.insert(key, m); }
+        Some(e) => crate::trace::note(&format!("models: {name}: {e}")),
     }
+    m
+}
+
+/// A model of a file's collision and the rest of what it holds, kept for
+/// good: managed holds a model's pieces by pointer.
+pub fn from_file(physics: usize, file: Option<ModelFile>) -> usize {
+    let file: Option<&'static ModelFile> = file.map(|f| &*Box::leak(Box::new(f)));
+    let m = make(Obj::Model { physics, file });
+    if let Some(f) = file { index_pieces(&mut models(), f); }
     m
 }
 
@@ -231,11 +282,21 @@ pub fn name_of(model: usize) -> Option<String> {
     models().names.get(&model).cloned()
 }
 
-/// A model file's collision: its PHYS block, or the physics resources its
-/// DATA names (`m_refPhysicsData`). The physics container (0: none).
-fn read_model(name: &str) -> Result<usize, String> {
+/// A model file: its collision (the physics container, 0 for none) and the
+/// rest of what it holds (assets/model.rs), if that reads.
+fn read_model(name: &str) -> Result<(usize, Option<ModelFile>), String> {
     let bytes = crate::fs::read_compiled(name).ok_or("no file")?;
     let r = crate::assets::resource::Resource::parse(bytes)?;
+    let file = match crate::assets::model::read(&r, crate::fs::read_compiled) {
+        Ok(f) => Some(f),
+        Err(e) => { crate::trace::note(&format!("models: {name}: {e}")); None }
+    };
+    Ok((read_collision(&r)?, file))
+}
+
+/// A model file's collision: its PHYS block, or the physics resources its
+/// DATA names (`m_refPhysicsData`). The physics container (0: none).
+fn read_collision(r: &crate::assets::resource::Resource) -> Result<usize, String> {
     if let Some(phys) = r.kv3("PHYS") {
         return Ok(physics(&phys.map_err(|e| e.to_string())?));
     }

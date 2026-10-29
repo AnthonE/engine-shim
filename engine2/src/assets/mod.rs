@@ -1,6 +1,8 @@
 //! Compiled Source 2 assets, read: the resource container, binary KV3 in
 //! it, and what physics needs of a model (models.rs makes the model).
+pub mod anim;
 pub mod kv3;
+pub mod model;
 pub mod resource;
 
 #[cfg(test)]
@@ -67,4 +69,42 @@ mod sweep {
         eprintln!("{} files, {blocks} KV3 blocks, failures: {failed:#?}", files.len());
         assert!(failed.is_empty());
     }
+
+    /// Every model in a cache read whole: its skeleton, meshes, hitboxes,
+    /// attachments and sequences (`... -- --ignored every_model`).
+    #[test]
+    #[ignore]
+    fn every_model() {
+        let Ok(dir) = std::env::var("ENGINE2_SAMPLE_ASSETS") else { return };
+        let mut stack = vec![std::path::PathBuf::from(dir)];
+        let (mut models, mut bones, mut hitboxes, mut attachments, mut sequences, mut meshes, mut clips, mut playable) = (0, 0, 0, 0, 0, 0, 0, 0);
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { stack.push(p); continue; }
+                if !p.to_string_lossy().ends_with(".vmdl_c") { continue; }
+                let r = super::resource::Resource::parse(std::fs::read(&p).unwrap()).unwrap();
+                let m = super::model::read(&r, |_| None).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+                models += 1;
+                bones += m.bones.len();
+                hitboxes += m.hitbox_sets(0).iter().map(|s| s.boxes.len()).sum::<usize>();
+                attachments += m.attachments().len();
+                sequences += m.sequences.len();
+                let names: Vec<String> = m.bones.iter().map(|b| b.name.to_string_lossy().into_owned()).collect();
+                let bind: Vec<super::anim::BonePose> = m.bones.iter().map(|b| super::anim::BonePose { pos: b.pos, rot: b.rot, scale: 1.0 }).collect();
+                let a = super::anim::read(&r, &names);
+                for c in 0..a.clips.len() {
+                    for p in a.sample(c, 0.5, &bind) {
+                        assert!(p.pos.is_finite() && p.rot.is_finite(), "{}: clip {c}", p.pos);
+                    }
+                }
+                clips += a.clips.len();
+                playable += a.sequences.len();
+                meshes += m.meshes.iter().filter(|x| !x.objects.is_empty()).count();
+                assert!(m.render_bounds().is_some(), "{}: no meshes", p.display());
+            }
+        }
+        eprintln!("{models} models: {meshes} meshes, {bones} bones, {hitboxes} hitboxes, {attachments} attachments, {sequences} sequences ({playable} playing one of {clips} clips)");
+    }
 }
+
