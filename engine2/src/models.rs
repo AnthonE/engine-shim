@@ -112,6 +112,8 @@ pub struct Bodies {
     pub parts: Vec<usize>,
     pub joints: Vec<usize>,
     pub surfaces: Vec<i32>,
+    /// the bone each part follows, and its bind pose (a model file's; none for a built one)
+    pub bones: Vec<(String, Pose)>,
 }
 
 pub enum Obj {
@@ -127,11 +129,14 @@ pub enum Obj {
 
 pub struct Models {
     pub objs: HashMap<usize, Obj>,
+    /// models loaded from files, by name, and each one's name
+    pub by_name: HashMap<String, usize>,
+    pub names: HashMap<usize, String>,
 }
 
 pub fn models() -> MutexGuard<'static, Models> {
     static M: OnceLock<Mutex<Models>> = OnceLock::new();
-    M.get_or_init(|| Mutex::new(Models { objs: HashMap::new() })).lock().unwrap_or_else(|e| e.into_inner())
+    M.get_or_init(|| Mutex::new(Models { objs: HashMap::new(), by_name: HashMap::new(), names: HashMap::new() })).lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// A new object: its pointer.
@@ -183,7 +188,7 @@ impl Models {
 pub fn new_bodies(n: i32, joints: i32) -> usize {
     let parts = (0..n.max(0)).map(|_| make(Obj::Part(Part::default()))).collect();
     let joints = (0..joints.max(0)).map(|_| crate::handles::object()).collect();
-    make(Obj::Bodies(Bodies { parts, joints, surfaces: Vec::new() }))
+    make(Obj::Bodies(Bodies { parts, joints, ..Default::default() }))
 }
 
 /// The model a builder makes: its physics container a copy of the bodies
@@ -198,6 +203,139 @@ pub fn build(builder: usize) -> usize {
     drop(m);
     let physics = copy.map(|b| make(Obj::Bodies(b))).unwrap_or(0);
     make(Obj::Model { physics })
+}
+
+// ---- models from files: a compiled model (`.vmdl_c`) as the same objects
+
+use crate::assets::kv3::Value;
+
+/// The model a name names: loaded once, the same object after. A name with
+/// no file yet (one still downloading), or one that can't be read, is a
+/// model with no collision, and is looked for again next time.
+pub fn load(name: &str) -> usize {
+    let key = crate::fs::normal(name);
+    if let Some(&m) = models().by_name.get(&key) { return m; }
+    let loaded = read_model(name);
+    let physics = *loaded.as_ref().unwrap_or(&0);
+    let m = make(Obj::Model { physics });
+    let mut all = models();
+    all.names.insert(m, name.to_string());
+    match loaded {
+        Ok(_) => { all.by_name.insert(key, m); }
+        Err(e) => crate::trace::note(&format!("models: {name}: {e}")),
+    }
+    m
+}
+
+pub fn name_of(model: usize) -> Option<String> {
+    models().names.get(&model).cloned()
+}
+
+/// A model file's collision: its PHYS block, or the physics resources its
+/// DATA names (`m_refPhysicsData`). The physics container (0: none).
+fn read_model(name: &str) -> Result<usize, String> {
+    let bytes = crate::fs::read_compiled(name).ok_or("no file")?;
+    let r = crate::assets::resource::Resource::parse(bytes)?;
+    if let Some(phys) = r.kv3("PHYS") {
+        return Ok(physics(&phys.map_err(|e| e.to_string())?));
+    }
+    let data = r.kv3("DATA").ok_or("no DATA")?.map_err(|e| e.to_string())?;
+    for refd in data.get("m_refPhysicsData").map(Value::as_array).unwrap_or(&[]) {
+        let Some(path) = refd.as_str() else { continue };
+        let Some(bytes) = crate::fs::read_compiled(path) else { continue };
+        let r = crate::assets::resource::Resource::parse(bytes)?;
+        if let Some(Ok(v)) = r.kv3("DATA") { return Ok(physics(&v)); }
+    }
+    Ok(0)
+}
+
+/// A vector: an array of three numbers.
+fn vec3(v: Option<&Value>) -> Vector {
+    let f = v.map(Value::floats).unwrap_or_default();
+    Vector::new(f.first().copied().unwrap_or(0.0), f.get(1).copied().unwrap_or(0.0), f.get(2).copied().unwrap_or(0.0))
+}
+
+/// Points kept as an array of vectors, or packed as floats in a blob.
+fn points(v: Option<&Value>) -> Vec<Vector> {
+    match v {
+        Some(Value::Blob(b)) => b.chunks_exact(12).map(|c| {
+            let f = |i: usize| f32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap());
+            Vector::new(f(0), f(1), f(2))
+        }).collect(),
+        Some(Value::Array(a)) => a.iter().map(|p| vec3(Some(p))).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Triangles kept as `{ m_nIndex = [a, b, c] }`s, or packed as ints in a blob.
+fn triangles(v: Option<&Value>) -> Vec<[u32; 3]> {
+    match v {
+        Some(Value::Blob(b)) => b.chunks_exact(12).map(|c| core::array::from_fn(|i| u32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap()))).collect(),
+        Some(Value::Array(a)) => a.iter().filter_map(|t| {
+            let f = t.get("m_nIndex")?.as_array().iter().filter_map(Value::as_i64).collect::<Vec<_>>();
+            (f.len() == 3).then(|| [f[0] as u32, f[1] as u32, f[2] as u32])
+        }).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A bind pose: a 3x4 matrix (rows of rotation and translation) as twelve
+/// numbers, or as three rows of four.
+fn bind_pose(v: &Value) -> Pose {
+    let f: Vec<f32> = match v {
+        Value::Array(rows) if rows.iter().all(|r| matches!(r, Value::Array(_))) => rows.iter().flat_map(Value::floats).collect(),
+        _ => v.floats(),
+    };
+    if f.len() < 12 { return Pose::IDENTITY; }
+    let m = rapier3d::math::glamx::Mat3::from_cols(Vector::new(f[0], f[4], f[8]), Vector::new(f[1], f[5], f[9]), Vector::new(f[2], f[6], f[10]));
+    Pose::from_parts(Vector::new(f[3], f[7], f[11]), rapier3d::math::Rotation::from_mat3(&m).normalize())
+}
+
+/// VPhysXAggregateData_t as the objects a built model's physics is.
+fn physics(agg: &Value) -> usize {
+    let mut parts = Vec::new();
+    for p in agg.get("m_parts").map(Value::as_array).unwrap_or(&[]) {
+        let shape = p.get("m_rnShape");
+        let list = |name: &str| shape.and_then(|s| s.get(name)).map(Value::as_array).unwrap_or(&[]).to_vec();
+        let mut part = Part {
+            mass: p.f32("m_flMass"),
+            inertia_scale: p.get("m_flInertiaScale").and_then(Value::as_f64).map(|f| f as f32).unwrap_or(1.0),
+            linear_damping: p.f32("m_flLinearDamping"),
+            angular_damping: p.f32("m_flAngularDamping"),
+            flags: p.i64("m_nFlags") as u32,
+            override_mass_center: p.i64("m_bOverrideMassCenter") != 0,
+            mass_center: vec3(p.get("m_vMassCenterOverride")),
+            ..Default::default()
+        };
+        for s in list("m_spheres") {
+            let sphere = s.get("m_Sphere");
+            let o = Obj::Sphere(vec3(sphere.and_then(|x| x.get("m_vCenter"))), sphere.map(|x| x.f32("m_flRadius")).unwrap_or(0.0));
+            part.spheres.push(make(o));
+        }
+        for c in list("m_capsules") {
+            let cap = c.get("m_Capsule");
+            let ends = cap.and_then(|x| x.get("m_vCenter")).map(Value::as_array).unwrap_or(&[]);
+            let o = Obj::Capsule(vec3(ends.first()), vec3(ends.get(1)), cap.map(|x| x.f32("m_flRadius")).unwrap_or(0.0));
+            part.capsules.push(make(o));
+        }
+        for h in list("m_hulls") {
+            let Some(hull) = h.get("m_Hull") else { continue };
+            // explicit vertex indices (2023 on): the positions are apart
+            let pts = if hull.get("m_VertexPositions").is_some() { points(hull.get("m_VertexPositions")) } else { points(hull.get("m_Vertices")) };
+            if let Some(hull) = Hull::of(&pts) { part.hulls.push(make(Obj::Hull(hull))); }
+        }
+        for m in list("m_meshes") {
+            let Some(mesh) = m.get("m_Mesh") else { continue };
+            let materials = mesh.get("m_Materials").map(Value::bytes).unwrap_or_default();
+            let o = Obj::Mesh(Mesh { vertices: points(mesh.get("m_Vertices")), triangles: triangles(mesh.get("m_Triangles")), materials });
+            part.meshes.push(make(o));
+        }
+        parts.push(make(Obj::Part(part)));
+    }
+    let names: Vec<String> = agg.get("m_boneNames").map(Value::as_array).unwrap_or(&[]).iter().filter_map(|n| n.as_str().map(String::from)).collect();
+    let poses: Vec<Pose> = agg.get("m_bindPose").map(Value::as_array).unwrap_or(&[]).iter().map(bind_pose).collect();
+    let bones = names.into_iter().enumerate().map(|(i, n)| (n, poses.get(i).copied().unwrap_or(Pose::IDENTITY))).collect();
+    make(Obj::Bodies(Bodies { parts, bones, ..Default::default() }))
 }
 
 /// A planar polygon (convex or not, wound either way) as triangles: indices
@@ -293,6 +431,28 @@ mod tests {
         assert_eq!(h.edges.len(), 18);
         assert_eq!(h.bounds(), (Vector::ZERO, Vector::splat(10.0)));
         assert!(Hull::of(&points[..3]).is_none());
+    }
+
+    #[test]
+    fn a_downloaded_model_has_its_collision() {
+        // s&box's own download cache, if this machine has one: Facepunch's
+        // content, read where it lies, never copied here
+        let Ok(dir) = std::env::var("ENGINE2_SAMPLE_ASSETS") else { return };
+        let dir = std::path::Path::new(&dir).join("models/props/washing_machine");
+        let Some(file) = std::fs::read_dir(&dir).ok().and_then(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.to_string_lossy().ends_with(".vmdl_c") && p.to_string_lossy().contains("washing_machine."))) else { return };
+        crate::fs::add_link("models/props/washing_machine/washing_machine.vmdl_c", file.to_str().unwrap());
+        let m = load("models/props/washing_machine/washing_machine.vmdl");
+        assert_eq!(load("Models/Props/Washing_Machine/washing_machine.vmdl"), m, "loaded once");
+        let mut all = models();
+        let physics = all.physics_of(m);
+        let parts = all.bodies(physics).unwrap().parts.clone();
+        assert_eq!(parts.len(), 1);
+        let part = all.part(parts[0]).unwrap().clone();
+        assert_eq!(part.mass, 80.0);
+        assert!(!part.hulls.is_empty());
+        let (lo, hi) = part.hulls.iter().map(|&h| all.hull(h).unwrap().bounds()).fold((Vector::splat(f32::MAX), Vector::splat(f32::MIN)), |(a, b), (c, d)| (a.min(c), b.max(d)));
+        // a washing machine: about 30 wide, 28 deep, 40 tall
+        assert!((hi - lo).z > 30.0 && (hi - lo).x > 20.0, "{lo:?} {hi:?}");
     }
 
     #[test]

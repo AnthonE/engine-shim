@@ -28,6 +28,12 @@ pub unsafe fn global_Plat_SetCurrentDirectory(dir: usize) {
     *ROOT.lock().unwrap() = unsafe { read(dir) };
 }
 
+/// The game's folder (where s&box's `game` is), for finding its files.
+pub fn game_root() -> String {
+    let root = ROOT.lock().unwrap().clone();
+    if root.is_empty() { ".".into() } else { root }
+}
+
 pub unsafe fn global_GetGameRootFolder() -> usize {
     let root = ROOT.lock().unwrap().clone();
     cstr(if root.is_empty() { "." } else { &root })
@@ -1106,6 +1112,19 @@ pub unsafe fn CModelBuilder_SetPhysics_Runtime(builder: usize, bodies: usize) {
 }
 pub unsafe fn CModelBuilder_CreateRuntimeModel(builder: usize, _name: usize, _strong: i32) -> usize { models::build(builder) }
 
+/// A model by name, from its compiled file (models.rs).
+pub unsafe fn Glue_Resources_GetModel(name: usize, _guid: S_System_Guid) -> usize { models::load(&unsafe { read(name) }) }
+pub unsafe fn Glue_Resources_GetModelResourceName(model: usize) -> usize { cstr(&models::name_of(model).unwrap_or_default()) }
+
+// the file system: fs.rs
+
+pub unsafe fn g_pFllFlSystm_AddSymLink(path: usize, _path_id: usize, target: usize) { crate::fs::add_link(&unsafe { read(path) }, &unsafe { read(target) }) }
+pub unsafe fn g_pFllFlSystm_RemoveSymLink(path: usize, _path_id: usize) { crate::fs::remove_link(&unsafe { read(path) }) }
+pub unsafe fn g_pFllFlSystm_GetSymLink(path: usize, _path_id: usize) -> usize { cstr(&crate::fs::link(&unsafe { read(path) }).unwrap_or_default()) }
+pub unsafe fn g_pFllFlSystm_AddProjectPath(ident: usize, path: usize) { crate::fs::add_project(&unsafe { read(ident) }, &unsafe { read(path) }) }
+pub unsafe fn g_pFllFlSystm_AddCloudPath(ident: usize, path: usize) { crate::fs::add_cloud(&unsafe { read(ident) }, &unsafe { read(path) }) }
+pub unsafe fn g_pFllFlSystm_ResetProjectPaths(cloud: i32) { crate::fs::reset_projects(cloud != 0) }
+
 /// A model is itself: managed caches models by this.
 pub unsafe fn CModel_GetBindingPtr(model: usize) -> usize { model }
 pub unsafe fn CModel_GetPhysicsContainer(model: usize) -> usize { models::models().physics_of(model) }
@@ -1144,6 +1163,17 @@ pub unsafe fn CPhysicsData_GetJointCount(physics: usize) -> i32 {
 }
 pub unsafe fn CPhysicsData_GetJoint(physics: usize, i: i32) -> usize { unsafe { CPhysBdyDscrry_GetJoint(physics, i) } }
 pub unsafe fn CPhysicsData_GetGuid(_physics: usize) -> S_System_Guid { unsafe { core::mem::zeroed() } }
+/// A model file's parts follow its bones: their names and bind poses.
+pub unsafe fn CPhysicsData_GetBoneCount(physics: usize) -> i32 {
+    models::models().bodies(physics).map(|b| b.bones.len() as i32).unwrap_or(0)
+}
+pub unsafe fn CPhysicsData_GetBoneName(physics: usize, i: i32) -> usize {
+    cstr(&models::models().bodies(physics).and_then(|b| b.bones.get(i as usize).map(|x| x.0.clone())).unwrap_or_default())
+}
+pub unsafe fn CPhysicsData_GetBindPose(physics: usize, i: i32) -> S_Transform {
+    let p = models::models().bodies(physics).and_then(|b| b.bones.get(i as usize).map(|x| x.1)).unwrap_or(rapier3d::math::Pose::IDENTITY);
+    S_Transform { f_Position: phys::v3(p.translation), f_Scale: phys::v3(rapier3d::math::Vector::ONE), f_Rotation: phys::rot(p.rotation) }
+}
 
 // a body's description (CPhysBodyDesc), which is also the part it becomes (VPhysXBodyPart_t)
 

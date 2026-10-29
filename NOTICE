@@ -25,3 +25,8 @@ engine2/src/elo_overlay.rs is the Elo Pros launcher's overlay client, from
 github.com/AnthonE/elo-pros-launcher (sdk/rust/elo_overlay.rs at
 bf5e2014e1cc05b347123d52e5595496c96a5211), under the MIT licence:
 Copyright (c) 2026 MoreRight.
+
+engine2/src/assets/kv3.rs reads binary KeyValues 3 as ValveResourceFormat
+does (github.com/ValveResourceFormat/ValveResourceFormat,
+ValveResourceFormat/Resource/ResourceTypes/BinaryKV3.cs), under the MIT
+licence: Copyright (c) 2015 ValveResourceFormat Contributors.

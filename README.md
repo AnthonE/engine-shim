@@ -294,9 +294,9 @@ adds a watcher. Measured (`grep shimwatch target/spike/server.log`):
   (`engine2/src/models.rs`: models, their bodies' descriptions, hulls,
   meshes and the physics container managed reads them back from, and the
   polygon triangulation the editor mesh is made with).
-- 15 of its 18 bodies come to rest on them, among them the car, a hull on
-  four hinged wheels. The other three are props made from model files
-  (`ModelCollider`), which wait for the assets step and fall.
+- All 18 of its bodies come to rest on them and sleep within two
+  seconds: the car (a hull on four hinged wheels), and props whose
+  collision is their model file's (`ModelCollider`, below).
 - A player joins, spawns, and stands on the floor (`on Block`): the
   player controller's ground traces run on this library's physics.
 
@@ -317,11 +317,32 @@ Steam's bookkeeping, 29 models (what a model file holds: meshes, bones,
 hitboxes), 15 sound, 12 physics (debug drawing, scrape contacts, the
 navmesh's triangulation, surface properties).
 
+**Model files** (`engine2/src/assets/`, `fs.rs`). A model is a compiled
+Source 2 resource (`.vmdl_c`): a container of blocks, most of them binary
+KeyValues 3. Both are read here as ValveResourceFormat (MIT) reads them
+(KV3 versions 1 to 5, uncompressed or LZ4). A model's collision is its
+`PHYS` block (or the `.vphys_c` its `DATA` names): parts of spheres,
+capsules, hulls and triangle meshes, with their masses and the bones they
+follow, made into the same objects a model built at runtime is, so
+`ModelCollider`, `ModelPhysics` and `Prop` take shapes from it as from
+any. The engine's file system finds the file: managed links each file it
+knows (a project's, one it downloaded) and names its project folders.
+Measured: all 12 of the zoo's model colliders have their collision (a
+washing machine of 80 kg among them), and their props rest.
+
+The models it reads are the ones s&box itself downloads from sbox.game
+into its cache (`game/download`): Facepunch's and creators' content,
+under their terms, read where it lies and never copied into this
+repository. The engine's own core models (`models/dev/box.vmdl`...) and
+the player's (Citizen) come only with Facepunch's closed download, and
+aren't read. `cargo test` checks a downloaded model when
+`ENGINE2_SAMPLE_ASSETS=<sbox-public>/game/download/assets` names a cache.
+
 What the game's components still can't do:
 
-- **Model files.** A model loaded from disk (`.vmdl_c`: its meshes,
-  bones, hitboxes, its collision, `CreateAggregateInstance`) waits for the
-  assets step. Models built at runtime are here (above).
+- **The rest of a model.** Its meshes, bones, hitboxes and animation
+  (the `CModel_*` slots): a server's hit detection wants the hitboxes
+  and bones next.
 - **Surfaces.** Every shape has the default friction and density; the
   project's surfaces (`.surface`) aren't read into physics yet.
 
@@ -396,7 +417,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer, freed |
 | `engine2/src/physics.rs` | physics on Rapier: worlds, bodies, shapes, the step and what touched, collision rules, traces and queries |
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
-| `engine2/src/models.rs` | models built at runtime: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
+| `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
+| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`) and binary KeyValues 3 (`kv3.rs`) |
+| `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders, the game's own |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
 | `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
@@ -418,9 +441,10 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    the shard list and the relay are ours now, and a player joins (above).
    Next: lobbies. A relay run for others wants a price, as the stream relay's
    credits do (scry-forge `meter/relay.py`).
-3. **Assets.** Games ship compiled Source 2 resources. ValveResourceFormat
-   (MIT) reads models, materials, textures and maps. A server needs maps
-   and collision first; shaders only matter to a client.
+3. **Assets.** A model's collision is read from its file (above). Next a
+   model's bones and hitboxes (a server's hit detection), then maps
+   (`.vmap_c`: a world's collision and entities). Materials, textures and
+   shaders only matter to a client.
 4. **A client.** Rendering: about 670 scene and render slots onto a renderer
    of our own choosing (Bevy or Godot; see below), then sound and input.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large

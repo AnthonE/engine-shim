@@ -1764,11 +1764,11 @@ unsafe extern "C" fn s721(_a0: usize) -> usize { hit(721); unsafe { crate::impls
 unsafe extern "C" fn s722(_a0: usize) -> S_System_Guid { hit(722); unsafe { crate::impls::CPhysicsData_GetGuid(_a0) } }
 unsafe extern "C" fn s723(_a0: usize) -> usize { hit(723); crate::trace::object(723) }
 unsafe extern "C" fn s724(_a0: usize) -> u32 { hit(724); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s725(_a0: usize) -> i32 { hit(725); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s726(_a0: usize, _a1: i32) -> usize { hit(726); crate::trace::object(726) }
+unsafe extern "C" fn s725(_a0: usize) -> i32 { hit(725); unsafe { crate::impls::CPhysicsData_GetBoneCount(_a0) } }
+unsafe extern "C" fn s726(_a0: usize, _a1: i32) -> usize { hit(726); unsafe { crate::impls::CPhysicsData_GetBoneName(_a0, _a1) } }
 unsafe extern "C" fn s727(_a0: usize) -> i32 { hit(727); unsafe { crate::impls::CPhysicsData_GetPartCount(_a0) } }
 unsafe extern "C" fn s728(_a0: usize, _a1: i32) -> u32 { hit(728); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s729(_a0: usize, _a1: i32) -> S_Transform { hit(729); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s729(_a0: usize, _a1: i32) -> S_Transform { hit(729); unsafe { crate::impls::CPhysicsData_GetBindPose(_a0, _a1) } }
 unsafe extern "C" fn s730(_a0: usize, _a1: i32) -> usize { hit(730); unsafe { crate::impls::CPhysicsData_GetPart(_a0, _a1) } }
 unsafe extern "C" fn s731(_a0: usize, _a1: i32) -> usize { hit(731); crate::trace::object(731) }
 unsafe extern "C" fn s732(_a0: usize) -> i32 { hit(732); unsafe { core::mem::zeroed() } }
@@ -2692,8 +2692,8 @@ unsafe extern "C" fn s1649() -> i32 { hit(1649); unsafe { core::mem::zeroed() } 
 unsafe extern "C" fn s1650(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(1650); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1651() -> i32 { hit(1651); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1652(_a0: i32, _a1: i32) { hit(1652);  }
-unsafe extern "C" fn s1653(_a0: usize, _a1: S_System_Guid) -> usize { hit(1653); crate::trace::object(1653) }
-unsafe extern "C" fn s1654(_a0: usize) -> usize { hit(1654); crate::trace::object(1654) }
+unsafe extern "C" fn s1653(_a0: usize, _a1: S_System_Guid) -> usize { hit(1653); unsafe { crate::impls::Glue_Resources_GetModel(_a0, _a1) } }
+unsafe extern "C" fn s1654(_a0: usize) -> usize { hit(1654); unsafe { crate::impls::Glue_Resources_GetModelResourceName(_a0) } }
 unsafe extern "C" fn s1655(_a0: usize, _a1: S_System_Guid) -> usize { hit(1655); crate::trace::object(1655) }
 unsafe extern "C" fn s1656(_a0: usize, _a1: S_System_Guid) -> usize { hit(1656); crate::trace::object(1656) }
 unsafe extern "C" fn s1657(_a0: usize, _a1: S_System_Guid) -> usize { hit(1657); crate::trace::object(1657) }
@@ -3918,12 +3918,12 @@ unsafe extern "C" fn s2875(_a0: usize) { hit(2875);  }
 unsafe extern "C" fn s2876(_a0: usize) -> usize { hit(2876); crate::trace::object(2876) }
 unsafe extern "C" fn s2877(_a0: usize) { hit(2877);  }
 unsafe extern "C" fn s2878() { hit(2878);  }
-unsafe extern "C" fn s2879(_a0: usize, _a1: usize) -> usize { hit(2879); crate::trace::object(2879) }
-unsafe extern "C" fn s2880(_a0: usize, _a1: usize, _a2: usize) { hit(2880);  }
-unsafe extern "C" fn s2881(_a0: usize, _a1: usize) { hit(2881);  }
-unsafe extern "C" fn s2882(_a0: i32) { hit(2882);  }
-unsafe extern "C" fn s2883(_a0: usize, _a1: usize) { hit(2883);  }
-unsafe extern "C" fn s2884(_a0: usize, _a1: usize) { hit(2884);  }
+unsafe extern "C" fn s2879(_a0: usize, _a1: usize) -> usize { hit(2879); unsafe { crate::impls::g_pFllFlSystm_GetSymLink(_a0, _a1) } }
+unsafe extern "C" fn s2880(_a0: usize, _a1: usize, _a2: usize) { hit(2880); unsafe { crate::impls::g_pFllFlSystm_AddSymLink(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2881(_a0: usize, _a1: usize) { hit(2881); unsafe { crate::impls::g_pFllFlSystm_RemoveSymLink(_a0, _a1) } }
+unsafe extern "C" fn s2882(_a0: i32) { hit(2882); unsafe { crate::impls::g_pFllFlSystm_ResetProjectPaths(_a0) } }
+unsafe extern "C" fn s2883(_a0: usize, _a1: usize) { hit(2883); unsafe { crate::impls::g_pFllFlSystm_AddProjectPath(_a0, _a1) } }
+unsafe extern "C" fn s2884(_a0: usize, _a1: usize) { hit(2884); unsafe { crate::impls::g_pFllFlSystm_AddCloudPath(_a0, _a1) } }
 unsafe extern "C" fn s2885(_a0: usize) { hit(2885);  }
 unsafe extern "C" fn s2886(_a0: usize) { hit(2886);  }
 unsafe extern "C" fn s2887(_a0: usize) { hit(2887);  }
