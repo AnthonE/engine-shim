@@ -111,7 +111,26 @@ players). A player dialling in (`net.rs`'s `probe`, below) is accepted by
 managed's own `ShouldAcceptConnection`, welcomed with a nonce, counted in
 `status.json`, and sent s&box's first handshake message, the server's info,
 compressed with LZ4 (the eight `LZ4Glue` slots, `lz4_flex` behind them).
-The next step of the handshake needs an s&box client to answer it.
+
+**And a player joins.** The same launcher runs as a headless s&box player
+(`+shimclient <address>`), on this library too, and joins with s&box's own
+`connect`: the handshake, the game's code sent over the network (Sweeper
+is a local project), the scene's snapshot. With a launcher signing in
+(here the stand-in below) and a server that takes only a sign-in for its
+address, the player is their wallet's id, the server checks the proof,
+says `[17865156273432703638] is connected`, and `online.json` names the
+wallet. What fails after is the scene's native objects (lights, the sky,
+physics bodies) on both sides: the object state below, not the network.
+
+```sh
+# a stand-in launcher (test key 9), a server that wants sign-ins, a player
+ELO_LAUNCHER_SOCKET=/tmp/l.sock cargo test --release -- --ignored stand_in_launcher &
+ENGINE2_SIWE_DOMAINS=127.0.0.1:27015 ENGINE2_STATUS_ADDR=127.0.0.1:27016 \
+  SBOX=../sbox-public sh spike.sh 140 +shimgame $PWD/../sbox-public/game/samples/sweeper/.sbproj +shimhost &
+# once "Server started!":
+(cd ../sbox-public/game && ELO_LAUNCHER_SOCKET=/tmp/l.sock ./sbox-server +shimclient 127.0.0.1:27015 +instanceid 2)
+curl -s 127.0.0.1:27016/online.json
+```
 
 ```sh
 ENGINE2_PUBLIC_ADDR=127.0.0.1:27015 ENGINE2_STATUS_ADDR=127.0.0.1:27016 \
@@ -202,6 +221,13 @@ first.
   through the command. A path there is the server's: give it absolute.
 - `+shimhost` runs `host` 300 frames later: it opens the lobby, as a
   networked game's `NetworkHelper` does for itself.
+- `+shimclient <address>` boots the same launcher as a headless player (a
+  game app, not a dedicated server) and runs `connect <address>`.
+- A dedicated server running a local project counts as a developer host
+  (`NetworkSystem.IsDeveloperHost`). It already sends such a game's code
+  to its players (`GameInstanceDll`'s code archives), but told them it was
+  no developer host, so they looked for a published package and failed.
+  This one is a fix upstream could take.
 
 `tools/compile.sh` copies a project's scenes and prefabs to their `_c`
 names, which is all a JSON resource needs here. Models, materials and
@@ -235,9 +261,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    a real open-source s&box game: its trace is the measured size of "a
    server", the slots one game needs.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
-   the shard list and the relay are ours now (above). Next: a client that
-   answers the server's handshake (the server speaks first and waits), then
-   lobbies. A relay run for others wants a price, as the stream relay's
+   the shard list and the relay are ours now, and a player joins (above).
+   Next: lobbies. A relay run for others wants a price, as the stream relay's
    credits do (scry-forge `meter/relay.py`).
 3. **Assets.** Games ship compiled Source 2 resources. ValveResourceFormat
    (MIT) reads models, materials, textures and maps. A server needs maps

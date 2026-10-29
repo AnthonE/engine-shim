@@ -1,5 +1,5 @@
 diff --git a/engine/Launcher/SboxServer/Launcher.cs b/engine/Launcher/SboxServer/Launcher.cs
-index f8cf0c29..19808268 100644
+index f8cf0c29..38fa5923 100644
 --- a/engine/Launcher/SboxServer/Launcher.cs
 +++ b/engine/Launcher/SboxServer/Launcher.cs
 @@ -22,6 +22,15 @@ public class DedicatedServerAppSystem : AppSystem
@@ -18,7 +18,19 @@ index f8cf0c29..19808268 100644
  		// Redirecting console output (docker/wine/etc..) won't support this overlay, so don't bother with it
  		if ( !Console.IsOutputRedirected )
  		{
-@@ -51,6 +60,10 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -43,14 +52,21 @@ public class DedicatedServerAppSystem : AppSystem
+ 
+ 		CreateGame();
+ 
++		// engine-shim: +shimclient <address> boots a headless player instead, and connects there
++		shimClient = Sandbox.Utility.CommandLine.GetSwitch( "+shimclient", null );
++
+ 		var createInfo = new AppSystemCreateInfo()
+ 		{
+ 			WindowTitle = "s&box server",
+-			Flags = AppSystemFlags.IsDedicatedServer | AppSystemFlags.IsGameApp | AppSystemFlags.IsConsoleApp
++			Flags = shimClient is null ? AppSystemFlags.IsDedicatedServer | AppSystemFlags.IsGameApp | AppSystemFlags.IsConsoleApp : AppSystemFlags.IsGameApp | AppSystemFlags.IsConsoleApp
+ 		};
  
  		InitGame( createInfo );
  
@@ -29,11 +41,12 @@ index f8cf0c29..19808268 100644
  		// No game specified, show some help
  		if ( !Environment.CommandLine.Contains( "game " ) )
  		{
-@@ -60,9 +73,16 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -60,9 +76,18 @@ public class DedicatedServerAppSystem : AppSystem
  		console?.Update();
  	}
  
 +	string shimGame;
++	string shimClient;
 +	int shimFrames;
 +
  	protected override bool RunFrame()
@@ -43,6 +56,7 @@ index f8cf0c29..19808268 100644
 +		if ( shimGame is not null && ++shimFrames == 30 ) { System.Console.WriteLine( $"engine-shim: dedicated={Application.IsDedicatedServer} editor={Application.IsEditor} headless={Application.IsHeadless}" ); ConVarSystem.Run( $"game {shimGame}" ); }
 +		// engine-shim: +shimhost opens the lobby, as a networked game's NetworkHelper would, once the game has had time to load
 +		if ( shimGame is not null && shimFrames == 330 && Sandbox.Utility.CommandLine.HasSwitch( "+shimhost" ) ) ConVarSystem.Run( "host" );
++		if ( shimClient is not null && ++shimFrames == 30 ) { System.Console.WriteLine( $"engine-shim: a player, dedicated={Application.IsDedicatedServer} headless={Application.IsHeadless}, connecting to {shimClient}" ); ConVarSystem.Run( $"connect {shimClient}" ); }
  
  		return base.RunFrame();
  	}
@@ -61,3 +75,17 @@ index bfed16cd..b39f352c 100644
  	</ItemGroup>
  
  	<Target Name="_ResolveCopyLocalNuGetPkgXmls" AfterTargets="ResolveReferences">
+diff --git a/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.cs b/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.cs
+index f0a3ce38..f655798c 100644
+--- a/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.cs
++++ b/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.cs
+@@ -46,7 +46,8 @@ internal partial class NetworkSystem
+ 	{
+ 		DebugName = debugName;
+ 		TypeLibrary = library;
+-		IsDeveloperHost = Application.IsEditor;
++		// engine-shim: a dedicated server running a local project sends its code archives too (GameInstanceDll.AddCodeArchive), so its players load as from an editor
++		IsDeveloperHost = Application.IsEditor || (Application.IsDedicatedServer && Application.GamePackage is LocalPackage);
+ 		ConnectionInfo = new( this );
+ 
+ 		log = new( $"NetworkSystem/{debugName}" );

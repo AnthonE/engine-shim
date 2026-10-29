@@ -413,28 +413,48 @@ mod tests {
         assert_eq!(verify_with(me, &t, &[], NOW), Ok(me));
     }
 
-    /// A launcher as elo-broker answers: hello, then `prove` signed by `key`.
-    fn launcher_at(path: &std::path::Path, key: u8) {
+    /// A launcher as elo-broker answers: hello, identity, and `prove`
+    /// signed by `key`, issued at `at` (None: now), for every game that asks.
+    fn launcher_at(path: &std::path::Path, key: u8, at: Option<&'static str>) {
         use std::io::{BufRead, BufReader, Write};
         let l = std::os::unix::net::UnixListener::bind(path).unwrap();
         std::thread::spawn(move || {
-            let (s, _) = l.accept().unwrap();
-            let mut w = s.try_clone().unwrap();
-            for line in BufReader::new(s).lines() {
-                let line = line.unwrap();
-                let reply = if line.contains(r#""op":"hello""#) {
-                    r#"{"ok":true,"protocol":1,"launcher":"elo-launcher","signer":"local"}"#.to_string()
-                } else if line.contains(r#""op":"prove""#) {
-                    let field = |k: &str| line.split(&format!(r#""{k}":""#)).nth(1).unwrap().split('"').next().unwrap().to_string();
+            for s in l.incoming().flatten() {
+                std::thread::spawn(move || {
+                    let mut w = s.try_clone().unwrap();
                     let (sk, a) = siwe::test_key(key);
-                    let m = siwe::test_message(&field("server"), &siwe::hex(&a), &field("nonce"), AT);
-                    format!(r#"{{"ok":true,"signature":"{}","address":"{}","scheme":"eip4361","message":"{}"}}"#, siwe::test_sign(&sk, &m), siwe::hex(&a), m.replace('\n', "\\n"))
-                } else {
-                    r#"{"ok":false,"reason":"not here"}"#.to_string()
-                };
-                writeln!(w, "{reply}").unwrap();
+                    for line in BufReader::new(s).lines() {
+                        let Ok(line) = line else { return };
+                        let reply = if line.contains(r#""op":"hello""#) {
+                            r#"{"ok":true,"protocol":1,"launcher":"elo-launcher","signer":"local"}"#.to_string()
+                        } else if line.contains(r#""op":"identity""#) {
+                            format!(r#"{{"ok":true,"address":"{}"}}"#, siwe::hex(&a))
+                        } else if line.contains(r#""op":"prove""#) {
+                            let field = |k: &str| line.split(&format!(r#""{k}":""#)).nth(1).unwrap().split('"').next().unwrap().to_string();
+                            let issued = at.map(String::from).unwrap_or_else(now_rfc3339);
+                            let m = siwe::test_message(&field("server"), &siwe::hex(&a), &field("nonce"), &issued);
+                            format!(r#"{{"ok":true,"signature":"{}","address":"{}","scheme":"eip4361","message":"{}"}}"#, siwe::test_sign(&sk, &m), siwe::hex(&a), m.replace('\n', "\\n"))
+                        } else {
+                            r#"{"ok":false,"reason":"not here"}"#.to_string()
+                        };
+                        if writeln!(w, "{reply}").is_err() { return; }
+                    }
+                });
             }
         });
+    }
+
+    /// A stand-in launcher at `ELO_LAUNCHER_SOCKET` for a minute or two,
+    /// signing with test key 9: for a real game to sign in through.
+    /// `ELO_LAUNCHER_SOCKET=/tmp/l.sock cargo test --release -- --ignored stand_in_launcher`
+    #[test]
+    #[ignore]
+    fn stand_in_launcher() {
+        let path = std::env::var("ELO_LAUNCHER_SOCKET").expect("ELO_LAUNCHER_SOCKET=<path>");
+        let _ = std::fs::remove_file(&path);
+        launcher_at(std::path::Path::new(&path), 9, None);
+        println!("a launcher at {path}, signing as {}", siwe::hex(&siwe::test_key(9).1));
+        std::thread::sleep(Duration::from_secs(150));
     }
 
     #[test]
@@ -443,7 +463,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("launcher.sock");
         let _ = std::fs::remove_file(&path);
-        launcher_at(&path, 9);
+        launcher_at(&path, 9, Some(AT));
         let ov = Overlay::connect_at(&path, "engine-shim", "0", Duration::from_secs(5)).unwrap();
         let me = siwe::id_of(&siwe::test_key(9).1);
         let nonce = challenge(me);
