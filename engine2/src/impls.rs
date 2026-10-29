@@ -339,9 +339,10 @@ pub unsafe fn ISteamGameServer_LogOn(_self: usize, _token: usize) { crate::steam
 pub unsafe fn ISteamGameServer_LogOff(_self: usize) { crate::steam::log_off() }
 pub unsafe fn ISteamGameServer_BLoggedOn(_self: usize) -> i32 { crate::steam::logged_on() as i32 }
 
-/// A ticket for us into managed's buffer (1024 bytes, as the .def asks for).
+/// A ticket for us into managed's buffer (1024 bytes, as the .def asks for):
+/// a sign-in for the server we joined, over the nonce it sent.
 unsafe fn auth_ticket(buffer: usize, length: usize) -> Ticket {
-    let t = crate::steam::ticket();
+    let t = crate::steam::ticket(net().challenge());
     let n = t.len().min(1024);
     if buffer != 0 { unsafe { core::ptr::copy_nonoverlapping(t.as_ptr(), buffer as *mut u8, n) }; }
     if length != 0 { unsafe { *(length as *mut u32) = n as u32 }; }
@@ -439,7 +440,8 @@ mod tests {
             // the IpListenSocket and its poll group
             let socket = Glue_Networking_CreateIpBasedSocket(0, 0);
             assert_ne!(socket.f_Id, 0);
-            let addr = read(Glue_Networking_GetSocketAddress(socket)).replace("0.0.0.0", "127.0.0.1");
+            let port = read(Glue_Networking_GetSocketAddress(socket)).rsplit(':').next().unwrap().to_string();
+            let addr = format!("127.0.0.1:{port}");
             let group = Glue_Networking_CreatePollGroup();
 
             // a player connects (IpConnection); the server takes them

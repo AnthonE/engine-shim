@@ -8,3 +8,14 @@ description = "s&box's native engine interface (igen_engine), reimplemented: for
 [lib]
 crate-type = ["cdylib"]
 path = "src/lib.rs"
+
+[dependencies]
+# Sign-In With Ethereum: recover a signer (secp256k1) from a keccak digest.
+# The versions Gates' shards verify the same proofs with.
+k256 = { version = "0.13.4", default-features = false, features = ["ecdsa", "arithmetic"] }
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+# The transport: QUIC through WebTransport, as Gates' shards speak it, so a
+# browser can join one day. Git-pinned past the two-byte remote panic in
+# 0.7.1 (#317), the rev Gates pins (its docs/NETCODE.md §2.2).
+wtransport = { git = "https://github.com/BiagioFesta/wtransport", rev = "a11e6a8e7ff33c6eef522d308007da55d1df9f81", features = ["dangerous-configuration", "self-signed", "quinn"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }

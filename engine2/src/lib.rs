@@ -7,9 +7,12 @@
 //! Every slot is a stub for now: it does nothing, returns zeroes, and
 //! records that it was called (trace.rs). Running a game against it says
 //! which slots a game needs, in the order it needs them.
+#[allow(dead_code)]
+mod elo_overlay;
 mod handles;
 mod impls;
 mod net;
+mod siwe;
 mod slots;
 mod steam;
 mod trace;

@@ -64,14 +64,32 @@ before it opens its sockets; here logging on succeeds without Steam
 callback). The server then listens with Facepunch's own networking code
 over our transport (`engine2/src/net.rs`): the 29 `Glue.Networking` slots,
 which hold the listen sockets, connections, poll groups and messages in the
-layout managed reads, carried as length-prefixed frames over TCP on the
-server's port (27015). A player's ticket is checked by `BeginAuthSession`
-and answered with `ValidateAuthTicketResponse`, as Steam would answer it
-(`engine2/src/steam.rs`). Identity is a u64 in place of a SteamID
-(`ENGINE2_IDENTITY`, or one made up at start). For now a ticket is taken at
-its word: `steam::verify` is where a real sign-in goes. The slots are tested
-the way managed calls them (`cargo test`), but not yet under a running
-server with a client.
+layout managed reads, carried over QUIC through WebTransport on the
+server's port (27015/udp), as Gates' shards speak it. Reliable messages
+ride one stream in order; the rest go as datagrams, dropped rather than
+waited for. A browser can reach the same port one day.
+
+Players are who they prove they are (`engine2/src/steam.rs`). The server
+welcomes each connection with a fresh nonce; the player's Elo Pros
+launcher signs it in with Ethereum (`prove`, EIP-4361, over the address
+they dialled), and that proof is the ticket managed hands
+`BeginAuthSession`. The server recovers the signer (`engine2/src/siwe.rs`:
+keccak and secp256k1, no network call), checks the domain, the nonce (once)
+and its age, and answers `ValidateAuthTicketResponse` as Steam would. A
+player's id is their address's first 8 bytes, where Steam has a SteamID.
+With no launcher a player has a guest ticket.
+
+| | |
+| --- | --- |
+| `ENGINE2_SIWE_DOMAINS` | the names a server answers to (commas). Set: only a sign-in for one of them gets in. Unset: a development server, which takes guests at their word |
+| `ENGINE2_TLS_CERT`, `ENGINE2_TLS_KEY` | the server's certificate (PEM). Unset: a self-signed one, its hash printed at start (valid 14 days, WebTransport's rule) |
+| `ENGINE2_CERT_HASH` | a player pins a self-signed server by that hash. Without it a player checks the system's roots, and takes any certificate on loopback only: the sign-in has no channel binding, so an unchecked relay could sign in as the player |
+| `ENGINE2_ELO_GAME` | the slug the launcher signs for (default `engine-shim`) |
+| `ENGINE2_IDENTITY` | an id to be, over the launcher's |
+
+The slots are tested the way managed calls them (`cargo test`: a server
+logs on, listens, takes a player over QUIC, checks a proof a stand-in
+launcher signed, and they talk), but not yet under a running server.
 
 What the game's components still can't do:
 
@@ -138,8 +156,10 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/slots.rs` | generated: 3,578 typed stubs, 81 struct layouts, the names |
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
 | `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer |
-| `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over our own transport |
-| `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, auth tickets, the callbacks managed waits on |
+| `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
+| `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
+| `engine2/src/siwe.rs` | Sign-In With Ethereum, checked: the signer recovered, the message's fields read |
+| `engine2/src/elo_overlay.rs` | the Elo Pros launcher's client, vendored as its SDK asks (elo-pros-launcher `sdk/rust/elo_overlay.rs`) |
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
 | `spike.sh` | one turn of the loop |
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
@@ -149,13 +169,12 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 1. **A server that runs a game.** The handle protocol, then physics, then
    a real open-source s&box game: its trace is the measured size of "a
    server", the slots one game needs.
-2. **Steam's part.** Connections and a server's logon are ours now (above).
-   What's left comes from our own services: the Elo Pros wallet sign-in
-   behind `steam::verify` (a ticket in, the account it proves out), and our
-   relay behind `ConnectToSteamId` and the identity socket (`CreateSocket`),
-   so a player reaches a server by identity rather than address. The relay
-   carries `net.rs`'s frames as they are. Lobbies and the server list
-   follow.
+2. **Steam's part.** Connections, a server's logon and the Elo Pros
+   sign-in are ours now (above). Next is our relay behind
+   `ConnectToSteamId` and the identity socket (`CreateSocket`), so a player
+   reaches a server by identity rather than address; the relay carries
+   `net.rs`'s session as it is. Then lobbies and the server list (the
+   launcher's shard list).
 3. **Assets.** Games ship compiled Source 2 resources. ValveResourceFormat
    (MIT) reads models, materials, textures and maps. A server needs maps
    and collision first; shaders only matter to a client.

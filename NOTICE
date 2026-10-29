@@ -20,3 +20,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+engine2/src/elo_overlay.rs is the Elo Pros launcher's overlay client, from
+github.com/AnthonE/elo-pros-launcher (sdk/rust/elo_overlay.rs at
+bf5e2014e1cc05b347123d52e5595496c96a5211), under the MIT licence:
+Copyright (c) 2026 MoreRight.
