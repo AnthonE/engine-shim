@@ -77,3 +77,15 @@ pub fn object(i: usize) -> usize {
     LAST[i].store(p, Ordering::Relaxed);
     p
 }
+
+/// One object per interface name, the same each time it is asked for.
+pub fn interface(name: &str) -> usize {
+    static ALL: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
+    let mut all = ALL.lock().unwrap();
+    if let Some((_, p)) = all.iter().find(|(n, _)| n == name) {
+        return *p;
+    }
+    let p = Box::into_raw(Box::new([0u64; OBJECT_BYTES / 8])) as usize;
+    all.push((name.to_string(), p));
+    p
+}

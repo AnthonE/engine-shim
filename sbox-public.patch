@@ -1,5 +1,5 @@
 diff --git a/engine/Launcher/SboxServer/Launcher.cs b/engine/Launcher/SboxServer/Launcher.cs
-index f8cf0c29..73f76488 100644
+index f8cf0c29..327e1973 100644
 --- a/engine/Launcher/SboxServer/Launcher.cs
 +++ b/engine/Launcher/SboxServer/Launcher.cs
 @@ -22,6 +22,15 @@ public class DedicatedServerAppSystem : AppSystem
@@ -22,9 +22,9 @@ index f8cf0c29..73f76488 100644
  
  		InitGame( createInfo );
  
-+		// engine-shim: Source's command buffer runs +game from the command line;
++		// engine-shim: +shimgame loads a local project through the game command (the engine runs +game itself, but only as a package to download)
 +		// with the open native engine, the launcher does
-+		shimGame = Sandbox.Utility.CommandLine.GetSwitch( "+game", null );
++		shimGame = Sandbox.Utility.CommandLine.GetSwitch( "+shimgame", null );
 +
  		// No game specified, show some help
  		if ( !Environment.CommandLine.Contains( "game " ) )
@@ -40,7 +40,7 @@ index f8cf0c29..73f76488 100644
  	{
  		console?.Update();
 +		// engine-shim: +game once the game instance has registered its commands
-+		if ( shimGame is not null && ++shimFrames == 30 ) ConVarSystem.Run( $"game {shimGame}" );
++		if ( shimGame is not null && ++shimFrames == 30 ) { System.Console.WriteLine( $"engine-shim: dedicated={Application.IsDedicatedServer} editor={Application.IsEditor} headless={Application.IsHeadless}" ); ConVarSystem.Run( $"game {shimGame}" ); }
  
  		return base.RunFrame();
  	}
