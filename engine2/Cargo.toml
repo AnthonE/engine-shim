@@ -1,0 +1,10 @@
+[package]
+name = "engine2"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "s&box's native engine interface (igen_engine), reimplemented: for now, every slot a stub that records its first call"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
