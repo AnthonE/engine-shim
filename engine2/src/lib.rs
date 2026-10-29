@@ -7,14 +7,21 @@
 //! Every slot is a stub for now: it does nothing, returns zeroes, and
 //! records that it was called (trace.rs). Running a game against it says
 //! which slots a game needs, in the order it needs them.
+mod handles;
 mod impls;
 mod slots;
 mod trace;
 
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::OnceLock;
 
-/// The managed callbacks managed hands over (logging, handles, the frame).
-pub static MANAGED: AtomicPtr<*const ()> = AtomicPtr::new(core::ptr::null_mut());
+/// The managed callbacks managed hands over (logging, handles, the frame),
+/// copied out: managed's array is pinned only for the call that gives it.
+pub static MANAGED: OnceLock<Vec<usize>> = OnceLock::new();
+
+/// Managed callback `i` (slots.rs's M_* constants), or null before igen_engine.
+pub fn managed(i: usize) -> usize {
+    MANAGED.get().and_then(|m| m.get(i).copied()).unwrap_or(0)
+}
 
 /// # Safety
 /// Called once by the managed side with tables of the sizes slots.rs names.
@@ -24,7 +31,7 @@ pub unsafe extern "C" fn igen_engine(hash: i32, managed: *mut *const (), native:
     if hash != slots::HASH {
         trace::note(&format!("igen_engine: managed's interop hash is {hash}, these stubs were generated for {}: regenerate", slots::HASH));
     }
-    MANAGED.store(managed, Ordering::SeqCst);
+    let _ = MANAGED.set(unsafe { core::slice::from_raw_parts(managed as *const usize, slots::MANAGED) }.to_vec());
     let table = slots::table();
     unsafe { core::ptr::copy_nonoverlapping(table.as_ptr(), native, slots::SLOTS) };
     trace::note(&format!("igen_engine: {} slots filled, {} managed callbacks taken", slots::SLOTS, slots::MANAGED));

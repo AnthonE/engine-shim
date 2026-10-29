@@ -37,6 +37,28 @@ var total = int.Parse(Regex.Match(text, @"nativeFunctions = new IntPtr\[(\d+)\]"
 var managedCount = int.Parse(Regex.Match(text, @"managedFunctions = new IntPtr\[(\d+)\]").Groups[1].Value);
 var hash = int.Parse(Regex.Match(text, @"nativeInit\( (\d+),").Groups[1].Value);
 
+// the managed callbacks, in table order: M_<name> constants for native to call back
+var callbacks = Regex.Matches(text, @"\(IntPtr\) \(delegate\* unmanaged<[^>]*>\) &Exports\.(\w+),").Select(m => m.Groups[1].Value).ToList();
+
+// handle classes: a slot whose managed wrapper turns its int into an object
+// (HandleIndex.Get<T>) returns a handle; its class's type name is the one
+// HandleIndex.RegisterHandle maps to that class (engine/Sandbox.Engine/Core/Interop/Handle.cs)
+var handleOf = new Dictionary<string, string>();
+foreach (Match m in Regex.Matches(text, @"HandleIndex\.Get<([\w\.]+)>\( __N\.(\w+)\("))
+    handleOf.TryAdd(m.Groups[2].Value, m.Groups[1].Value);
+var handleCs = File.ReadAllText(Path.Combine(root, "engine", "Sandbox.Engine", "Core", "Interop", "Handle.cs"));
+var tokenOf = Regex.Matches(handleCs, @"internal static uint (\w+) \{ get; \} = StringToken\.FindOrCreate\( ""(\w+)"" \)")
+    .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value);
+var typeOfClass = new Dictionary<string, string>();
+foreach (Match m in Regex.Matches(handleCs, @"if \( type == Types\.(\w+) \) return New<?([\w\.]*)>?\( ptr, \(? ?h ?\)? ?=> new ([\w\.]+)\( h \)"))
+{
+    var cls = m.Groups[3].Value.Split('.').Last();
+    typeOfClass.TryAdd(cls, tokenOf[m.Groups[1].Value]);
+}
+// a joint's generic type, not the first kind listed
+if (tokenOf.TryGetValue("PhysicsJoint", out var joint)) typeOfClass["PhysicsJoint3d"] = joint;
+int registered = 0;
+
 var structs = new Dictionary<Type, string>();
 var structDefs = new StringBuilder();
 var warnings = new List<string>();
@@ -156,6 +178,14 @@ for (int i = 0; i < total; i++)
     var body = r == "()" ? "" : r == "usize" ? $"crate::trace::object({i})" : "unsafe { core::mem::zeroed() }";
     // a handle the stub engine made is valid: "is it valid" answers yes
     if (r == "i32" && Regex.IsMatch(s.field, @"(IsValid|IsStrongHandleValid|IsLoaded|IsInitialized)$")) body = "1";
+    // a cast between classes (C++'s dynamic_cast) is the same object here
+    if (r == "usize" && ps.Length == 1 && Regex.IsMatch(s.field, @"^(From|To)_\w+_(To|From)_\w+$")) body = "_a0";
+    // a Create that returns a handle makes the object and registers it with managed
+    if (r == "i32" && handleOf.TryGetValue(s.field, out var hcls) && s.field.Contains("Create") && typeOfClass.TryGetValue(hcls.Split('.').Last(), out var htype))
+    {
+        body = $"crate::handles::create({i}, \"{htype}\")";
+        registered++;
+    }
     if (impls.Contains(s.field)) { body = $"unsafe {{ crate::impls::{s.field}({string.Join(", ", ps.Select((_, k) => $"_a{k}"))}) }}"; implemented++; }
     stubs.AppendLine($"unsafe extern \"C\" fn s{i}({argList}){(r == "()" ? "" : $" -> {r}")} {{ hit({i}); {body} }}");
     names.AppendLine($"    \"{s.field}\",");
@@ -172,6 +202,8 @@ o.AppendLine($"pub const HASH: i32 = {hash};");
 o.AppendLine($"pub const MANAGED: usize = {managedCount};");
 o.AppendLine($"pub const SLOTS: usize = {total};");
 o.AppendLine();
+for (int k = 0; k < callbacks.Count; k++) o.AppendLine($"pub const M_{callbacks[k]}: usize = {k};");
+o.AppendLine();
 o.Append(structDefs);
 o.Append(stubs);
 o.AppendLine();
@@ -183,5 +215,5 @@ o.AppendLine($"pub fn table() -> [usize; {total}] {{ [");
 o.Append(table);
 o.AppendLine("] }");
 File.WriteAllText(outPath, o.ToString());
-Console.WriteLine($"igen_{ident}: {total} slots ({implemented} implemented in impls.rs, the rest stubs), {structs.Count} struct types, hash {hash} -> {outPath}");
+Console.WriteLine($"igen_{ident}: {total} slots ({implemented} implemented in impls.rs, {registered} creating handles, the rest stubs), {structs.Count} struct types, {callbacks.Count} managed callbacks, hash {hash} -> {outPath}");
 foreach (var w in warnings) Console.WriteLine("  " + w);

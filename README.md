@@ -52,15 +52,20 @@ server on (`RENDER_DEVICE_API_EMPTY`), and compiled resources read as
 plain JSON. Every other slot is a generated stub that records its first
 call and returns zeroes, or a fresh zeroed block where it returns a pointer.
 
+Native objects of the handle classes (scene objects, worlds, lights,
+physics bodies) are made and registered: every `Create…` slot that returns
+a handle calls managed's `HandleIndex.RegisterHandle(pointer, type)` with
+StringToken's type token (`engine2/src/handles.rs`), so the physics world
+and the colliders now exist. Casts between classes return the same object.
+
 What the game's components still can't do:
 
-- **Native objects.** Lights, models and text renderers fail `Assert:
-  IsValid`. A native object made inside a handle scope must call managed's
-  `HandleIndex.RegisterHandle` (a managed callback) so managed binds it
-  ("NextHandleScope: Didn't use nextObject"). One protocol, every class.
-- **Physics.** No physics world is made (`IPhysicsWorld was null when
-  calling SetGravity`), so colliders and rigidbodies fail. About 300 slots;
-  Rapier or Jolt behind them.
+- **Object state.** A light registers, then asks for its world
+  (`GetWorld`), and the stub has nothing to say. Native objects need to
+  remember: the arguments they were made with, what each `Set…` stored for
+  its `Get…`. That is the next layer, and most of it is generic.
+- **Physics.** The world exists; bodies and their simulation do not. About
+  300 slots; Rapier or Jolt behind them.
 
 ## Reproduce
 
@@ -117,6 +122,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/lib.rs` | `igen_engine`: fills the table |
 | `engine2/src/slots.rs` | generated: 3,578 typed stubs, 81 struct layouts, the names |
 | `engine2/src/impls.rs` | the slots written by hand; a `pub unsafe fn` named as a slot replaces its stub |
+| `engine2/src/handles.rs` | handle objects: made, registered with managed, found by pointer |
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
 | `spike.sh` | one turn of the loop |
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
