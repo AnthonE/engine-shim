@@ -230,11 +230,25 @@ the result vectors they fill:
 - **Handles**: bodies and shapes removed free their managed handles, so
   managed's objects stop being valid with them.
 
-Tested the way managed calls it (`cargo test`): a ball dropped through the
-slots alone falls, lands, is heard moving and falling asleep, touches the
-floor, is traced, queried, filtered past, knocked back up and removed.
-Not yet measured under Sweeper: a sandbox here could not build the s&box
-side.
+Measured under the real server: Sweeper's scene has 72 physics cubes
+stacked on a plane. With `tools/physdrop.sh`'s watcher in it, all 72 start
+awake, settle (the lowest at z 14, half a cube) and are asleep within two
+seconds; managed hears 150 collisions begin; a trace down from above hits
+the top cube, its normal up; a cube kicked up at six seconds (managed's
+`ApplyImpulse`) wakes 30 of them and they settle and sleep again. No error
+on the server, nor on a player who joins it (whose own world steps,
+traces and queries too).
+
+```sh
+sh tools/physdrop.sh ../sbox-public /tmp/physdrop
+SBOX=../sbox-public sh spike.sh 25 +shimgame /tmp/physdrop/.sbproj
+grep watch target/spike/server.log
+```
+
+Also tested the way managed calls it (`cargo test`): a ball dropped
+through the slots alone falls, lands, is heard moving and falling asleep,
+touches the floor, is traced, queried, filtered past, knocked back up and
+removed.
 
 What the game's components still can't do:
 
@@ -320,6 +334,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
 | `spike.sh` | one turn of the loop |
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
+| `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
 
 ## Next
 
