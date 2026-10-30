@@ -1,31 +1,47 @@
-//! What a client draws, begun: a model as s&box compiles it (its meshes,
-//! the materials they name, those materials' textures), read by engine2's
-//! readers and drawn with wgpu (Vulkan here, WebGPU in a browser), into
-//! an image. Each material is drawn as `complex.shader` would draw it,
-//! as near as we get yet (shader.wgsl): nearly every material s&box's
-//! content has is one of its.
+//! What a client draws, begun: models as s&box compiles them (their
+//! meshes, the materials they name, those materials' textures), read by
+//! assets/ and drawn with wgpu (Vulkan here, WebGPU in a browser one day).
+//! Each material is drawn as s&box's own shader for it would draw it, as
+//! near as we get yet (shader.wgsl: complex and blendable, which nearly
+//! every material s&box's content has is one of). The engine draws its
+//! scene with it when managed asks a camera for pixels (impls.rs,
+//! CCameraRenderer_RenderToBitmap); `render` draws one model.
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
-use engine2::assets::{material, mesh, resource::Resource, texture};
+use crate::assets::{material, mesh, resource::Resource, texture};
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
-/// Where content is: folders that hold files at their game paths (a
-/// package's, as tools/package.sh fetches them).
+/// Where a renderer reads content from, by game path.
+pub trait Files {
+    fn read(&self, path: &str) -> Option<Vec<u8>>;
+
+    /// A compiled resource by its name (`x.vmat` is `x.vmat_c`).
+    fn compiled(&self, name: &str) -> Option<Resource> {
+        let name = if name.ends_with("_c") { name.to_string() } else { format!("{name}_c") };
+        Resource::parse(self.read(&name)?).ok()
+    }
+}
+
+/// Folders that hold files at their game paths (a package's, as
+/// tools/package.sh fetches them).
 pub struct Content(pub Vec<PathBuf>);
 
-impl Content {
-    pub fn read(&self, path: &str) -> Option<Vec<u8>> {
+impl Files for Content {
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
         let path = path.replace('\\', "/");
         let path = path.trim_start_matches('/');
         self.0.iter().find_map(|d| std::fs::read(d.join(path)).ok())
     }
+}
 
-    /// A compiled resource by its name (`x.vmat` is `x.vmat_c`).
-    pub fn compiled(&self, name: &str) -> Option<Resource> {
-        let name = if name.ends_with("_c") { name.to_string() } else { format!("{name}_c") };
-        Resource::parse(self.read(&name)?).ok()
-    }
+/// The engine's own file system (fs.rs): what managed linked and mounted.
+pub struct EngineFiles;
+
+impl Files for EngineFiles {
+    fn read(&self, path: &str) -> Option<Vec<u8>> { crate::fs::read(path) }
 }
 
 #[repr(C)]
@@ -37,6 +53,9 @@ struct Vertex {
     /// vertex paint: how much of a blendable's layer B (red), and a tint
     blend: [f32; 4],
     paint: [f32; 4],
+    /// skinned: its bones in the model's skeleton, and how much each moves it
+    bones: [u32; 4],
+    weights: [f32; 4],
 }
 
 #[repr(C)]
@@ -48,6 +67,15 @@ struct ViewUniform {
     sun_color: [f32; 4],
     sky: [f32; 4],
     ground: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ObjectUniform {
+    model: [[f32; 4]; 4],
+    tint: [f32; 4],
+    /// x: skinned by the bone palette (1)
+    flags: [f32; 4],
 }
 
 #[repr(C)]
@@ -90,7 +118,13 @@ pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     view_layout: wgpu::BindGroupLayout,
     material_layout: wgpu::BindGroupLayout,
+    object_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// whether the GPU takes BC1 to BC7 as they are (most desktop GPUs,
+    /// lavapipe, WebGPU on desktops), and what's been read already
+    bc: bool,
+    textures: Mutex<HashMap<(String, bool), wgpu::TextureView>>,
+    materials: Mutex<HashMap<String, (wgpu::BindGroup, bool, Vec<String>)>>,
     /// for a material without a texture: white (a colour, occlusion, a
     /// tint mask), a flat normal (roughness 0.6), and a blendable's
     /// metalness, occlusion and roughness (not metal, not occluded, 0.6)
@@ -109,7 +143,12 @@ impl Renderer {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends: wgpu::Backends::VULKAN | wgpu::Backends::GL | wgpu::Backends::METAL | wgpu::Backends::DX12, ..Default::default() });
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).map_err(|e| format!("no adapter: {e}"))?;
         let info = adapter.get_info();
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).map_err(|e| e.to_string())?;
+        let bc = adapter.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: if bc { wgpu::Features::TEXTURE_COMPRESSION_BC } else { wgpu::Features::empty() },
+            required_limits: adapter.limits(),
+            ..Default::default()
+        })).map_err(|e| e.to_string())?;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("complex"), source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()) });
         let uniform = |binding, visibility| wgpu::BindGroupLayoutEntry { binding, visibility, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None };
         let tex = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None };
@@ -119,7 +158,11 @@ impl Renderer {
             wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
             tex(4), tex(5), tex(6), tex(7), tex(8),
         ] });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &material_layout], push_constant_ranges: &[] });
+        let object_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("object"), entries: &[
+            uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+            wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::VERTEX, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+        ] });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &material_layout, &object_layout], push_constant_ranges: &[] });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("complex"),
             layout: Some(&layout),
@@ -130,7 +173,7 @@ impl Renderer {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Uint32x4, 6 => Float32x4],
                 }],
             },
             fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(COLOR.into())] }),
@@ -150,33 +193,69 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &rgba).create_view(&Default::default());
         let (white, flat, unoccluded) = (pixel([255; 4]), pixel([128, 128, 153, 255]), pixel([0, 255, 153, 255]));
-        Ok(Renderer { device, queue, pipeline, view_layout, material_layout, sampler, white, flat, unoccluded, adapter: format!("{} ({:?})", info.name, info.backend) })
+        Ok(Renderer { bc, textures: Default::default(), materials: Default::default(), device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, unoccluded, adapter: format!("{} ({:?})", info.name, info.backend) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
-    fn texture(&self, content: &Content, name: &str, srgb: bool) -> Result<wgpu::TextureView, String> {
+    fn texture(&self, content: &dyn Files, name: &str, srgb: bool) -> Result<wgpu::TextureView, String> {
+        let key = (crate::fs::normal(name), srgb);
+        if let Some(v) = self.textures.lock().unwrap().get(&key) { return Ok(v.clone()); }
         let t = texture::read(content.compiled(name).ok_or_else(|| format!("{name}: not found"))?)?;
         let top = t.available(0).ok_or_else(|| format!("{name}: no mips"))?;
         let (w, h) = t.size(top);
-        let levels = (top..t.mips).map(|m| t.rgba(m)).collect::<Result<Vec<_>, _>>()?;
+        use texture::format as f;
+        // its blocks as they are, where the GPU takes them (and its size is whole blocks)
+        let blocks = match (t.format, srgb) {
+            _ if !self.bc || w % 4 != 0 || h % 4 != 0 => None,
+            (f::DXT1, true) => Some((wgpu::TextureFormat::Bc1RgbaUnormSrgb, 8)),
+            (f::DXT1, false) => Some((wgpu::TextureFormat::Bc1RgbaUnorm, 8)),
+            (f::DXT5, true) => Some((wgpu::TextureFormat::Bc3RgbaUnormSrgb, 16)),
+            (f::DXT5, false) => Some((wgpu::TextureFormat::Bc3RgbaUnorm, 16)),
+            (f::BC7, true) => Some((wgpu::TextureFormat::Bc7RgbaUnormSrgb, 16)),
+            (f::BC7, false) => Some((wgpu::TextureFormat::Bc7RgbaUnorm, 16)),
+            (f::ATI1N, _) => Some((wgpu::TextureFormat::Bc4RUnorm, 8)),
+            (f::ATI2N, _) => Some((wgpu::TextureFormat::Bc5RgUnorm, 16)),
+            _ => None,
+        };
+        let (format, levels): (wgpu::TextureFormat, Vec<(usize, usize, Vec<u8>, u32, u32)>) = match blocks {
+            Some((format, bytes)) => (format, (top..t.mips).map(|m| {
+                let (lw, lh) = t.size(m);
+                let (bx, by) = (lw.div_ceil(4), lh.div_ceil(4));
+                t.raw(m).map(|d| (bx * 4, by * 4, d[..(bx * by * bytes).min(d.len())].to_vec(), (bx * bytes) as u32, by as u32))
+            }).collect::<Result<_, _>>()?),
+            None => (if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm },
+                (top..t.mips).map(|m| t.rgba(m).map(|(lw, lh, px)| (lw, lh, px, lw as u32 * 4, lh as u32))).collect::<Result<_, _>>()?),
+        };
         let gpu = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(name), size: wgpu::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 }, mip_level_count: levels.len() as u32, sample_count: 1,
-            dimension: wgpu::TextureDimension::D2, format: if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm },
+            dimension: wgpu::TextureDimension::D2, format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
         });
-        for (i, (lw, lh, px)) in levels.iter().enumerate() {
+        for (i, (lw, lh, data, row, rows)) in levels.iter().enumerate() {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo { texture: &gpu, mip_level: i as u32, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-                px,
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(*lw as u32 * 4), rows_per_image: Some(*lh as u32) },
+                data,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(*row), rows_per_image: Some(*rows) },
                 wgpu::Extent3d { width: *lw as u32, height: *lh as u32, depth_or_array_layers: 1 },
             );
         }
-        Ok(gpu.create_view(&Default::default()))
+        let view = gpu.create_view(&Default::default());
+        self.textures.lock().unwrap().insert(key, view.clone());
+        Ok(view)
     }
 
     /// A material's bind group, and whether it's drawn at all.
-    fn material(&self, content: &Content, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, bool) {
+    fn material(&self, content: &dyn Files, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, bool) {
+        let key = crate::fs::normal(name);
+        if let Some((g, drawn, n)) = self.materials.lock().unwrap().get(&key) { notes.extend(n.iter().cloned()); return (g.clone(), *drawn); }
+        let mut own = Vec::new();
+        let (g, drawn) = self.read_material(content, name, &mut own);
+        notes.extend(own.iter().cloned());
+        self.materials.lock().unwrap().insert(key, (g.clone(), drawn, own));
+        (g, drawn)
+    }
+
+    fn read_material(&self, content: &dyn Files, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, bool) {
         let m = content.compiled(name).ok_or_else(|| format!("{name}: not found")).and_then(|r| material::read(&r));
         let m = m.unwrap_or_else(|e| { notes.push(e); Default::default() });
         let mut tex = |param: &str, srgb: bool, default: &wgpu::TextureView| match m.textures.get(param) {
@@ -217,7 +296,7 @@ impl Renderer {
     }
 
     /// A model (`models/x.vmdl`) read from `content` onto the GPU.
-    pub fn model(&self, content: &Content, name: &str) -> Result<Model, String> {
+    pub fn model(&self, content: &dyn Files, name: &str) -> Result<Model, String> {
         let r = content.compiled(name).ok_or_else(|| format!("{name}: not found"))?;
         let meshes = mesh::model(&r, |n| content.read(&if n.ends_with("_c") { n.to_string() } else { format!("{n}_c") }))?;
         let mut notes = Vec::new();
@@ -230,12 +309,15 @@ impl Renderer {
                 let normals = vb.normals().unwrap_or_else(|| vec![[0.0, 0.0, 1.0]; vb.count]);
                 let uvs = vb.floats("TEXCOORD", 0).unwrap_or_else(|| vec![[0.0; 4]; vb.count]);
                 let blend = vb.floats("TEXCOORD", 4).unwrap_or_else(|| vec![[0.0; 4]; vb.count]);
+                // a skinned vertex's bones, in the skeleton's numbering
+                let skin = vb.skin().unwrap_or_else(|| vec![([0; 4], [0.0; 4]); vb.count]);
+                let remap = |b: u32| m.bones.get(b as usize).copied().unwrap_or(b);
                 let paint = vb.floats("TEXCOORD", 5).unwrap_or_else(|| vec![[1.0; 4]; vb.count]);
                 let v: Vec<Vertex> = (0..vb.count).map(|i| {
                     let p = positions[i];
                     min = min.min(Vec3::new(p[0], p[1], p[2]));
                     max = max.max(Vec3::new(p[0], p[1], p[2]));
-                    Vertex { position: [p[0], p[1], p[2]], normal: normals[i], uv: [uvs[i][0], uvs[i][1]], blend: blend[i], paint: paint[i] }
+                    Vertex { position: [p[0], p[1], p[2]], normal: normals[i], uv: [uvs[i][0], uvs[i][1]], blend: blend[i], paint: paint[i], bones: skin[i].0.map(remap), weights: skin[i].1 }
                 }).collect();
                 vertices.push(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&v), usage: wgpu::BufferUsages::VERTEX }));
             }
@@ -254,19 +336,13 @@ impl Renderer {
         Ok(Model { meshes: out, min, max, notes })
     }
 
-    /// The model drawn from `yaw` and `pitch` degrees round it (0, 0: from
-    /// its front, +x), framed: an RGBA image, `size` square.
-    pub fn draw(&self, model: &Model, size: u32, yaw: f32, pitch: f32) -> Vec<u8> {
-        let center = (model.min + model.max) * 0.5;
-        let radius = (model.max - model.min).length() * 0.5;
-        let fov = 30f32.to_radians();
-        let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
-        let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        let proj = Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0) * Mat4::look_at_rh(eye, center, Vec3::Z);
+    /// Objects drawn from a view: an RGBA image, `width` by `height`, its
+    /// top row first.
+    pub fn draw(&self, objects: &[Instance], view: &View, width: u32, height: u32) -> Vec<u8> {
         let sun = Vec3::new(0.6, 0.35, 0.75).normalize();
-        let view = ViewUniform {
-            view_proj: proj.to_cols_array_2d(),
-            eye: eye.extend(1.0).into(),
+        let uniform = ViewUniform {
+            view_proj: (view.proj * view.view).to_cols_array_2d(),
+            eye: view.eye.extend(1.0).into(),
             sun: sun.extend(0.0).into(),
             sun_color: [1.6, 1.55, 1.45, 0.0],
             sky: [0.55, 0.6, 0.7, 0.0],
@@ -274,10 +350,20 @@ impl Renderer {
             ground: [0.25, 0.23, 0.2, std::env::var("RENDER_DEBUG").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0)],
         };
         let d = &self.device;
-        let view_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("view"), contents: bytemuck::bytes_of(&view), usage: wgpu::BufferUsages::UNIFORM });
+        let view_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("view"), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
         let view_group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("view"), layout: &self.view_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() }] });
+        let object_groups: Vec<wgpu::BindGroup> = objects.iter().map(|o| {
+            let u = ObjectUniform { model: o.transform.to_cols_array_2d(), tint: o.tint, flags: [(!o.bones.is_empty()) as i32 as f32, 0.0, 0.0, 0.0] };
+            let b = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("object"), contents: bytemuck::bytes_of(&u), usage: wgpu::BufferUsages::UNIFORM });
+            let palette: Vec<[[f32; 4]; 4]> = if o.bones.is_empty() { vec![Mat4::IDENTITY.to_cols_array_2d()] } else { o.bones.iter().map(|m| m.to_cols_array_2d()).collect() };
+            let p = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("bones"), contents: bytemuck::cast_slice(&palette), usage: wgpu::BufferUsages::STORAGE });
+            d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("object"), layout: &self.object_layout, entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: b.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: p.as_entire_binding() },
+            ] })
+        }).collect();
         let target = |format, samples, usage| d.create_texture(&wgpu::TextureDescriptor {
-            label: None, size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: samples,
+            label: None, size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: samples,
             dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[],
         });
         let msaa = target(COLOR, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
@@ -285,12 +371,13 @@ impl Renderer {
         let depth = target(DEPTH, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
         let mut encoder = d.create_command_encoder(&Default::default());
         {
+            let [r, g, b, a] = view.clear;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &msaa,
                     resolve_target: Some(&resolved.create_view(&Default::default())),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Discard },
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store: wgpu::StoreOp::Discard },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }), stencil_ops: None }),
                 timestamp_writes: None,
@@ -298,29 +385,32 @@ impl Renderer {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &view_group, &[]);
-            for m in &model.meshes {
-                for d in &m.draws {
-                    pass.set_vertex_buffer(0, m.vertices[d.vertex_buffer].slice(..));
-                    pass.set_index_buffer(m.indices[d.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
-                    pass.set_bind_group(1, &d.material, &[]);
-                    pass.draw_indexed(d.range.clone(), d.base_vertex, 0..1);
+            for (o, group) in objects.iter().zip(&object_groups) {
+                pass.set_bind_group(2, group, &[]);
+                for m in &o.model.meshes {
+                    for d in &m.draws {
+                        pass.set_vertex_buffer(0, m.vertices[d.vertex_buffer].slice(..));
+                        pass.set_index_buffer(m.indices[d.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
+                        pass.set_bind_group(1, &d.material, &[]);
+                        pass.draw_indexed(d.range.clone(), d.base_vertex, 0..1);
+                    }
                 }
             }
         }
         // read it back, a row at a time as copies align them
-        let row = (size * 4).div_ceil(256) * 256;
-        let readback = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * size) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let row = (width * 4).div_ceil(256) * 256;
+        let readback = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * height) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo { texture: &resolved, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(size) } },
-            wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+            wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(height) } },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
         self.queue.submit([encoder.finish()]);
         let slice = readback.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
         let _ = d.poll(wgpu::PollType::Wait);
         let data = slice.get_mapped_range();
-        (0..size as usize).flat_map(|y| data[y * row as usize..y * row as usize + size as usize * 4].to_vec()).collect()
+        (0..height as usize).flat_map(|y| data[y * row as usize..y * row as usize + width as usize * 4].to_vec()).collect()
     }
 }
 
@@ -328,13 +418,50 @@ fn at(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }
 }
 
-/// An RGBA image as a PNG.
-pub fn png(path: &std::path::Path, size: u32, rgba: &[u8]) -> Result<(), String> {
-    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
-    let mut e = png::Encoder::new(std::io::BufWriter::new(file), size, size);
-    e.set_color(png::ColorType::Rgba);
-    e.set_depth(png::BitDepth::Eight);
-    e.write_header().and_then(|mut w| w.write_image_data(rgba)).map_err(|e| e.to_string())
+/// A model placed in the world: where, tinted how, and posed how (each
+/// bone's skinning matrix, in the model's space: its pose over its bind
+/// pose's inverse; none, as it was modelled).
+pub struct Instance<'a> {
+    pub model: &'a Model,
+    pub transform: Mat4,
+    pub tint: [f32; 4],
+    pub bones: Vec<Mat4>,
+}
+
+/// Where a view is from: the eye, its view and projection, what's behind
+/// everything.
+pub struct View {
+    pub eye: Vec3,
+    pub view: Mat4,
+    pub proj: Mat4,
+    pub clear: [f64; 4],
+}
+
+impl View {
+    /// A camera as Source 2 has one: at `position`, turned by `angles`
+    /// (pitch, yaw, roll in degrees; x forward, z up), with a horizontal
+    /// field of view in degrees.
+    pub fn camera(position: Vec3, angles: [f32; 3], fov: f32, near: f32, far: f32, aspect: f32) -> View {
+        let rot = glam::Quat::from_rotation_z(angles[1].to_radians()) * glam::Quat::from_rotation_y(angles[0].to_radians()) * glam::Quat::from_rotation_x(angles[2].to_radians());
+        let vertical = 2.0 * ((fov.to_radians() * 0.5).tan() / aspect.max(1e-3)).atan();
+        View {
+            eye: position,
+            view: Mat4::look_at_rh(position, position + rot * Vec3::X, rot * Vec3::Z),
+            proj: Mat4::perspective_rh(vertical, aspect, near.max(0.1), far.max(near + 1.0)),
+            clear: [0.55, 0.6, 0.7, 1.0],
+        }
+    }
+
+    /// A model framed from `yaw` and `pitch` degrees round it (0, 0: from
+    /// its front, +x), on nothing.
+    pub fn framing(model: &Model, yaw: f32, pitch: f32) -> View {
+        let center = (model.min + model.max) * 0.5;
+        let radius = (model.max - model.min).length() * 0.5;
+        let fov = 30f32.to_radians();
+        let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
+        let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4] }
+    }
 }
 
 #[cfg(test)]
@@ -345,11 +472,12 @@ mod tests {
     fn a_downloaded_model_is_drawn() {
         let Ok(dir) = std::env::var("ENGINE2_CONTENT") else { return };
         let content = super::Content(vec![dir.into()]);
+        use super::Files;
         if content.read("models/sbox_props/tv/tv.vmdl_c").is_none() { return; }
         let Ok(r) = super::Renderer::new() else { eprintln!("no adapter: skipped"); return };
         let m = r.model(&content, "models/sbox_props/tv/tv.vmdl").unwrap();
         assert!(m.notes.is_empty(), "{:?}", m.notes);
-        let image = r.draw(&m, 128, 35.0, 15.0);
+        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new() }], &super::View::framing(&m, 35.0, 15.0), 128, 128);
         let covered: Vec<&[u8]> = image.chunks_exact(4).filter(|p| p[3] > 0).collect();
         let mean = covered.iter().map(|p| p[0] as f32 + p[1] as f32 + p[2] as f32).sum::<f32>() / (3 * covered.len()) as f32;
         eprintln!("{} of {} pixels covered, mean {mean:.0}", covered.len(), 128 * 128);

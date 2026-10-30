@@ -122,6 +122,7 @@ public sealed class ShimWatch : Component
 
 		Shoot();
 		Events();
+		View();
 
 		// each player: what the controller's ground probe finds under them, and the map still there
 		foreach ( var p in Scene.GetAllComponents<PlayerController>() )
@@ -245,5 +246,23 @@ public sealed class ShimWatch : Component
 			Log.Info( $"shimwatch events: crowbar swings, graph {_crowbar.SceneModel?.AnimationGraph?.Name}" );
 			_crowbar.Set( "b_attack", true );
 		}
+	}
+
+	// what a player sees, through the engine's own way to ask: the scene's
+	// camera rendered into a bitmap (CameraComponent.RenderToBitmap), saved
+	void View()
+	{
+		if ( Networking.IsHost || _ticks % 10 != 5 ) return;
+		var camera = Scene.Camera ?? Scene.GetAllComponents<CameraComponent>().FirstOrDefault();
+		if ( !camera.IsValid() ) { Log.Info( $"shimwatch view {_ticks}: no camera" ); return; }
+		var bitmap = new Bitmap( 960, 540 );
+		// a headless player has no tonemapper (Graphics.IsAvailable is false): exposure off, for this
+		var exposure = camera.AutoExposure.Enabled;
+		camera.AutoExposure.Enabled = false;
+		camera.RenderToBitmap( bitmap, false );
+		camera.AutoExposure.Enabled = exposure;
+		var file = $"shimview_{_ticks}.png";
+		FileSystem.Data.WriteAllBytes( file, bitmap.ToPng() );
+		Log.Info( $"shimwatch view {_ticks}: {camera.GameObject.Name} at {camera.WorldPosition} looking {camera.WorldRotation.Angles()} fov {camera.FieldOfView}, to {FileSystem.Data.GetFullPath( file )}" );
 	}
 }

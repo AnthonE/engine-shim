@@ -43,6 +43,10 @@ const R32G32B32_FLOAT: u32 = 6;
 const R16G16B16A16_FLOAT: u32 = 10;
 const R32G32_FLOAT: u32 = 16;
 const R8G8B8A8_UNORM: u32 = 28;
+const R8G8B8A8_UINT: u32 = 30;
+const R16G16B16A16_UINT: u32 = 12;
+const R16G16_UNORM: u32 = 35;
+const R16G16B16A16_UNORM: u32 = 11;
 const R16G16_FLOAT: u32 = 34;
 const R32_UINT: u32 = 42;
 const R10G10B10A2_UNORM: u32 = 24;
@@ -179,6 +183,39 @@ impl VertexBuffer {
         }).collect())
     }
 
+    /// An input of every vertex as up to four whole numbers (a vertex's
+    /// bones: BLENDINDICES).
+    pub fn uints(&self, name: &str, index: u32) -> Option<Vec<[u32; 4]>> {
+        let a = self.attribute(name, index)?;
+        Some((0..self.count).map(|v| {
+            let at = v * self.stride + a.offset;
+            let d = &self.data;
+            match a.format {
+                R16G16B16A16_UINT => core::array::from_fn(|k| d.get(at + k * 2..at + k * 2 + 2).map(|x| u16::from_le_bytes(x.try_into().unwrap()) as u32).unwrap_or(0)),
+                _ => core::array::from_fn(|k| d.get(at + k).copied().unwrap_or(0) as u32),
+            }
+        }).collect())
+    }
+
+    /// Each vertex's bones and how much each moves it: BLENDINDICES and
+    /// BLENDWEIGHT (none: all on the first). None if it isn't skinned.
+    pub fn skin(&self) -> Option<Vec<([u32; 4], [f32; 4])>> {
+        let bones = self.uints("BLENDINDICES", 0)?;
+        let weights = self.attribute("BLENDWEIGHT", 0).map(|a| {
+            let unorm16 = |d: &[u8], at: usize| d.get(at..at + 2).map(|x| u16::from_le_bytes(x.try_into().unwrap()) as f32 / 65535.0).unwrap_or(0.0);
+            (0..self.count).map(|v| {
+                let at = v * self.stride + a.offset;
+                let d = &self.data;
+                match a.format {
+                    R16G16_UNORM => [unorm16(d, at), unorm16(d, at + 2), 0.0, 0.0],
+                    R16G16B16A16_UNORM => core::array::from_fn(|k| unorm16(d, at + k * 2)),
+                    _ => core::array::from_fn(|k| d.get(at + k).copied().unwrap_or(0) as f32 / 255.0),
+                }
+            }).collect::<Vec<[f32; 4]>>()
+        });
+        Some(bones.into_iter().enumerate().map(|(i, b)| (b, weights.as_ref().map(|w| w[i]).unwrap_or([1.0, 0.0, 0.0, 0.0]))).collect())
+    }
+
     /// Each vertex's normal, however it's kept: three floats, or packed
     /// with its tangent (four bytes as Source 2 first packed them, or a
     /// word, octahedral: in its top twenty bits, or as s&box packs them
@@ -264,6 +301,8 @@ pub struct Draw {
 pub struct Mesh {
     pub draws: Vec<Draw>,
     pub buffers: Buffers,
+    /// its bones (a vertex's BLENDINDICES) as the model's skeleton numbers them
+    pub bones: Vec<u32>,
 }
 
 fn draws(mesh: &Value) -> Vec<Draw> {
@@ -293,15 +332,24 @@ pub fn model(r: &Resource, read_compiled: impl Fn(&str) -> Option<Vec<u8>>) -> R
     let masks = |k: &str| data.get(k).map(Value::as_array).unwrap_or(&[]).iter().map(|m| m.as_i64().unwrap_or(-1) as u64).collect::<Vec<u64>>();
     let (lods, groups) = (masks("m_refLODGroupMasks"), masks("m_refMeshGroupMasks"));
     let default = data.get("m_nDefaultMeshGroupMask").and_then(Value::as_i64).map(|m| m as u64).unwrap_or(u64::MAX);
+    // each mesh's bones in the skeleton: its run of the remapping table
+    let table: Vec<u32> = data.get("m_remappingTable").map(Value::as_array).unwrap_or(&[]).iter().map(|b| b.as_i64().unwrap_or(0).max(0) as u32).collect();
+    let starts: Vec<usize> = data.get("m_remappingTableStarts").map(Value::as_array).unwrap_or(&[]).iter().map(|b| b.as_i64().unwrap_or(0).max(0) as usize).collect();
+    let bones = |i: usize| -> Vec<u32> {
+        let Some(&start) = starts.get(i) else { return Vec::new() };
+        let end = starts.get(i + 1).copied().unwrap_or(table.len()).max(start);
+        table.get(start..end.min(table.len())).unwrap_or(&[]).to_vec()
+    };
     let shown = |i: usize| lods.get(i).is_none_or(|m| m & 1 != 0) && groups.get(i).is_none_or(|m| m & default != 0);
     let mut out = Vec::new();
     if let Some(Ok(ctrl)) = r.kv3("CTRL") {
         for e in ctrl.get("embedded_meshes").map(Value::as_array).unwrap_or(&[]) {
-            if !shown(e.i64("mesh_index").max(0) as usize) { continue; }
+            let index = e.i64("mesh_index").max(0) as usize;
+            if !shown(index) { continue; }
             let block = |k: &str| r.blocks.get(e.i64(k).max(0) as usize).map(|&(_, at, n)| &r.bytes[at..at + n]);
             let (Some(mesh), Some(vbib)) = (block("data_block"), block("vbib_block")) else { continue };
             let mesh = super::kv3::read(mesh).map_err(|e| e.to_string())?;
-            out.push(Mesh { draws: draws(&mesh), buffers: read(vbib)? });
+            out.push(Mesh { draws: draws(&mesh), buffers: read(vbib)?, bones: bones(index) });
         }
     }
     for (i, name) in data.get("m_refMeshes").map(Value::as_array).unwrap_or(&[]).iter().enumerate() {
@@ -309,7 +357,7 @@ pub fn model(r: &Resource, read_compiled: impl Fn(&str) -> Option<Vec<u8>>) -> R
         if !shown(i) { continue; }
         let Some(file) = read_compiled(name).and_then(|b| Resource::parse(b).ok()) else { continue };
         let (Some(Ok(mesh)), Some(vbib)) = (file.kv3("DATA"), file.block("VBIB").or(file.block("MBUF"))) else { continue };
-        out.push(Mesh { draws: draws(&mesh), buffers: read(vbib)? });
+        out.push(Mesh { draws: draws(&mesh), buffers: read(vbib)?, bones: bones(i) });
     }
     Ok(out)
 }

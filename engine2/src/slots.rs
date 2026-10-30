@@ -1460,13 +1460,13 @@ unsafe extern "C" fn s77(_a0: usize, _a1: usize) { hit(77);  }
 unsafe extern "C" fn s78(_a0: usize, _a1: usize) { hit(78);  }
 unsafe extern "C" fn s79(_a0: usize) { hit(79);  }
 unsafe extern "C" fn s80(_a0: usize, _a1: i32) -> usize { hit(80); crate::trace::object(80) }
-unsafe extern "C" fn s81(_a0: usize) { hit(81);  }
-unsafe extern "C" fn s82(_a0: usize, _a1: usize) { hit(82);  }
+unsafe extern "C" fn s81(_a0: usize) { hit(81); unsafe { crate::impls::CCameraRenderer_ClearSceneWorlds(_a0) } }
+unsafe extern "C" fn s82(_a0: usize, _a1: usize) { hit(82); unsafe { crate::impls::CCameraRenderer_AddSceneWorld(_a0, _a1) } }
 unsafe extern "C" fn s83(_a0: usize, _a1: usize) { hit(83);  }
 unsafe extern "C" fn s84(_a0: usize, _a1: usize) { hit(84);  }
 unsafe extern "C" fn s85(_a0: usize, _a1: usize, _a2: usize, _a3: usize) -> i32 { hit(85); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s86(_a0: usize, _a1: usize, _a2: i32) { hit(86);  }
-unsafe extern "C" fn s87(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) { hit(87);  }
+unsafe extern "C" fn s87(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) { hit(87); unsafe { crate::impls::CCameraRenderer_RenderToBitmap(_a0, _a1, _a2, _a3, _a4) } }
 unsafe extern "C" fn s88(_a0: usize) { hit(88);  }
 unsafe extern "C" fn s89(_a0: usize, _a1: i32, _a2: i32, _a3: i32, _a4: i32) { hit(89);  }
 unsafe extern "C" fn s90(_a0: usize, _a1: i32, _a2: i32) { hit(90);  }
@@ -2624,12 +2624,12 @@ unsafe extern "C" fn s1241(_a0: usize, _a1: usize) { hit(1241);  }
 unsafe extern "C" fn s1242(_a0: usize) { hit(1242);  }
 unsafe extern "C" fn s1243(_a0: usize, _a1: usize, _a2: S_Sandbox_StringToken, _a3: i32) { hit(1243);  }
 unsafe extern "C" fn s1244(_a0: usize) -> i32 { hit(1244); 1 }
-unsafe extern "C" fn s1245(_a0: usize) -> i32 { hit(1245); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1245(_a0: usize) -> i32 { hit(1245); unsafe { crate::impls::CSceneObject_IsRenderingEnabled(_a0) } }
 unsafe extern "C" fn s1246(_a0: usize) { hit(1246);  }
 unsafe extern "C" fn s1247(_a0: usize) { hit(1247);  }
-unsafe extern "C" fn s1248(_a0: usize) { hit(1248);  }
-unsafe extern "C" fn s1249(_a0: usize) { hit(1249);  }
-unsafe extern "C" fn s1250(_a0: usize, _a1: i32) { hit(1250);  }
+unsafe extern "C" fn s1248(_a0: usize) { hit(1248); unsafe { crate::impls::CSceneObject_DisableRendering(_a0) } }
+unsafe extern "C" fn s1249(_a0: usize) { hit(1249); unsafe { crate::impls::CSceneObject_EnableRendering(_a0) } }
+unsafe extern "C" fn s1250(_a0: usize, _a1: i32) { hit(1250); unsafe { crate::impls::CSceneObject_SetRenderingEnabled(_a0, _a1) } }
 unsafe extern "C" fn s1251(_a0: usize) -> f32 { hit(1251); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1252(_a0: usize, _a1: usize) { hit(1252); unsafe { crate::state::set_from::<S_Transform>(_a0, 34, _a1) } }
 unsafe extern "C" fn s1253(_a0: usize) -> S_Transform { hit(1253); unsafe { crate::impls::CSceneObject_GetCTransform(_a0) } }
@@ -4358,8 +4358,8 @@ unsafe extern "C" fn s2975(_a0: usize) -> i32 { hit(2975); unsafe { core::mem::z
 unsafe extern "C" fn s2976() { hit(2976);  }
 unsafe extern "C" fn s2977(_a0: usize) { hit(2977);  }
 unsafe extern "C" fn s2978() -> i64 { hit(2978); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2979(_a0: usize) { hit(2979);  }
-unsafe extern "C" fn s2980(_a0: usize) { hit(2980);  }
+unsafe extern "C" fn s2979(_a0: usize) { hit(2979); unsafe { crate::impls::g_pSceneSystem_DeleteSceneObject(_a0) } }
+unsafe extern "C" fn s2980(_a0: usize) { hit(2980); unsafe { crate::impls::g_pSceneSystem_DeleteSceneObjectAtFrameEnd(_a0) } }
 unsafe extern "C" fn s2981(_a0: usize, _a1: usize) -> i32 { hit(2981); crate::handles::create(2981, "SceneSkyBoxObject", &[_a0, _a1]) }
 unsafe extern "C" fn s2982(_a0: usize) -> i32 { hit(2982); crate::handles::create(2982, "DecalSceneObject", &[_a0]) }
 unsafe extern "C" fn s2983(_a0: usize) { hit(2983);  }

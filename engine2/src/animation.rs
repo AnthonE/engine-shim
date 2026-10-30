@@ -231,6 +231,11 @@ fn graph_changed(obj: usize) {
     }
 }
 
+/// The object is gone (deleted): its bones with it.
+pub fn remove(obj: usize) {
+    all().remove(&obj);
+}
+
 pub fn graph_of(obj: usize) -> usize {
     all().get(&obj).map(|p| p.graph).unwrap_or(0)
 }

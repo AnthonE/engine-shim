@@ -115,8 +115,9 @@ impl Texture {
         self.compressed.as_ref().and_then(|c| c.1.get(mip).copied()).unwrap_or_else(|| self.mip_len(mip))
     }
 
-    /// A mip's raw pixels (its first face and slice), decompressed.
-    fn raw(&self, mip: usize) -> Result<Vec<u8>, String> {
+    /// A mip's raw pixels (its first face and slice), decompressed: blocks,
+    /// for the block formats, as a GPU takes them.
+    pub fn raw(&self, mip: usize) -> Result<Vec<u8>, String> {
         let mut at = self.data;
         for level in (mip + 1..self.mips).rev() { at += self.stored_len(level); }
         let stored = self.bytes.get(at..at + self.stored_len(mip)).ok_or("vtex: mip past the end")?;

@@ -1998,6 +1998,28 @@ pub unsafe fn g_pMeshSystem_CreateSceneObject(model: usize, transform: usize, _d
     crate::handles::register(obj, "SceneObject", &[model, world])
 }
 pub unsafe fn g_pMeshSystem_ChangeModel(obj: usize, model: usize) { animation::change_model(obj, model) }
+
+/// A scene object deleted (a model's, a light's...): gone, and managed lets
+/// go of its handle.
+pub unsafe fn g_pSceneSystem_DeleteSceneObject(obj: usize) {
+    animation::remove(obj);
+    crate::camera::set_shown(obj, true);
+    crate::handles::free(obj);
+}
+pub unsafe fn g_pSceneSystem_DeleteSceneObjectAtFrameEnd(obj: usize) { unsafe { g_pSceneSystem_DeleteSceneObject(obj) } }
+pub unsafe fn CSceneObject_SetRenderingEnabled(obj: usize, on: i32) { crate::camera::set_shown(obj, on != 0) }
+pub unsafe fn CSceneObject_EnableRendering(obj: usize) { crate::camera::set_shown(obj, true) }
+pub unsafe fn CSceneObject_DisableRendering(obj: usize) { crate::camera::set_shown(obj, false) }
+pub unsafe fn CSceneObject_IsRenderingEnabled(obj: usize) -> i32 { crate::camera::shown(obj) as i32 }
+
+// ---- cameras: what managed asks to see (camera.rs)
+
+pub unsafe fn CCameraRenderer_AddSceneWorld(camera: usize, world: usize) { crate::camera::add_world(camera, world) }
+pub unsafe fn CCameraRenderer_ClearSceneWorlds(camera: usize) { crate::camera::clear_worlds(camera) }
+/// The camera's view drawn into managed's bitmap (RGBA, four bytes a pixel).
+pub unsafe fn CCameraRenderer_RenderToBitmap(camera: usize, pixels: usize, width: i32, height: i32, bpp: i32) {
+    crate::camera::to_bitmap(camera, pixels, width, height, bpp)
+}
 pub unsafe fn CSceneObject_GetModelHandle(obj: usize) -> usize { animation::model_of(obj) }
 pub unsafe fn CScnnmtblbjct_GetModelHandle(obj: usize) -> usize { animation::model_of(obj) }
 /// How many animation events the object's sequences passed since managed last heard.

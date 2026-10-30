@@ -503,9 +503,12 @@ dependencies = [
 name = "engine2"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "glam 0.30.10",
  "k256",
  "lz4_flex",
  "meshopt",
+ "pollster",
  "rapier3d",
  "ruzstd",
  "serde_json",
@@ -513,6 +516,7 @@ dependencies = [
  "tiny-keccak",
  "tokio",
  "ureq",
+ "wgpu",
  "wtransport",
 ]
 
@@ -1794,12 +1798,8 @@ dependencies = [
 name = "render"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
  "engine2",
- "glam 0.30.10",
  "png",
- "pollster",
- "wgpu",
 ]
 
 [[package]]

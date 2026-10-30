@@ -95,6 +95,11 @@ pub fn related(obj: usize, ty: &str) -> i32 {
     o.links.iter().filter_map(|l| i.get(l)).find(|l| l.ty == ty).map(|l| l.handle).unwrap_or(0)
 }
 
+/// Every object of type `ty` made with `link` (the scene objects in a world).
+pub fn made_with(ty: &str, link: usize) -> Vec<usize> {
+    index().lock().unwrap().iter().filter(|(_, o)| o.ty == ty && o.links.contains(&link)).map(|(&p, _)| p).collect()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -526,10 +526,36 @@ What the game's components still can't do:
 
 ## What a client draws (begun)
 
-Nothing above draws: servers and headless players don't. A client will,
-and `render/` is its start: a model as s&box compiles it, read by
-engine2's readers and drawn with wgpu (Vulkan here, through Mesa's
-lavapipe in a machine with no GPU; WebGPU in a browser one day).
+Servers and headless players don't draw. A client will, and
+`engine2/src/render/` is its start (the `render` feature, on by
+default): models as s&box compiles them, read by engine2's readers and
+drawn with wgpu (Vulkan here, through Mesa's lavapipe on a machine with
+no GPU; WebGPU in a browser one day).
+
+**The engine draws what managed asks for.** Managed asks a camera for
+its view as pixels (`CameraComponent.RenderToBitmap`): it sets the native
+camera renderer's position, angles, field of view and planes, gives it
+its scene worlds (`AddSceneWorld`), and calls `RenderToBitmap`. Here that
+draws every scene object made in those worlds and shown
+(`SetRenderingEnabled`), at the transform and tint managed set, skinned
+by the pose animation.rs gives its bones (each vertex's `BLENDINDICES`
+and `BLENDWEIGHT`, through the model's bone remapping table), and the
+maps in those worlds: each world node's objects (`world.vwrld_c`, its
+nodes' `.vwnod_c`), the level's geometry batched by material. Textures
+go to the GPU as their BC blocks where it takes them (decoded only
+where it doesn't), each texture and material read once. Scene objects
+deleted (`DeleteSceneObject`) go, their handles freed.
+
+Measured: the headless player of Sandbox on flatgrass (with the map
+package's materials beside its pak, `ENGINE2_CONTENT`), its watcher
+asking the scene's camera for a frame every ten seconds: 266 objects
+(259 of them the map's), every material and texture found; the roof of
+the spawn building, its scaffolding, the grass to the horizon, and the
+physgun in the player's hand, posed by its animation graph. What isn't
+drawn yet: the sky (a flat colour), the map's own sun (one of ours), and
+glass and other translucent materials. A headless player has no
+tonemapper (`Graphics.IsAvailable` is false with the empty render
+device), so the watcher turns auto exposure off for its frames.
 
 - **Meshes** (`engine2/src/assets/mesh.rs`): the vertex and index
   buffers a model's CTRL names (an MBUF block per embedded mesh, or a
@@ -544,7 +570,7 @@ lavapipe in a machine with no GPU; WebGPU in a browser one day).
 - **Materials** (`assets/material.rs`): the shader and its parameters.
   Of the 173 materials in a Sandbox server's cache, 158 are
   `complex.shader`, 8 `blendable`, 6 glass, 1 skin: no custom shaders.
-- **Shaders** (`render/src/shader.wgsl`): our own `complex` and
+- **Shaders** (`engine2/src/render/shader.wgsl`): our own `complex` and
   `blendable`, written from what their compiled textures hold:
   `complex`'s colour (its alpha the alpha test's mask, or metalness),
   normal (x and y, roughness in blue), occlusion and tint mask;
@@ -669,7 +695,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
-| `render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`); `render` draws one into a PNG |
+| `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
+| `engine2/src/camera.rs` | cameras managed asks for pixels: their worlds, what's shown, the view drawn into managed's bitmap |
+| `render/` | the renderer from the command line: one model drawn into a PNG |
 | `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders (case blind, as managed names them), the game's own, mounted paks |
 | `engine2/src/world.rs` | maps: worlds from a map's pak, their folder and entity lumps |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |

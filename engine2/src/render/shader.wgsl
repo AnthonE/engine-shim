@@ -42,12 +42,25 @@ struct Material {
 @group(1) @binding(7) var occlusion_b: texture_2d<f32>;
 @group(1) @binding(8) var tint_mask: texture_2d<f32>;
 
+// each object: where it is, and its tint (a scene object's)
+struct Object {
+    model: mat4x4<f32>,
+    tint: vec4<f32>,
+    // x: skinned (1)
+    flags: vec4<f32>,
+};
+@group(2) @binding(0) var<uniform> object: Object;
+// a skinned object's bones: each one's pose over its bind pose's inverse
+@group(2) @binding(1) var<storage, read> bones: array<mat4x4<f32>>;
+
 struct In {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) blend: vec4<f32>,
     @location(4) paint: vec4<f32>,
+    @location(5) bone: vec4<u32>,
+    @location(6) weight: vec4<f32>,
 };
 
 struct Out {
@@ -62,9 +75,19 @@ struct Out {
 @vertex
 fn vs_main(v: In) -> Out {
     var o: Out;
-    o.clip = view.view_proj * vec4<f32>(v.position, 1.0);
-    o.world = v.position;
-    o.normal = v.normal;
+    var position = vec4<f32>(v.position, 1.0);
+    var normal = vec4<f32>(v.normal, 0.0);
+    if (object.flags.x > 0.5 && dot(v.weight, vec4<f32>(1.0)) > 0.0) {
+        let last = arrayLength(&bones) - 1u;
+        let skin = bones[min(v.bone.x, last)] * v.weight.x + bones[min(v.bone.y, last)] * v.weight.y
+            + bones[min(v.bone.z, last)] * v.weight.z + bones[min(v.bone.w, last)] * v.weight.w;
+        position = skin * position;
+        normal = skin * normal;
+    }
+    let world = object.model * position;
+    o.clip = view.view_proj * world;
+    o.world = world.xyz;
+    o.normal = normalize((object.model * normal).xyz);
     o.uv = v.uv;
     o.blend = v.blend;
     o.paint = v.paint;
@@ -140,7 +163,7 @@ fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32>
         rough = packed.b;
     }
     if (blendable) { rough = occ.b; }
-    let base = albedo.rgb * tint;
+    let base = albedo.rgb * tint * object.tint.rgb;
     if (!blendable && material.params.z > 0.5) { metal = albedo.a; }
     let l = normalize(view.sun.xyz);
     let v = normalize(view.eye.xyz - i.world);

@@ -13,8 +13,11 @@ mod elo;
 mod handles;
 mod impls;
 mod animation;
+mod camera;
 mod animgraph;
 pub mod assets;
+#[cfg(feature = "render")]
+pub mod render;
 mod fs;
 mod models;
 mod net;
