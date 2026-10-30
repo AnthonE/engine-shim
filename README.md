@@ -524,6 +524,53 @@ What the game's components still can't do:
   to download; `tools/map.sh` takes the newest revision sbox.game's CDN
   still holds.
 
+## What a client draws (begun)
+
+Nothing above draws: servers and headless players don't. A client will,
+and `render/` is its start: a model as s&box compiles it, read by
+engine2's readers and drawn with wgpu (Vulkan here, through Mesa's
+lavapipe in a machine with no GPU; WebGPU in a browser one day).
+
+- **Meshes** (`engine2/src/assets/mesh.rs`): the vertex and index
+  buffers a model's CTRL names (an MBUF block per embedded mesh, or a
+  `.vmesh_c`'s VBIB), meshopt-compressed as s&box compiles them; each
+  vertex's inputs by semantic and DXGI format. Normals come octahedral in
+  a word's first twenty bits (measured against the faces around each
+  vertex: 0.94 to 0.997 agreement over five models, where other readings
+  of the same bits give 0.6 or less). LOD 0, the default mesh groups.
+- **Textures** (`assets/texture.rs`): the `.vtex_c` header, its mips
+  stored smallest first, each zstd- or LZ4-compressed as its extra data
+  says; BC1 to BC7 decoded (texture2ddecoder), to RGBA8.
+- **Materials** (`assets/material.rs`): the shader and its parameters.
+  Of the 173 materials in a Sandbox server's cache, 158 are
+  `complex.shader`, 8 `blendable`, 6 glass, 1 skin: no custom shaders.
+- **Shaders** (`render/src/shader.wgsl`): our own `complex` and
+  `blendable`, written from what their compiled textures hold:
+  `complex`'s colour (its alpha the alpha test's mask, or metalness),
+  normal (x and y, roughness in blue), occlusion and tint mask;
+  `blendable`'s two layers (each a colour, a normal and a map of
+  metalness, occlusion and roughness), blended by the vertices' paint
+  (TEXCOORD4) and tinted by it (TEXCOORD5). Lit by a sun and a sky;
+  tangents from the surface's derivatives, as s&box's meshes carry none.
+
+Measured against the thumbnails Facepunch's own engine rendered for
+sbox.game, on seven of Sandbox's props (the TV, oil drum, office chair,
+washing machine, microwave, traffic cone, wooden chair): each has its
+shape, textures, colours and materials' character. What differs: glass
+and other translucent and decal materials aren't drawn yet (the
+microwave's window shows its inside), the lighting is a plain sky rather
+than a studio's reflections, and the office chair's back lacks a detail
+layer its material has.
+
+```sh
+sudo apt-get install mesa-vulkan-drivers        # no GPU: lavapipe
+sh tools/package.sh facepunch.tv ../content     # sbox.game's files, never committed
+ENGINE2_CONTENT=../content cargo run --release -p render -- models/sbox_props/tv/tv.vmdl tv.png 35 15 512
+```
+
+`RENDER_DEBUG` shows what the shader read (1 base colour, 2 normal, 3
+occlusion, 4 roughness).
+
 ## Reproduce
 
 On a fresh Linux machine with Rust, `tools/setup.sh` does all of the
@@ -621,7 +668,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
-| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
+| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
+| `render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`); `render` draws one into a PNG |
 | `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders (case blind, as managed names them), the game's own, mounted paks |
 | `engine2/src/world.rs` | maps: worlds from a map's pak, their folder and entity lumps |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
@@ -637,6 +685,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
 | `tools/jointrig.sh`, `tools/jointrig/` | five rigs of s&box's joint components, and what each does |
 | `tools/map.sh` | a map package's paks from sbox.game, into a project |
+| `tools/package.sh` | a package's files from sbox.game, at their game paths, for development (never committed) |
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 

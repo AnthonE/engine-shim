@@ -14,7 +14,7 @@ mod handles;
 mod impls;
 mod animation;
 mod animgraph;
-mod assets;
+pub mod assets;
 mod fs;
 mod models;
 mod net;

@@ -379,7 +379,7 @@ mod tests {
         // played through and on past its end, a frame at a time: each event once
         for _ in 0..((duration * 60.0) as usize + 30) { super::update(obj, 1.0 / 60.0); }
         assert_eq!(unsafe { crate::impls::CScnnmtblbjct_PendingAnimationEvents(obj) }, 2);
-        unsafe { crate::impls::CScnnmtblbjct_RunAnimationEvents(obj, heard as usize) };
+        unsafe { crate::impls::CScnnmtblbjct_RunAnimationEvents(obj, heard as *const () as usize) };
         assert_eq!(unsafe { crate::impls::CScnnmtblbjct_PendingAnimationEvents(obj) }, 0, "heard once");
         let h = HEARD.lock().unwrap().clone();
         eprintln!("{h:?}");

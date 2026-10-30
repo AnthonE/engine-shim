@@ -1,0 +1,14 @@
+[package]
+name = "render"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "What a client draws: s&box's models, materials and textures (engine2's readers) on wgpu, so WebGPU in a browser too"
+
+[dependencies]
+engine2 = { path = "../engine2" }
+wgpu = "25"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+glam = "0.30"
+png = "0.17"
