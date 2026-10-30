@@ -13,8 +13,11 @@ mod elo;
 mod handles;
 mod impls;
 mod animation;
+mod camera;
 mod animgraph;
-mod assets;
+pub mod assets;
+#[cfg(feature = "render")]
+pub mod render;
 mod fs;
 mod models;
 mod net;
@@ -33,6 +36,9 @@ use std::sync::OnceLock;
 /// The managed callbacks managed hands over (logging, handles, the frame),
 /// copied out: managed's array is pinned only for the call that gives it.
 pub static MANAGED: OnceLock<Vec<usize>> = OnceLock::new();
+
+/// A string's token as s&box hashes it (StringToken: an entity's keys).
+pub fn string_token(s: &str) -> u32 { handles::murmur2(s) }
 
 /// Managed callback `i` (slots.rs's M_* constants), or null before igen_engine.
 pub fn managed(i: usize) -> usize {

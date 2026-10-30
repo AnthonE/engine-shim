@@ -75,6 +75,23 @@ pub fn entity(ptr: usize) -> Option<&'static Entity> {
     entities().contains(&ptr).then(|| unsafe { &*(ptr as *const Entity) })
 }
 
+/// What a world draws: its nodes' scene objects (assets/worldnode.rs),
+/// read when first asked for.
+pub fn scene_objects(ptr: usize) -> Vec<crate::assets::worldnode::Placed> {
+    let Some(folder) = with(ptr, |w| w.folder.to_string_lossy().into_owned()) else { return Vec::new() };
+    static READ: OnceLock<Mutex<HashMap<String, Vec<crate::assets::worldnode::Placed>>>> = OnceLock::new();
+    let read = READ.get_or_init(Default::default);
+    if let Some(o) = read.lock().unwrap().get(&folder) { return o.clone(); }
+    let out = crate::assets::worldnode::scene_objects(&folder, crate::fs::read);
+    read.lock().unwrap().insert(folder, out.clone());
+    out
+}
+
+/// The worlds made in a scene world.
+pub fn in_scene_world(scene_world: usize) -> Vec<usize> {
+    worlds().iter().filter(|(_, w)| w.scene_world == scene_world).map(|(&p, _)| p).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::handles::murmur2;

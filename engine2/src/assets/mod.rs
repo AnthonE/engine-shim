@@ -4,9 +4,13 @@ pub mod anim;
 pub mod entities;
 pub mod kv3;
 pub mod kv3text;
+pub mod material;
+pub mod mesh;
 pub mod model;
 pub mod resource;
+pub mod texture;
 pub mod vpk;
+pub mod worldnode;
 
 #[cfg(test)]
 mod tests {

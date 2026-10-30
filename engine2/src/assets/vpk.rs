@@ -75,6 +75,11 @@ impl Vpk {
         Ok(Vpk { path: path.to_path_buf(), data: end as u64, entries })
     }
 
+    /// The paths it holds.
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().map(String::as_str)
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

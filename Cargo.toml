@@ -1,5 +1,5 @@
 [workspace]
-members = ["engine2"]
+members = ["engine2", "render"]
 resolver = "2"
 
 [profile.release]

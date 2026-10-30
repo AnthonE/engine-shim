@@ -81,6 +81,22 @@ index bfed16cd..b39f352c 100644
  	</ItemGroup>
  
  	<Target Name="_ResolveCopyLocalNuGetPkgXmls" AfterTargets="ResolveReferences">
+diff --git a/engine/Sandbox.Engine/Scene/Components/Map/MapInstance.cs b/engine/Sandbox.Engine/Scene/Components/Map/MapInstance.cs
+index c500b993..39c531fb 100644
+--- a/engine/Sandbox.Engine/Scene/Components/Map/MapInstance.cs
++++ b/engine/Sandbox.Engine/Scene/Components/Map/MapInstance.cs
+@@ -933,6 +933,11 @@ file class MapComponentMapLoader : SceneMapLoader
+ 			AddMapObjectComponent( go, kv );
+ 		}
+ 
++		// engine-shim: every player builds this from the map's pak too, so it stays out of the snapshot, as lights do
++		// (a networked prop is spawned instead); sent as well, a player had each twice, the copy without its scene objects
++		if ( go.IsValid() && go.NetworkMode == NetworkMode.Snapshot )
++			go.NetworkMode = NetworkMode.Never;
++
+ 		go.Enabled = true;
+ 
+ 		using ( CallbackBatch.Batch() )
 diff --git a/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.Connections.cs b/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.Connections.cs
 index e58f6920..40ee220a 100644
 --- a/engine/Sandbox.Engine/Systems/Networking/System/NetworkSystem.Connections.cs

@@ -1460,13 +1460,13 @@ unsafe extern "C" fn s77(_a0: usize, _a1: usize) { hit(77);  }
 unsafe extern "C" fn s78(_a0: usize, _a1: usize) { hit(78);  }
 unsafe extern "C" fn s79(_a0: usize) { hit(79);  }
 unsafe extern "C" fn s80(_a0: usize, _a1: i32) -> usize { hit(80); crate::trace::object(80) }
-unsafe extern "C" fn s81(_a0: usize) { hit(81);  }
-unsafe extern "C" fn s82(_a0: usize, _a1: usize) { hit(82);  }
+unsafe extern "C" fn s81(_a0: usize) { hit(81); unsafe { crate::impls::CCameraRenderer_ClearSceneWorlds(_a0) } }
+unsafe extern "C" fn s82(_a0: usize, _a1: usize) { hit(82); unsafe { crate::impls::CCameraRenderer_AddSceneWorld(_a0, _a1) } }
 unsafe extern "C" fn s83(_a0: usize, _a1: usize) { hit(83);  }
 unsafe extern "C" fn s84(_a0: usize, _a1: usize) { hit(84);  }
 unsafe extern "C" fn s85(_a0: usize, _a1: usize, _a2: usize, _a3: usize) -> i32 { hit(85); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s86(_a0: usize, _a1: usize, _a2: i32) { hit(86);  }
-unsafe extern "C" fn s87(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) { hit(87);  }
+unsafe extern "C" fn s87(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) { hit(87); unsafe { crate::impls::CCameraRenderer_RenderToBitmap(_a0, _a1, _a2, _a3, _a4) } }
 unsafe extern "C" fn s88(_a0: usize) { hit(88);  }
 unsafe extern "C" fn s89(_a0: usize, _a1: i32, _a2: i32, _a3: i32, _a4: i32) { hit(89);  }
 unsafe extern "C" fn s90(_a0: usize, _a1: i32, _a2: i32) { hit(90);  }
@@ -2328,9 +2328,9 @@ unsafe extern "C" fn s945(_a0: usize) -> i32 { hit(945); unsafe { crate::impls::
 unsafe extern "C" fn s946(_a0: usize, _a1: i32) { hit(946); unsafe { crate::impls::CScnnmtblbjct_SetSequenceBlending(_a0, _a1) } }
 unsafe extern "C" fn s947(_a0: usize) -> f32 { hit(947); unsafe { crate::impls::CScnnmtblbjct_GetPlaybackRate(_a0) } }
 unsafe extern "C" fn s948(_a0: usize, _a1: f32) { hit(948); unsafe { crate::impls::CScnnmtblbjct_SetPlaybackRate(_a0, _a1) } }
-unsafe extern "C" fn s949(_a0: usize) -> i32 { hit(949); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s950(_a0: usize, _a1: usize) { hit(950);  }
-unsafe extern "C" fn s951(_a0: usize, _a1: usize) { hit(951);  }
+unsafe extern "C" fn s949(_a0: usize) -> i32 { hit(949); unsafe { crate::impls::CScnnmtblbjct_PendingAnimationEvents(_a0) } }
+unsafe extern "C" fn s950(_a0: usize, _a1: usize) { hit(950); unsafe { crate::impls::CScnnmtblbjct_RunAnimationEvents(_a0, _a1) } }
+unsafe extern "C" fn s951(_a0: usize, _a1: usize) { hit(951); unsafe { crate::impls::CScnnmtblbjct_DispatchTagEvents(_a0, _a1) } }
 unsafe extern "C" fn s952(_a0: usize) { hit(952); unsafe { crate::impls::CScnnmtblbjct_ClearPhysicsBones(_a0) } }
 unsafe extern "C" fn s953(_a0: usize, _a1: u16, _a2: usize) { hit(953); unsafe { crate::impls::CScnnmtblbjct_SetPhysicsBone(_a0, _a1, _a2) } }
 unsafe extern "C" fn s954(_a0: usize) -> S_Transform { hit(954); unsafe { core::mem::zeroed() } }
@@ -2409,7 +2409,7 @@ unsafe extern "C" fn s1026(_a0: usize) -> usize { hit(1026); _a0 }
 unsafe extern "C" fn s1027(_a0: usize) -> usize { hit(1027); _a0 }
 unsafe extern "C" fn s1028(_a0: usize, _a1: usize) { hit(1028); unsafe { crate::state::set_from::<S_Vector3>(_a0, 47, _a1) } }
 unsafe extern "C" fn s1029(_a0: usize) -> S_Vector3 { hit(1029); crate::state::get::<S_Vector3>(_a0, 47) }
-unsafe extern "C" fn s1030(_a0: usize, _a1: usize) { hit(1030);  }
+unsafe extern "C" fn s1030(_a0: usize, _a1: usize) { hit(1030); unsafe { crate::impls::CScnLghtbjct_SetWorldDirection(_a0, _a1) } }
 unsafe extern "C" fn s1031(_a0: usize) -> S_Vector3 { hit(1031); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1032(_a0: usize, _a1: usize) { hit(1032); unsafe { crate::state::set_from::<S_Vector3>(_a0, 48, _a1) } }
 unsafe extern "C" fn s1033(_a0: usize, _a1: usize) { hit(1033);  }
@@ -2624,12 +2624,12 @@ unsafe extern "C" fn s1241(_a0: usize, _a1: usize) { hit(1241);  }
 unsafe extern "C" fn s1242(_a0: usize) { hit(1242);  }
 unsafe extern "C" fn s1243(_a0: usize, _a1: usize, _a2: S_Sandbox_StringToken, _a3: i32) { hit(1243);  }
 unsafe extern "C" fn s1244(_a0: usize) -> i32 { hit(1244); 1 }
-unsafe extern "C" fn s1245(_a0: usize) -> i32 { hit(1245); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1245(_a0: usize) -> i32 { hit(1245); unsafe { crate::impls::CSceneObject_IsRenderingEnabled(_a0) } }
 unsafe extern "C" fn s1246(_a0: usize) { hit(1246);  }
 unsafe extern "C" fn s1247(_a0: usize) { hit(1247);  }
-unsafe extern "C" fn s1248(_a0: usize) { hit(1248);  }
-unsafe extern "C" fn s1249(_a0: usize) { hit(1249);  }
-unsafe extern "C" fn s1250(_a0: usize, _a1: i32) { hit(1250);  }
+unsafe extern "C" fn s1248(_a0: usize) { hit(1248); unsafe { crate::impls::CSceneObject_DisableRendering(_a0) } }
+unsafe extern "C" fn s1249(_a0: usize) { hit(1249); unsafe { crate::impls::CSceneObject_EnableRendering(_a0) } }
+unsafe extern "C" fn s1250(_a0: usize, _a1: i32) { hit(1250); unsafe { crate::impls::CSceneObject_SetRenderingEnabled(_a0, _a1) } }
 unsafe extern "C" fn s1251(_a0: usize) -> f32 { hit(1251); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1252(_a0: usize, _a1: usize) { hit(1252); unsafe { crate::state::set_from::<S_Transform>(_a0, 34, _a1) } }
 unsafe extern "C" fn s1253(_a0: usize) -> S_Transform { hit(1253); unsafe { crate::impls::CSceneObject_GetCTransform(_a0) } }
@@ -2672,7 +2672,7 @@ unsafe extern "C" fn s1289(_a0: usize) -> usize { hit(1289); _a0 }
 unsafe extern "C" fn s1290(_a0: usize, _a1: usize) { hit(1290);  }
 unsafe extern "C" fn s1291(_a0: usize, _a1: usize, _a2: usize, _a3: i32) { hit(1291);  }
 unsafe extern "C" fn s1292(_a0: usize) -> usize { hit(1292); crate::trace::object(1292) }
-unsafe extern "C" fn s1293(_a0: usize, _a1: usize) { hit(1293);  }
+unsafe extern "C" fn s1293(_a0: usize, _a1: usize) { hit(1293); unsafe { crate::impls::CScnSkyBxbjct_SetMaterial(_a0, _a1) } }
 unsafe extern "C" fn s1294(_a0: usize, _a1: usize) { hit(1294); unsafe { crate::state::set_from::<S_Vector3>(_a0, 140, _a1) } }
 unsafe extern "C" fn s1295(_a0: usize) -> S_Vector3 { hit(1295); crate::state::get::<S_Vector3>(_a0, 140) }
 unsafe extern "C" fn s1296(_a0: usize, _a1: i32) { hit(1296); crate::state::set(_a0, 141, _a1) }
@@ -3025,7 +3025,7 @@ unsafe extern "C" fn s1642(_a0: usize) { hit(1642);  }
 unsafe extern "C" fn s1643(_a0: i64) -> i64 { hit(1643); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1644(_a0: i32) -> i32 { hit(1644); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1645() -> i32 { hit(1645); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1646(_a0: usize, _a1: S_System_Guid) -> usize { hit(1646); crate::trace::object(1646) }
+unsafe extern "C" fn s1646(_a0: usize, _a1: S_System_Guid) -> usize { hit(1646); unsafe { crate::impls::Glue_Resources_GetMaterial(_a0, _a1) } }
 unsafe extern "C" fn s1647(_a0: usize, _a1: S_System_Guid) -> usize { hit(1647); crate::trace::object(1647) }
 unsafe extern "C" fn s1648() -> i32 { hit(1648); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1649() -> i32 { hit(1649); unsafe { core::mem::zeroed() } }
@@ -3071,7 +3071,7 @@ unsafe extern "C" fn s1688(_a0: usize) -> i32 { hit(1688); unsafe { core::mem::z
 unsafe extern "C" fn s1689(_a0: usize) -> usize { hit(1689); crate::trace::object(1689) }
 unsafe extern "C" fn s1690(_a0: usize) -> usize { hit(1690); crate::trace::object(1690) }
 unsafe extern "C" fn s1691(_a0: usize) -> S_System_Guid { hit(1691); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1692(_a0: usize) -> usize { hit(1692); crate::trace::object(1692) }
+unsafe extern "C" fn s1692(_a0: usize) -> usize { hit(1692); unsafe { crate::impls::IMaterial2_GetName(_a0) } }
 unsafe extern "C" fn s1693(_a0: usize) -> usize { hit(1693); crate::trace::object(1693) }
 unsafe extern "C" fn s1694(_a0: usize) -> u64 { hit(1694); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1695(_a0: usize) -> i32 { hit(1695); 1 }
@@ -3087,7 +3087,7 @@ unsafe extern "C" fn s1704(_a0: usize, _a1: S_Sandbox_StringToken, _a2: f32) -> 
 unsafe extern "C" fn s1705(_a0: usize, _a1: S_Sandbox_StringToken) -> usize { hit(1705); crate::trace::object(1705) }
 unsafe extern "C" fn s1706(_a0: usize, _a1: usize) -> i32 { hit(1706); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1707(_a0: usize, _a1: usize, _a2: usize) { hit(1707);  }
-unsafe extern "C" fn s1708(_a0: usize, _a1: usize, _a2: usize) -> usize { hit(1708); crate::trace::object(1708) }
+unsafe extern "C" fn s1708(_a0: usize, _a1: usize, _a2: usize) -> usize { hit(1708); unsafe { crate::impls::IMaterial2_GetString(_a0, _a1, _a2) } }
 unsafe extern "C" fn s1709(_a0: usize, _a1: usize, _a2: usize) { hit(1709);  }
 unsafe extern "C" fn s1710(_a0: usize, _a1: usize) -> S_Vector4 { hit(1710); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1711(_a0: usize, _a1: usize, _a2: usize) { hit(1711);  }
@@ -3649,17 +3649,17 @@ unsafe extern "C" fn s2266(_a0: i32, _a1: i32, _a2: i32, _a3: i32, _a4: i64) -> 
 unsafe extern "C" fn s2267(_a0: usize, _a1: i64, _a2: usize, _a3: i64, _a4: i32, _a5: i32, _a6: i32, _a7: i32) -> i32 { hit(2267); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2268(_a0: usize) { hit(2268);  }
 unsafe extern "C" fn s2269() -> usize { hit(2269); crate::trace::object(2269) }
-unsafe extern "C" fn s2270(_a0: usize) -> i32 { hit(2270); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2271(_a0: usize) -> i32 { hit(2271); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2272(_a0: usize) -> i64 { hit(2272); crate::state::get::<i64>(_a0, 164) }
-unsafe extern "C" fn s2273(_a0: usize) -> i32 { hit(2273); crate::state::get::<i32>(_a0, 206) }
-unsafe extern "C" fn s2274(_a0: usize) -> i32 { hit(2274); crate::state::get::<i32>(_a0, 207) }
-unsafe extern "C" fn s2275(_a0: usize) -> i64 { hit(2275); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2276(_a0: usize) -> u64 { hit(2276); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2277(_a0: usize) -> f32 { hit(2277); crate::state::get::<f32>(_a0, 208) }
-unsafe extern "C" fn s2278(_a0: usize) -> f64 { hit(2278); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2279(_a0: usize) -> usize { hit(2279); crate::trace::object(2279) }
-unsafe extern "C" fn s2280(_a0: usize) -> S_Vector3 { hit(2280); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2270(_a0: usize) -> i32 { hit(2270); unsafe { crate::impls::KeyValues3_IsArray(_a0) } }
+unsafe extern "C" fn s2271(_a0: usize) -> i32 { hit(2271); unsafe { crate::impls::KeyValues3_IsTable(_a0) } }
+unsafe extern "C" fn s2272(_a0: usize) -> i64 { hit(2272); unsafe { crate::impls::KeyValues3_GetType(_a0) } }
+unsafe extern "C" fn s2273(_a0: usize) -> i32 { hit(2273); unsafe { crate::impls::KeyValues3_GetValueBool(_a0) } }
+unsafe extern "C" fn s2274(_a0: usize) -> i32 { hit(2274); unsafe { crate::impls::KeyValues3_GetValueInt(_a0) } }
+unsafe extern "C" fn s2275(_a0: usize) -> i64 { hit(2275); unsafe { crate::impls::KeyValues3_GetValueInt64(_a0) } }
+unsafe extern "C" fn s2276(_a0: usize) -> u64 { hit(2276); unsafe { crate::impls::KeyValues3_GetValueUint64(_a0) } }
+unsafe extern "C" fn s2277(_a0: usize) -> f32 { hit(2277); unsafe { crate::impls::KeyValues3_GetValueFloat(_a0) } }
+unsafe extern "C" fn s2278(_a0: usize) -> f64 { hit(2278); unsafe { crate::impls::KeyValues3_GetValueDouble(_a0) } }
+unsafe extern "C" fn s2279(_a0: usize) -> usize { hit(2279); unsafe { crate::impls::KeyValues3_GetValueString(_a0) } }
+unsafe extern "C" fn s2280(_a0: usize) -> S_Vector3 { hit(2280); unsafe { crate::impls::KeyValues3_GetValueVector(_a0) } }
 unsafe extern "C" fn s2281(_a0: usize) -> S_Color32 { hit(2281); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2282(_a0: usize, _a1: i32) { hit(2282); crate::state::set(_a0, 206, _a1) }
 unsafe extern "C" fn s2283(_a0: usize, _a1: usize) { hit(2283);  }
@@ -3669,19 +3669,19 @@ unsafe extern "C" fn s2286(_a0: usize, _a1: f32) { hit(2286); crate::state::set(
 unsafe extern "C" fn s2287(_a0: usize, _a1: usize, _a2: usize) { hit(2287);  }
 unsafe extern "C" fn s2288(_a0: usize, _a1: usize, _a2: i32) { hit(2288);  }
 unsafe extern "C" fn s2289(_a0: usize, _a1: usize, _a2: f32) { hit(2289);  }
-unsafe extern "C" fn s2290(_a0: usize, _a1: usize) -> usize { hit(2290); crate::trace::object(2290) }
-unsafe extern "C" fn s2291(_a0: usize, _a1: usize, _a2: i32) -> i32 { hit(2291); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2292(_a0: usize, _a1: usize, _a2: f32) -> f32 { hit(2292); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2293(_a0: usize, _a1: usize, _a2: usize) -> S_Vector3 { hit(2293); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2290(_a0: usize, _a1: usize) -> usize { hit(2290); unsafe { crate::impls::KeyValues3_GetMemberString(_a0, _a1) } }
+unsafe extern "C" fn s2291(_a0: usize, _a1: usize, _a2: i32) -> i32 { hit(2291); unsafe { crate::impls::KeyValues3_GetMemberInt(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2292(_a0: usize, _a1: usize, _a2: f32) -> f32 { hit(2292); unsafe { crate::impls::KeyValues3_GetMemberFloat(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2293(_a0: usize, _a1: usize, _a2: usize) -> S_Vector3 { hit(2293); unsafe { crate::impls::KeyValues3_GetMemberVector(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2294(_a0: usize) { hit(2294);  }
-unsafe extern "C" fn s2295(_a0: usize) -> i32 { hit(2295); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2295(_a0: usize) -> i32 { hit(2295); unsafe { crate::impls::KeyValues3_GetArrayLength(_a0) } }
 unsafe extern "C" fn s2296(_a0: usize) -> usize { hit(2296); crate::trace::object(2296) }
-unsafe extern "C" fn s2297(_a0: usize, _a1: i32) -> usize { hit(2297); crate::trace::object(2297) }
+unsafe extern "C" fn s2297(_a0: usize, _a1: i32) -> usize { hit(2297); unsafe { crate::impls::KeyValues3_GetArrayElement(_a0, _a1) } }
 unsafe extern "C" fn s2298(_a0: usize, _a1: usize) -> usize { hit(2298); crate::trace::object(2298) }
 unsafe extern "C" fn s2299(_a0: usize) { hit(2299);  }
-unsafe extern "C" fn s2300(_a0: usize) -> i32 { hit(2300); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2301(_a0: usize, _a1: i32) -> usize { hit(2301); crate::trace::object(2301) }
-unsafe extern "C" fn s2302(_a0: usize, _a1: i32) -> usize { hit(2302); crate::trace::object(2302) }
+unsafe extern "C" fn s2300(_a0: usize) -> i32 { hit(2300); unsafe { crate::impls::KeyValues3_GetMemberCount(_a0) } }
+unsafe extern "C" fn s2301(_a0: usize, _a1: i32) -> usize { hit(2301); unsafe { crate::impls::KeyValues3_GetMember(_a0, _a1) } }
+unsafe extern "C" fn s2302(_a0: usize, _a1: i32) -> usize { hit(2302); unsafe { crate::impls::KeyValues3_GetMemberName(_a0, _a1) } }
 unsafe extern "C" fn s2303(_a0: usize) -> usize { hit(2303); crate::trace::object(2303) }
 unsafe extern "C" fn s2304(_a0: i32) -> i32 { hit(2304); unsafe { crate::impls::LZ4Glue_CompressBound(_a0) } }
 unsafe extern "C" fn s2305(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2305); unsafe { crate::impls::LZ4Glue_Compress(_a0, _a1, _a2, _a3) } }
@@ -4358,8 +4358,8 @@ unsafe extern "C" fn s2975(_a0: usize) -> i32 { hit(2975); unsafe { core::mem::z
 unsafe extern "C" fn s2976() { hit(2976);  }
 unsafe extern "C" fn s2977(_a0: usize) { hit(2977);  }
 unsafe extern "C" fn s2978() -> i64 { hit(2978); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2979(_a0: usize) { hit(2979);  }
-unsafe extern "C" fn s2980(_a0: usize) { hit(2980);  }
+unsafe extern "C" fn s2979(_a0: usize) { hit(2979); unsafe { crate::impls::g_pSceneSystem_DeleteSceneObject(_a0) } }
+unsafe extern "C" fn s2980(_a0: usize) { hit(2980); unsafe { crate::impls::g_pSceneSystem_DeleteSceneObjectAtFrameEnd(_a0) } }
 unsafe extern "C" fn s2981(_a0: usize, _a1: usize) -> i32 { hit(2981); crate::handles::create(2981, "SceneSkyBoxObject", &[_a0, _a1]) }
 unsafe extern "C" fn s2982(_a0: usize) -> i32 { hit(2982); crate::handles::create(2982, "DecalSceneObject", &[_a0]) }
 unsafe extern "C" fn s2983(_a0: usize) { hit(2983);  }
@@ -4381,7 +4381,7 @@ unsafe extern "C" fn s2998(_a0: usize, _a1: usize, _a2: usize) { hit(2998);  }
 unsafe extern "C" fn s2999(_a0: usize) -> i32 { hit(2999); crate::handles::create(2999, "SceneLightObject", &[_a0]) }
 unsafe extern "C" fn s3000(_a0: usize) -> i32 { hit(3000); crate::handles::create(3000, "SceneLightObject", &[_a0]) }
 unsafe extern "C" fn s3001(_a0: usize) -> i32 { hit(3001); crate::handles::create(3001, "SceneLightObject", &[_a0]) }
-unsafe extern "C" fn s3002(_a0: usize, _a1: usize) -> i32 { hit(3002); crate::handles::create(3002, "SceneLightObject", &[_a0, _a1]) }
+unsafe extern "C" fn s3002(_a0: usize, _a1: usize) -> i32 { hit(3002); unsafe { crate::impls::g_pSceneSystem_CreateDirectionalLight(_a0, _a1) } }
 unsafe extern "C" fn s3003(_a0: usize, _a1: i32) -> i32 { hit(3003); crate::handles::create(3003, "SceneLightObject", &[_a0]) }
 unsafe extern "C" fn s3004(_a0: usize) -> i32 { hit(3004); crate::handles::create(3004, "SceneLightProbeVolumeObject", &[_a0]) }
 unsafe extern "C" fn s3005(_a0: usize) { hit(3005);  }

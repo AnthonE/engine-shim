@@ -1,0 +1,11 @@
+[package]
+name = "render"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "engine2's renderer from the command line: a model drawn into a PNG"
+
+[dependencies]
+engine2 = { path = "../engine2", features = ["render"] }
+png = "0.17"
+glam = "0.30"

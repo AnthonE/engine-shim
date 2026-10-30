@@ -12,6 +12,10 @@
 //! cycle and tag conditions, blended over their duration); speed scale,
 //! cycle control and direct playback. Others (IK, look-at, foot locks)
 //! pass their input through untouched.
+//!
+//! Each step also gathers what managed hears: the events its sequences
+//! passed, and its tags (on by a sequence's span, a state, a selector's
+//! child) that came on, went off, or both.
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 
@@ -135,6 +139,9 @@ pub struct State {
     pub transitions: Vec<Transition>,
     pub start: bool,
     pub passthrough: bool,
+    /// tags on while it's current: each with its behaviour (0 for as long
+    /// as it's current, else until its pose finishes)
+    pub tags: Vec<(u32, i64)>,
 }
 
 pub enum Node {
@@ -147,7 +154,8 @@ pub enum Node {
     Subtract { base: u32, sub: u32 },
     Mask { a: u32, b: u32, list: String, param: u32 },
     Choice { children: Vec<(u32, f32)>, seed: u32 },
-    Selector { children: Vec<u32>, by: u32, int_min: i32, blend: f32 },
+    /// a tag per child, on while it's chosen (`tag_until_finished`: until its pose finishes)
+    Selector { children: Vec<u32>, by: u32, int_min: i32, blend: f32, tags: Vec<u32>, tag_until_finished: bool },
     StateMachine { states: Vec<State> },
     SpeedScale { input: u32, param: u32 },
     CycleControl { input: u32, param: u32 },
@@ -158,6 +166,8 @@ pub struct Graph {
     pub params: Vec<Param>,
     pub nodes: HashMap<u32, Node>,
     pub root: u32,
+    /// its tags' names, by id (the tag manager's)
+    pub tag_names: HashMap<u32, CString>,
 }
 
 fn id(v: Option<&Value>) -> u32 {
@@ -260,6 +270,8 @@ fn node(v: &Value) -> Node {
             },
             int_min: if s(v, "m_selectionSource") == "SelectionSource_Int" { v.i64("m_intParamMinValue") as i32 } else { 0 },
             blend: f(v, "m_blendDuration"),
+            tags: v.get("m_tags").map(Value::as_array).unwrap_or(&[]).iter().map(|t| id(Some(t))).collect(),
+            tag_until_finished: s(v, "m_tagBehavior") != "SelectorTagBehavior_OnWhileCurrent",
         },
         "CStateMachineAnimNode" => Node::StateMachine {
             states: v.get("m_states").map(Value::as_array).unwrap_or(&[]).iter().map(|st| State {
@@ -267,6 +279,9 @@ fn node(v: &Value) -> Node {
                 input: input(st, "m_inputConnection"),
                 start: b(st, "m_bIsStartState"),
                 passthrough: b(st, "m_bIsPassthrough"),
+                tags: st.get("m_tags").map(Value::as_array).unwrap_or(&[]).iter().map(|t| id(Some(t)))
+                    .zip(st.get("m_tagBehaviors").map(Value::as_array).unwrap_or(&[]).iter().map(|b| b.as_i64().unwrap_or(0)).chain(std::iter::repeat(0)))
+                    .collect(),
                 transitions: st.get("m_transitions").map(Value::as_array).unwrap_or(&[]).iter().filter(|t| !b(t, "m_bDisabled")).map(|t| Transition {
                     conditions: t.get("m_conditions").map(Value::as_array).unwrap_or(&[]).iter().filter_map(condition).collect(),
                     dest: id(t.get("m_destState")),
@@ -340,7 +355,9 @@ pub fn read(name: &str, data: &Value) -> Graph {
         nodes.insert(key, node(v));
     }
     let params = data.get("m_pParameterList").and_then(|l| l.get("m_Parameters")).map(Value::as_array).unwrap_or(&[]).iter().map(param).collect();
-    Graph { name: cs(name), params, nodes, root }
+    let tag_names = data.get("m_pTagManager").and_then(|m| m.get("m_tags")).map(Value::as_array).unwrap_or(&[]).iter()
+        .map(|t| (id(t.get("m_tagID")), cs(&s(t, "m_name")))).collect();
+    Graph { name: cs(name), params, nodes, root, tag_names }
 }
 
 // ---- graphs loaded, by name: each at an address of its own for good, as
@@ -429,6 +446,13 @@ pub struct Instance {
     /// damped inputs: value and speed, per node and axis
     damped: HashMap<(u32, u8), (f32, f32)>,
     random: u32,
+    /// the events its sequences passed, not yet handed over: (clip, event, seconds into the clip)
+    pub events: Vec<(usize, usize, f32)>,
+    /// the tags on after the last step; those that came and went within this one
+    active: HashSet<u32>,
+    fired: HashSet<u32>,
+    /// tags that changed, not yet handed over: (tag, 0 came and went, 1 on, 2 off), as managed's AnimTagStatus
+    pub tag_events: Vec<(u32, i32)>,
     /// this step's outputs, by node and time step: a node many others take
     /// (a graph is a web, not a tree) runs once
     memo: HashMap<(u32, u32), Out>,
@@ -502,6 +526,18 @@ impl Instance {
         self.memo.clear();
         let out = self.eval(g, m, &bind, g.root, dt, 0);
         self.memo.clear();
+        // what the step did to the tags
+        let mut changed: Vec<(u32, i32)> = out.tags.difference(&self.active).map(|&t| (t, 1)).collect();
+        changed.extend(self.active.difference(&out.tags).map(|&t| (t, 2)));
+        changed.extend(self.fired.iter().filter(|t| !out.tags.contains(t) && !self.active.contains(t)).map(|&t| (t, 0)));
+        changed.sort();
+        self.tag_events.extend(changed);
+        self.active = out.tags.clone();
+        self.fired.clear();
+        // nobody listening: keep the newest
+        for q in [self.events.len().saturating_sub(256), self.tag_events.len().saturating_sub(256)].into_iter().enumerate() {
+            if q.0 == 0 { self.events.drain(..q.1); } else { self.tag_events.drain(..q.1); }
+        }
         // triggers back to their defaults, now they've been seen
         for (i, p) in g.params.iter().enumerate() {
             if p.auto_reset { self.values[i] = p.default; }
@@ -509,13 +545,15 @@ impl Instance {
         out.pose
     }
 
-    fn clip_out(&mut self, m: &ModelFile, bind: &Pose, node: u32, name: &str, speed: f32, looping: Option<bool>, dt: f32, tags: &[(u32, f32, f32)]) -> Out {
+    fn clip_out(&mut self, m: &ModelFile, bind: &Pose, node: u32, name: &str, speed: f32, looping: Option<bool>, dt: f32, spans: &[(u32, f32, f32)]) -> Out {
         let Some(seq) = m.anim.sequences.iter().find(|s| s.name.eq_ignore_ascii_case(name)) else { return still(bind) };
         let clip = &m.anim.clips[seq.clip];
         let looping = looping.unwrap_or(seq.looping);
         let duration = clip.duration();
+        let before = self.times.get(&node).copied();
         let t = self.times.entry(node).or_insert(0.0);
         *t += dt * speed;
+        let wrapped = looping && duration > 0.0 && *t >= duration;
         let (cycle, finished) = if duration <= 0.0 {
             (0.0, true)
         } else if looping {
@@ -526,7 +564,15 @@ impl Instance {
             (*t / duration, *t >= duration)
         };
         let pose = if clip.delta { m.anim.sample(seq.clip, cycle, &identity(bind.len())) } else { m.anim.sample(seq.clip, cycle, bind) };
-        let tags = tags.iter().filter(|(_, start, len)| cycle >= *start && cycle <= start + len).map(|t| t.0).collect();
+        let tags = spans.iter().filter(|(_, start, len)| cycle >= *start && cycle <= start + len).map(|t| t.0).collect();
+        // what it passed on its way: its events, and the tag spans it went right over
+        if before.is_none() || dt * speed > 0.0 {
+            let from = before.map(|b| if duration > 0.0 { b / duration } else { 0.0 });
+            self.events.extend(clip.events_between(from, cycle, wrapped).map(|e| (seq.clip, e, clip.events[e].cycle * duration)));
+            if let Some(f) = from.filter(|_| !wrapped) {
+                self.fired.extend(spans.iter().filter(|(_, start, len)| *start > f && start + len < cycle).map(|t| t.0));
+            }
+        }
         Out { pose, cycle, finished, tags }
     }
 
@@ -624,7 +670,7 @@ impl Instance {
                 if out.finished { self.choices.remove(&id); self.reset(g, children[chosen].0); }
                 out
             }
-            Node::Selector { children, by, int_min, blend: duration } => {
+            Node::Selector { children, by, int_min, blend: duration, tags, tag_until_finished } => {
                 if children.is_empty() { return still(bind); }
                 let want = ((self.number(g, *by) as i32 - int_min).max(0) as usize).min(children.len() - 1);
                 let (current, from) = self.selectors.remove(&id).unwrap_or((want, None));
@@ -644,6 +690,7 @@ impl Instance {
                     if k >= 1.0 { from = None; }
                 }
                 self.selectors.insert(id, (current, from));
+                if let Some(&t) = tags.get(current).filter(|&&t| t != NONE && !(*tag_until_finished && out.finished)) { out.tags.insert(t); }
                 out
             }
             Node::StateMachine { states } => self.machine(g, m, bind, id, states, dt, depth),
@@ -708,6 +755,8 @@ impl Instance {
             out.pose = from.iter().zip(&out.pose).map(|(a, b)| a.lerp(b, k)).collect();
             if k >= 1.0 { sm.from = None; }
         }
+        let finished = out.finished;
+        out.tags.extend(states[sm.current].tags.iter().filter(|(t, b)| *t != NONE && (*b == 0 || !finished)).map(|t| t.0));
         self.machines.insert(id, sm);
         out
     }
@@ -936,5 +985,40 @@ mod tests {
         let mut back = rest;
         for _ in 0..240 { back = hands(&i.run(g, f, dt)); }
         assert!((back.0 - rest.0).length() < 3.0 && (back.1 - rest.1).length() < 3.0, "back at rest: {back:?}");
+    }
+
+    #[test]
+    fn a_downloaded_crowbar_swings_by_its_tags() {
+        // s&box's download cache, if this machine has one: Facepunch's content, read where it lies
+        let Ok(dir) = std::env::var("ENGINE2_SAMPLE_ASSETS") else { return };
+        let dir = std::path::Path::new(&dir).join("models/weapons/sbox_melee_crowbar");
+        let find = |ext: &str| std::fs::read_dir(&dir).ok()?.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| {
+            let n = p.file_name().unwrap().to_string_lossy().to_string();
+            n.starts_with("v_crowbar.") && n.ends_with(ext)
+        });
+        let (Some(model), Some(graph)) = (find(".vmdl_c"), find(".vanmgrph_c")) else { return };
+        crate::fs::add_link("models/weapons/sbox_melee_crowbar/v_crowbar.vmdl_c", model.to_str().unwrap());
+        crate::fs::add_link("models/weapons/sbox_melee_crowbar/v_crowbar.vanmgrph_c", graph.to_str().unwrap());
+        let f = crate::models::file(crate::models::load("models/weapons/sbox_melee_crowbar/v_crowbar.vmdl")).unwrap();
+        let g = super::graph(of_model(f)).unwrap();
+        let named = |t: u32| g.tag_names.get(&t).map(|n| n.to_string_lossy().into_owned());
+        assert!(named(g.tag_names.keys().copied().find(|&t| named(t).as_deref() == Some("melee_hit")).unwrap()).is_some(), "the tag manager names its tags");
+        let mut i = Instance::new(g);
+        let mut set = |i: &mut Instance, name: &str, v: Variant| { let k = g.params.iter().position(|p| p.name.to_str() == Ok(name)).unwrap(); i.values[k] = v; };
+        for speed in ["speed_deploy", "speed_reload"] { set(&mut i, speed, Variant::float(FLOAT, 1.0)); }
+        set(&mut i, "b_grounded", Variant::int(BOOL, 1));
+        // deployed, then a swing: the step each tag came on and went off
+        let mut heard: Vec<(usize, String, i32)> = Vec::new();
+        for k in 0..240 {
+            if k == 120 { set(&mut i, "b_attack", Variant::int(BOOL, 1)); }
+            i.run(g, f, 1.0 / 60.0);
+            heard.extend(i.tag_events.drain(..).filter_map(|(t, s)| Some((k, named(t)?, s))));
+        }
+        eprintln!("{heard:?}");
+        let at = |name: &str, status: i32| heard.iter().filter(|h| h.1 == name && h.2 == status).map(|h| h.0).collect::<Vec<_>>();
+        let (swing, hit) = ((at("melee_swing", 1), at("melee_swing", 2)), (at("melee_hit", 1), at("melee_hit", 2)));
+        assert_eq!((swing.0.len(), swing.1.len(), hit.0.len(), hit.1.len()), (1, 1, 1, 1), "one swing, one hit, each on and off once");
+        assert!(swing.0[0] >= 120 && swing.0[0] < hit.0[0] && hit.0[0] < hit.1[0] && hit.1[0] <= swing.1[0], "the hit lands within the swing: {swing:?} {hit:?}");
+        assert!(at("melee_swing", 1)[0] < 140, "and comes when told");
     }
 }

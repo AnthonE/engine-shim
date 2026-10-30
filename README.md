@@ -456,6 +456,27 @@ the real server (the watcher, from tick 40): managed finds the graph (73
 parameters), sets a weapon's speeds and `b_attack` through the shim, and
 each attack swings a hand 9 to 11 out, left or right as the graph picks.
 
+**Animation events and tags.** A clip's events (its `m_eventArray`: a
+footstep, a sound, a body group set, each at a cycle with KV3 data) fire
+as a sequence passes them, in a graph or played straight, once each
+however the step falls (one at a clip's very start fires as it starts,
+and a loop's fire again each time round). Managed hears them each frame
+(`RunAnimationEvents`) and reads their data through the KeyValues3 slots,
+now answered over any KV3 handed out (members, arrays, values, types). A
+graph's tags (named by its tag manager) are on while a sequence's tag
+span covers its cycle, while a state is current (or until its pose
+finishes, as the state says), or while a selector's child is chosen;
+managed hears each come on and go off (`DispatchTagEvents`), and a span
+stepped clean over as one that came and went. Measured (`cargo test`,
+from the download cache): the shotgun's `Reload_Shell` sets its
+`shells_animated` body group to 1 at 0.022 and back to 0 at 0.533; the
+crowbar's graph, told `b_attack`, turns `melee_swing` on, `melee_hit` on
+and off within it, then `melee_swing` off. Under the real server (the
+watcher, from tick 54): managed's `OnAnimTagEvent` hears the crowbar's
+swing from 65.764s to 65.887s and its hit from 65.805s to 65.865s, and
+the shotgun's reload reaches managed's own handler, which reads the event
+and sets the body group (`SetBodyGroup`, never called before).
+
 **Maps** (`engine2/src/world.rs`, `assets/vpk.rs`, `assets/entities.rs`).
 A map is a pak (`maps/flatgrass.vpk`, Valve's VPK, read here) of its
 world: its collision (`world_physics.vphys`), its entities
@@ -491,20 +512,132 @@ SBOX=../sbox-public sh spike.sh 300 +shimgame $PWD/../sandbox/sandbox.sbproj +sh
 What the game's components still can't do:
 
 - **Animation graphs' rest.** IK, look-at and foot locks aren't solved
-  (their input passes through), root motion isn't taken out, and neither
-  animation events nor tag events fire for managed. Nobody has compared
-  a pose with Facepunch's engine: a graph runs as its nodes are read
-  here.
+  (their input passes through) and root motion isn't taken out. Nobody
+  has compared a pose with Facepunch's engine: a graph runs as its nodes
+  are read here. Footsteps, the events a player's walk would fire, are
+  Citizen's, which comes only with Facepunch's closed download.
 - **Runtime models' rest.** A model built at runtime (`ModelBuilder`)
   keeps its collision, not its bones, hitboxes and meshes.
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
   has none.
 - **Workshop maps.** A map that's only on Steam's workshop needs Steam
   to download; `tools/map.sh` takes the newest revision sbox.game's CDN
-  still holds. A player sees each map's spawn points twice (380 to the
-  server's 190): not looked into yet.
+  still holds.
+
+## What a client draws (begun)
+
+Servers and headless players don't draw. A client will, and
+`engine2/src/render/` is its start (the `render` feature, on by
+default): models as s&box compiles them, read by engine2's readers and
+drawn with wgpu (Vulkan here, through Mesa's lavapipe on a machine with
+no GPU; WebGPU in a browser one day).
+
+**The engine draws what managed asks for.** Managed asks a camera for
+its view as pixels (`CameraComponent.RenderToBitmap`): it sets the native
+camera renderer's position, angles, field of view and planes, gives it
+its scene worlds (`AddSceneWorld`), and calls `RenderToBitmap`. Here that
+draws every scene object made in those worlds and shown
+(`SetRenderingEnabled`), at the transform and tint managed set, skinned
+by the pose animation.rs gives its bones (each vertex's `BLENDINDICES`
+and `BLENDWEIGHT`, through the model's bone remapping table), and the
+maps in those worlds: each world node's objects (`world.vwrld_c`, its
+nodes' `.vwnod_c`), the level's geometry batched by material. Textures
+go to the GPU as their BC blocks where it takes them (decoded only
+where it doesn't), each texture and material read once. Scene objects
+deleted (`DeleteSceneObject`) go, their handles freed.
+
+The sun is the world's directional light (`CreateDirectionalLight`,
+turned by `SetWorldDirection`, which managed passes a rotation: it
+shines along its forward), at the colour managed set (a map's
+`light_environment`: its colour times its brightness). The sky is the
+world's sky object (`CreateSkyBox`) drawn behind everything: its
+material (`sky.shader`) names a cube texture, HDR in BC6H, kept in
+Source 2's own axes (z up) and turned as the sky object is (a map's
+`env_sky` turns it). Materials are one object per name, which answers
+its name and its shader (`GetString("shader")`, read from the file: a
+sky material is only taken as one if its shader is a sky's). Exposure
+is 1, the least s&box's default auto exposure gives; a filmic curve
+(ACES) brings the light down.
+
+Measured: the headless player of Sandbox on flatgrass (with the map
+package's materials beside its pak, `ENGINE2_CONTENT`), its watcher
+asking the scene's camera for a frame every ten seconds: 266 objects
+(259 of them the map's), every material and texture found, the map's
+sun (towards 0.11, -0.59, 0.80: its `light_environment` at pitch 53,
+yaw 101; colour 3.5 times 255 245 234) and its sunrise sky, the sun's
+glow in it where the light comes from; the roof of the spawn building,
+its scaffolding, the grass to the horizon, and the physgun in the
+player's hand, posed by its animation graph. What isn't drawn yet:
+glass and other translucent materials, shadows, the baked lightmaps,
+particles, decals and the UI; the sky shows faint lines where its cube's
+faces meet. A headless player has no tonemapper (`Graphics.IsAvailable`
+is false with the empty render device), so the watcher turns auto
+exposure off for its frames.
+
+`render map` draws a map from its pak alone, its sun and sky as its
+entities name them, from any camera: the same renderer without a game.
+
+```sh
+ENGINE2_CONTENT=../sandbox/Assets/maps/flatgrass.vpk:../content-flatgrass \
+  cargo run --release -p render -- map maps/flatgrass flatgrass.png 128 -48 449 5 250
+```
+
+- **Meshes** (`engine2/src/assets/mesh.rs`): the vertex and index
+  buffers a model's CTRL names (an MBUF block per embedded mesh, or a
+  `.vmesh_c`'s VBIB), meshopt-compressed as s&box compiles them; each
+  vertex's inputs by semantic and DXGI format. Normals come octahedral in
+  a word's first twenty bits (measured against the faces around each
+  vertex: 0.94 to 0.997 agreement over five models, where other readings
+  of the same bits give 0.6 or less). LOD 0, the default mesh groups.
+- **Textures** (`assets/texture.rs`): the `.vtex_c` header, its mips
+  stored smallest first, each zstd- or LZ4-compressed as its extra data
+  says; BC1 to BC7 decoded (texture2ddecoder), to RGBA8.
+- **Materials** (`assets/material.rs`): the shader and its parameters.
+  Of the 173 materials in a Sandbox server's cache, 158 are
+  `complex.shader`, 8 `blendable`, 6 glass, 1 skin: no custom shaders.
+- **Shaders** (`engine2/src/render/shader.wgsl`): our own `complex` and
+  `blendable`, written from what their compiled textures hold:
+  `complex`'s colour (its alpha the alpha test's mask, or metalness),
+  normal (x and y, roughness in blue), occlusion and tint mask;
+  `blendable`'s two layers (each a colour, a normal and a map of
+  metalness, occlusion and roughness), blended by the vertices' paint
+  (TEXCOORD4) and tinted by it (TEXCOORD5). Lit by a sun and a sky;
+  tangents from the surface's derivatives, as s&box's meshes carry none.
+
+Measured against the thumbnails Facepunch's own engine rendered for
+sbox.game, on seven of Sandbox's props (the TV, oil drum, office chair,
+washing machine, microwave, traffic cone, wooden chair): each has its
+shape, textures, colours and materials' character. What differs: glass
+and other translucent and decal materials aren't drawn yet (the
+microwave's window shows its inside), the lighting is a plain sky rather
+than a studio's reflections, and the office chair's back lacks a detail
+layer its material has.
+
+```sh
+sudo apt-get install mesa-vulkan-drivers        # no GPU: lavapipe
+sh tools/package.sh facepunch.tv ../content     # sbox.game's files, never committed
+ENGINE2_CONTENT=../content cargo run --release -p render -- models/sbox_props/tv/tv.vmdl tv.png 35 15 512
+```
+
+`tools/package.sh facepunch.flatgrass <folder> '\.(vmat_c|vtex_c|vmdl_c|vmesh_c)$'`
+fetches a map's materials and textures (outside the project: a project's
+files are sent to its players). `RENDER_DEBUG` shows what the shader read (1 base colour, 2 normal, 3
+occlusion, 4 roughness).
 
 ## Reproduce
+
+On a fresh Linux machine with Rust, `tools/setup.sh` does all of the
+first block below: the .NET SDK if there's none, the checkout beside this
+one (`../sbox-public`), patched, its interop generated, the server built,
+the natives and reference assemblies in place.
+
+```sh
+sh tools/setup.sh
+sh tools/compile.sh ../sbox-public/game/samples/sweeper
+SBOX=../sbox-public sh spike.sh 90 +shimgame $PWD/../sbox-public/game/samples/sweeper/.sbproj
+```
+
+By hand:
 
 ```sh
 # .NET 10 SDK and Rust
@@ -554,6 +687,13 @@ first.
   And it names its game `org.ident#local` to them: a local project that
   shares its ident with a published game (Facepunch's own Sandbox) sent
   its players to download the published one, through Steam's workshop.
+- A map's entities (its spawn points, soundscapes, static props, the
+  generic map objects) stay out of the snapshot, as its lights already
+  do: every player builds them from the map's pak, so a player who also
+  got the server's had each twice (380 spawn points to the server's 190),
+  the copy from the snapshot without the scene objects a map object makes
+  for itself. Measured: a player of Sandbox on flatgrass has 190, and one
+  map object, as the server does.
   These are fixes upstream could take.
 
 `tools/compile.sh` copies a project's scenes and prefabs to their `_c`
@@ -581,7 +721,10 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
-| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
+| `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
+| `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
+| `engine2/src/camera.rs` | cameras managed asks for pixels: their worlds, what's shown, the view drawn into managed's bitmap |
+| `render/` | the renderer from the command line: a model, or a map from its pak, drawn into a PNG |
 | `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders (case blind, as managed names them), the game's own, mounted paks |
 | `engine2/src/world.rs` | maps: worlds from a map's pak, their folder and entity lumps |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
@@ -592,10 +735,12 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/elo_overlay.rs` | the Elo Pros launcher's client, vendored as its SDK asks (elo-pros-launcher `sdk/rust/elo_overlay.rs`) |
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
 | `spike.sh` | one turn of the loop |
+| `tools/setup.sh` | a fresh machine made ready for the loop: sbox-public checked out, patched, generated, built |
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
 | `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
 | `tools/jointrig.sh`, `tools/jointrig/` | five rigs of s&box's joint components, and what each does |
 | `tools/map.sh` | a map package's paks from sbox.game, into a project |
+| `tools/package.sh` | a package's files from sbox.game, at their game paths, for development (never committed) |
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
