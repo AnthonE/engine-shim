@@ -121,6 +121,7 @@ public sealed class ShimWatch : Component
 		}
 
 		Shoot();
+		Events();
 
 		// each player: what the controller's ground probe finds under them, and the map still there
 		foreach ( var p in Scene.GetAllComponents<PlayerController>() )
@@ -213,6 +214,36 @@ public sealed class ShimWatch : Component
 			var tr = Scene.Trace.Ray( from, tx.Position - Vector3.Forward * 50 ).UseHitboxes().Run();
 			var miss = Scene.Trace.Ray( from + Vector3.Up * 300, tx.Position + Vector3.Up * 300 - Vector3.Forward * 50 ).UseHitboxes().Run();
 			Log.Info( $"shimwatch shot {name} at {tx.Position.x:0.0},{tx.Position.y:0.0},{tx.Position.z:0.0}: {(tr.Hit ? $"hit {tr.Hitbox?.Bone?.Name} on {tr.GameObject?.Name} at {tr.HitPosition.x:0.0},{tr.HitPosition.y:0.0},{tr.HitPosition.z:0.0} after {tr.Distance:0.0}" : "missed")} | above it: {(miss.Hit ? "hit" : "missed")}" );
+		}
+	}
+
+	SkinnedModelRenderer _shotgun, _crowbar;
+
+	// a weapon's animation events and tags, as managed hears them: the
+	// shotgun's reload shows and hides its shell (an event sets its body
+	// group: SetBodyGroup in the trace), the crowbar's swing says when it hits
+	void Events()
+	{
+		if ( _ticks == 54 )
+		{
+			_shotgun = new GameObject( true, "shimshotgun" ).AddComponent<SkinnedModelRenderer>();
+			_shotgun.WorldPosition = new Vector3( 0, 2500, 500 );
+			_shotgun.Model = Model.Load( "models/weapons/sbox_shotgun_spaghellim4/v_spaghellim4.vmdl" );
+			_shotgun.UseAnimGraph = false;
+			_shotgun.Sequence.Name = "Reload_Shell";
+			Log.Info( $"shimwatch events: {_shotgun.Model?.Name} playing {_shotgun.Sequence.Name} for {_shotgun.Sequence.Duration:0.00}s" );
+
+			_crowbar = new GameObject( true, "shimcrowbar" ).AddComponent<SkinnedModelRenderer>();
+			_crowbar.WorldPosition = new Vector3( 0, 3000, 500 );
+			_crowbar.Model = Model.Load( "models/weapons/sbox_melee_crowbar/v_crowbar.vmdl" );
+			foreach ( var speed in new[] { "speed_deploy", "speed_reload" } ) _crowbar.Set( speed, 1.0f );
+			_crowbar.Set( "b_grounded", true );
+			_crowbar.OnAnimTagEvent = e => Log.Info( $"shimwatch tag {_ticks}.{Time.Now:0.000}: {e.Name} {e.Status}" );
+		}
+		if ( _ticks == 58 && _crowbar.IsValid() )
+		{
+			Log.Info( $"shimwatch events: crowbar swings, graph {_crowbar.SceneModel?.AnimationGraph?.Name}" );
+			_crowbar.Set( "b_attack", true );
 		}
 	}
 }

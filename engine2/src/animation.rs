@@ -72,6 +72,12 @@ pub struct Posed {
     pub cycle: f32,
     pub looping: Option<bool>,
     pub rate: Option<f32>,
+    /// the sequence has just begun: an event at its very start fires
+    begun: bool,
+    /// events passed, (clip, event, seconds into the clip), and tags
+    /// changed, (name, AnimTagStatus), for managed to hear
+    pub events: Vec<(usize, usize, f32)>,
+    pub tag_events: Vec<(usize, i32)>,
     /// its animation graph (animgraph.rs; 0: none) and the graph running
     pub graph: usize,
     pub instance: Option<crate::animgraph::Instance>,
@@ -101,7 +107,7 @@ impl Posed {
         let n = local.len();
         Posed {
             model, local, model_space, world: vec![Xf::IDENTITY; n], previous: vec![Xf::IDENTITY; n], overrides: HashMap::new(), delta: 0.0,
-            sequence: None, cycle: 0.0, looping: None, rate: None,
+            sequence: None, cycle: 0.0, looping: None, rate: None, begun: false, events: Vec::new(), tag_events: Vec::new(),
             graph: crate::models::file(model).map(crate::animgraph::of_model).unwrap_or(0), instance: None, on_graph_changed: 0,
         }
     }
@@ -148,9 +154,15 @@ impl Posed {
     /// playback rate), and the bones in its pose; with none, the bind pose.
     fn step(&mut self, delta: f32) {
         let Some((s, duration, looping)) = self.playing() else { return self.reset() };
+        let from = (!std::mem::take(&mut self.begun)).then_some(self.cycle);
+        let step = if duration > 0.0 { delta * self.rate.unwrap_or(1.0) / duration } else { 0.0 };
+        let wrapped = looping && self.cycle + step >= 1.0;
         if duration > 0.0 {
-            self.cycle += delta * self.rate.unwrap_or(1.0) / duration;
+            self.cycle += step;
             self.cycle = if looping { self.cycle.rem_euclid(1.0) } else { self.cycle.clamp(0.0, 1.0) };
+        }
+        if let Some(clip) = crate::models::file(self.model).and_then(|f| f.anim.clips.get(s.clip)).filter(|_| from.is_none() || step > 0.0) {
+            self.events.extend(clip.events_between(from, self.cycle, wrapped).map(|e| (s.clip, e, clip.events[e].cycle * duration)));
         }
         self.pose_at(s.clip, self.cycle);
     }
@@ -166,7 +178,10 @@ impl Posed {
     /// The graph run on by `delta`: the bones in its pose.
     fn run_graph(&mut self, delta: f32) {
         let (Some(g), Some(f)) = (crate::animgraph::graph(self.graph), crate::models::file(self.model)) else { return self.reset() };
-        let pose = self.instance.get_or_insert_with(|| crate::animgraph::Instance::new(g)).run(g, f, delta * self.rate.unwrap_or(1.0));
+        let instance = self.instance.get_or_insert_with(|| crate::animgraph::Instance::new(g));
+        let pose = instance.run(g, f, delta * self.rate.unwrap_or(1.0));
+        self.events.append(&mut instance.events);
+        self.tag_events.extend(instance.tag_events.drain(..).filter_map(|(t, status)| Some((g.tag_names.get(&t)?.as_ptr() as usize, status))));
         if pose.len() != self.local.len() { return; }
         self.local = pose.iter().map(|p| Xf { pos: p.pos, rot: p.rot, scale: Vector::splat(p.scale) }).collect();
     }
@@ -175,6 +190,7 @@ impl Posed {
     pub fn play(&mut self, name: &str) {
         self.sequence = crate::models::file(self.model).and_then(|f| f.anim.sequences.iter().position(|s| s.name.eq_ignore_ascii_case(name)));
         self.cycle = 0.0;
+        self.begun = true;
     }
 }
 
@@ -239,6 +255,11 @@ pub fn update(obj: usize, delta: f32) {
     with(obj, |p| {
         p.delta = delta;
         if use_graph && p.graph != 0 { p.run_graph(delta) } else { p.step(delta) }
+        // nobody listening: keep the newest
+        let n = p.events.len().saturating_sub(256);
+        p.events.drain(..n);
+        let n = p.tag_events.len().saturating_sub(256);
+        p.tag_events.drain(..n);
     });
 }
 
@@ -327,5 +348,44 @@ mod tests {
         assert!((w.pos - Vector::new(10.0, 2.0, 0.0)).length() < 1e-5, "{:?}", w.pos);
         let back = a.to_local(&w);
         assert!((back.pos - b.pos).length() < 1e-5 && (back.scale - b.scale).length() < 1e-5);
+    }
+
+    /// What managed hears from an object's animation events: each one's
+    /// kind, and what it carries, read through the KeyValues3 slots.
+    static HEARD: std::sync::Mutex<Vec<(String, f32, String, i32)>> = std::sync::Mutex::new(Vec::new());
+    extern "C" fn heard(name: usize, cycle: f32, _time: f32, data: usize) {
+        let s = |p: usize| unsafe { std::ffi::CStr::from_ptr(p as *const std::ffi::c_char) }.to_string_lossy().into_owned();
+        let bodygroup = s(unsafe { crate::impls::KeyValues3_GetMemberString(data, c"bodygroup".as_ptr() as usize) });
+        let value = unsafe { crate::impls::KeyValues3_GetMemberInt(data, c"value".as_ptr() as usize, -1) };
+        HEARD.lock().unwrap().push((s(name), cycle, bodygroup, value));
+    }
+
+    #[test]
+    fn a_downloaded_reload_sets_its_body_group() {
+        // s&box's download cache, if this machine has one: Facepunch's content, read where it lies
+        let Ok(dir) = std::env::var("ENGINE2_SAMPLE_ASSETS") else { return };
+        let dir = std::path::Path::new(&dir).join("models/weapons/sbox_shotgun_spaghellim4");
+        let Some(file) = std::fs::read_dir(&dir).ok().and_then(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| {
+            let n = p.file_name().unwrap().to_string_lossy().to_string();
+            n.starts_with("v_spaghellim4.") && n.ends_with(".vmdl_c")
+        })) else { return };
+        crate::fs::add_link("models/weapons/sbox_shotgun_spaghellim4/v_spaghellim4.vmdl_c", file.to_str().unwrap());
+        let model = crate::models::load("models/weapons/sbox_shotgun_spaghellim4/v_spaghellim4.vmdl");
+        let obj = crate::handles::object();
+        super::create(obj, model);
+        super::with(obj, |p| p.play("Reload_Shell"));
+        let (_, duration, looping) = super::with(obj, |p| p.playing().map(|(s, d, l)| (s.clip, d, l))).flatten().unwrap();
+        assert!(!looping && duration > 0.0);
+        // played through and on past its end, a frame at a time: each event once
+        for _ in 0..((duration * 60.0) as usize + 30) { super::update(obj, 1.0 / 60.0); }
+        assert_eq!(unsafe { crate::impls::CScnnmtblbjct_PendingAnimationEvents(obj) }, 2);
+        unsafe { crate::impls::CScnnmtblbjct_RunAnimationEvents(obj, heard as usize) };
+        assert_eq!(unsafe { crate::impls::CScnnmtblbjct_PendingAnimationEvents(obj) }, 0, "heard once");
+        let h = HEARD.lock().unwrap().clone();
+        eprintln!("{h:?}");
+        assert_eq!(h.len(), 2);
+        assert!(h.iter().all(|e| e.0 == "AE_CL_BODYGROUP_SET_VALUE" && e.2 == "shells_animated"), "{h:?}");
+        assert_eq!((h[0].3, h[0].1 < 0.05), (1, true), "the shell shows as the reload starts");
+        assert!(h[1].1 > h[0].1, "then the next, later on");
     }
 }

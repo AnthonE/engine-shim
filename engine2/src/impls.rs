@@ -1638,6 +1638,97 @@ pub unsafe fn EngineGlue_KeyValues3ToJson(kv: usize) -> usize {
     crate::assets::kv3text::json(unsafe { &*(kv as *const Value) }, &mut s);
     returned(s)
 }
+/// A KeyValues3 handed to managed, if `kv` is one.
+fn kv3(kv: usize) -> Option<&'static Value> {
+    KEY_VALUES.lock().unwrap().contains(&kv).then(|| unsafe { &*(kv as *const Value) })
+}
+
+/// One of its members (or an element), handed to managed as one too.
+fn handed(v: Option<&'static Value>) -> usize {
+    let Some(v) = v else { return 0 };
+    let p = v as *const Value as usize;
+    KEY_VALUES.lock().unwrap().insert(p);
+    p
+}
+
+fn member(kv: usize, name: usize) -> Option<&'static Value> { kv3(kv)?.get(&unsafe { read(name) }) }
+
+fn kv3_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Bool(b) => (*b as i32).to_string(),
+        Value::Int(i) => i.to_string(),
+        Value::UInt(u) => u.to_string(),
+        Value::Double(d) => d.to_string(),
+        Value::Array(a) => a.iter().map(kv3_text).collect::<Vec<_>>().join(" "),
+        _ => String::new(),
+    }
+}
+
+fn kv3_number(v: &Value) -> Option<f64> {
+    match v {
+        Value::Bool(b) => Some(*b as i32 as f64),
+        Value::String(s) => s.trim().parse().ok(),
+        v => v.as_f64(),
+    }
+}
+
+/// Three numbers: an array of them, or a string of them ("1 2 3").
+fn kv3_vector(v: &Value) -> Option<S_Vector3> {
+    let f: Vec<f32> = match v {
+        Value::String(s) => s.split_whitespace().filter_map(|x| x.parse().ok()).collect(),
+        v => v.floats(),
+    };
+    (f.len() >= 3).then(|| phys::v3(rapier3d::math::Vector::new(f[0], f[1], f[2])))
+}
+
+pub unsafe fn KeyValues3_GetType(kv: usize) -> i64 {
+    match kv3(kv) {
+        None => 0,
+        Some(Value::Null) => 1,
+        Some(Value::Bool(_)) => 2,
+        Some(Value::Int(_)) => 3,
+        Some(Value::UInt(_)) => 4,
+        Some(Value::Double(_)) => 5,
+        Some(Value::String(_)) => 6,
+        Some(Value::Blob(_)) => 7,
+        Some(Value::Array(_)) => 8,
+        Some(Value::Object(_)) => 9,
+    }
+}
+pub unsafe fn KeyValues3_IsArray(kv: usize) -> i32 { matches!(kv3(kv), Some(Value::Array(_))) as i32 }
+pub unsafe fn KeyValues3_IsTable(kv: usize) -> i32 { matches!(kv3(kv), Some(Value::Object(_))) as i32 }
+pub unsafe fn KeyValues3_GetValueBool(kv: usize) -> i32 { kv3(kv).and_then(kv3_number).is_some_and(|n| n != 0.0) as i32 }
+pub unsafe fn KeyValues3_GetValueInt(kv: usize) -> i32 { kv3(kv).and_then(kv3_number).unwrap_or(0.0) as i32 }
+pub unsafe fn KeyValues3_GetValueInt64(kv: usize) -> i64 { kv3(kv).and_then(kv3_number).unwrap_or(0.0) as i64 }
+pub unsafe fn KeyValues3_GetValueUint64(kv: usize) -> u64 { kv3(kv).and_then(kv3_number).unwrap_or(0.0) as u64 }
+pub unsafe fn KeyValues3_GetValueFloat(kv: usize) -> f32 { kv3(kv).and_then(kv3_number).unwrap_or(0.0) as f32 }
+pub unsafe fn KeyValues3_GetValueDouble(kv: usize) -> f64 { kv3(kv).and_then(kv3_number).unwrap_or(0.0) }
+pub unsafe fn KeyValues3_GetValueString(kv: usize) -> usize { returned(kv3(kv).map(kv3_text).unwrap_or_default()) }
+pub unsafe fn KeyValues3_GetValueVector(kv: usize) -> S_Vector3 { kv3(kv).and_then(kv3_vector).unwrap_or(phys::v3(rapier3d::math::Vector::ZERO)) }
+/// A member as text; missing, empty.
+pub unsafe fn KeyValues3_GetMemberString(kv: usize, name: usize) -> usize { returned(member(kv, name).map(kv3_text).unwrap_or_default()) }
+pub unsafe fn KeyValues3_GetMemberInt(kv: usize, name: usize, default: i32) -> i32 { member(kv, name).and_then(kv3_number).map(|n| n as i32).unwrap_or(default) }
+pub unsafe fn KeyValues3_GetMemberFloat(kv: usize, name: usize, default: f32) -> f32 { member(kv, name).and_then(kv3_number).map(|n| n as f32).unwrap_or(default) }
+pub unsafe fn KeyValues3_GetMemberVector(kv: usize, name: usize, default: usize) -> S_Vector3 {
+    member(kv, name).and_then(kv3_vector).unwrap_or_else(|| unsafe { std::ptr::read_unaligned(default as *const S_Vector3) })
+}
+pub unsafe fn KeyValues3_GetMemberCount(kv: usize) -> i32 {
+    match kv3(kv) { Some(Value::Object(o)) => o.len() as i32, _ => 0 }
+}
+pub unsafe fn KeyValues3_GetMember(kv: usize, i: i32) -> usize {
+    match kv3(kv) { Some(Value::Object(o)) => handed(usize::try_from(i).ok().and_then(|i| o.get(i)).map(|m| &m.1)), _ => 0 }
+}
+pub unsafe fn KeyValues3_GetMemberName(kv: usize, i: i32) -> usize {
+    match kv3(kv) { Some(Value::Object(o)) => returned(usize::try_from(i).ok().and_then(|i| o.get(i)).map(|m| m.0.clone()).unwrap_or_default()), _ => returned(String::new()) }
+}
+pub unsafe fn KeyValues3_GetArrayLength(kv: usize) -> i32 {
+    match kv3(kv) { Some(Value::Array(a)) => a.len() as i32, _ => 0 }
+}
+pub unsafe fn KeyValues3_GetArrayElement(kv: usize, i: i32) -> usize {
+    match kv3(kv) { Some(Value::Array(a)) => handed(usize::try_from(i).ok().and_then(|i| a.get(i))), _ => 0 }
+}
+
 /// The graph a model names in its key values (`anim_graph_resource`).
 pub unsafe fn CModel_GetAnimationGraph(model: usize) -> usize { file(model).map(crate::animgraph::of_model).unwrap_or(0) }
 pub unsafe fn CModel_MeshTrace(_model: usize, _input: usize, _output: usize) -> i32 { 0 }
@@ -1909,6 +2000,26 @@ pub unsafe fn g_pMeshSystem_CreateSceneObject(model: usize, transform: usize, _d
 pub unsafe fn g_pMeshSystem_ChangeModel(obj: usize, model: usize) { animation::change_model(obj, model) }
 pub unsafe fn CSceneObject_GetModelHandle(obj: usize) -> usize { animation::model_of(obj) }
 pub unsafe fn CScnnmtblbjct_GetModelHandle(obj: usize) -> usize { animation::model_of(obj) }
+/// How many animation events the object's sequences passed since managed last heard.
+pub unsafe fn CScnnmtblbjct_PendingAnimationEvents(obj: usize) -> i32 { animation::with(obj, |p| p.events.len() as i32).unwrap_or(0) }
+/// Each event passed, to managed's callback: its kind, where in its clip
+/// (cycle and seconds), and what it carries, a KeyValues3 of the model's.
+pub unsafe fn CScnnmtblbjct_RunAnimationEvents(obj: usize, callback: usize) {
+    let Some((model, events)) = animation::with(obj, |p| (p.model, std::mem::take(&mut p.events))) else { return };
+    let (Some(f), true) = (models::file(model), callback != 0) else { return };
+    let callback: extern "C" fn(usize, f32, f32, usize) = unsafe { std::mem::transmute(callback) };
+    for (clip, e, time) in events {
+        let Some(e) = f.anim.clips.get(clip).and_then(|c| c.events.get(e)) else { continue };
+        callback(e.name.as_ptr() as usize, e.cycle, time, handed(Some(&e.data)));
+    }
+}
+/// Each tag of the graph's that came on, went off, or both since managed last heard.
+pub unsafe fn CScnnmtblbjct_DispatchTagEvents(obj: usize, callback: usize) {
+    let Some(tags) = animation::with(obj, |p| std::mem::take(&mut p.tag_events)) else { return };
+    if callback == 0 { return; }
+    let callback: extern "C" fn(usize, i32) = unsafe { std::mem::transmute(callback) };
+    for (name, status) in tags { callback(name, status); }
+}
 pub unsafe fn CSceneObject_GetCTransform(obj: usize) -> S_Transform { crate::state::get::<S_Transform>(obj, crate::slots::PROP_Transform) }
 pub unsafe fn CScnnmtblbjct_GetCTransform(obj: usize) -> S_Transform { crate::state::get::<S_Transform>(obj, crate::slots::PROP_Transform) }
 
@@ -2479,7 +2590,7 @@ mod scene_models {
             CScnnmtblbjct_CalculateWorldSpaceBones(obj);
             assert!(near(pos(CScnnmtblbjct_GetWorldSpaceRenderBoneTransform(obj, 1)), Vector::new(0.0, 50.0, -3.0)));
             CScnnmtblbjct_ClearPhysicsBones(obj);
-            let point = phys::v3(Vector::new(0.0, 50.0, 9.0));
+            let point = phys::v3(rapier3d::math::Vector::new(0.0, 50.0, 9.0));
             CScnnmtblbjct_CalculateWorldSpaceBones(obj);
             assert_eq!(CScnnmtblbjct_GetClosestBoneIndex(obj, &point as *const _ as usize), 1);
 

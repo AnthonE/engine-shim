@@ -73,12 +73,33 @@ pub struct Clip {
     /// a delta, laid over the bind pose rather than replacing it
     pub delta: bool,
     blocks: Vec<Block>,
+    /// what fires as it plays (a footstep, a sound, a body group set)
+    pub events: Vec<Event>,
+}
+
+/// An animation event: where in its clip, its kind (`AE_FOOTSTEP`...) and
+/// what it carries, which managed reads as a KeyValues3.
+pub struct Event {
+    pub cycle: f32,
+    pub name: std::ffi::CString,
+    pub data: Value,
 }
 
 impl Clip {
     /// From one frame to the last: the clip's length in seconds.
     pub fn duration(&self) -> f32 {
         if self.frames > 1 && self.fps > 0.0 { (self.frames - 1) as f32 / self.fps } else { 0.0 }
+    }
+
+    /// The events a step from cycle `from` to `to` passes, by index (`from`
+    /// None: it starts, so one at its very start fires too); `wrapped`, it
+    /// looped past its end on the way.
+    pub fn events_between(&self, from: Option<f32>, to: f32, wrapped: bool) -> impl Iterator<Item = usize> + '_ {
+        self.events.iter().enumerate().filter(move |(_, e)| match from {
+            None => e.cycle <= to,
+            Some(f) if wrapped => e.cycle > f || e.cycle <= to,
+            Some(f) => e.cycle > f && e.cycle <= to,
+        }).map(|(i, _)| i)
     }
 }
 
@@ -254,6 +275,11 @@ pub fn read(r: &Resource, bones: &[String]) -> Animations {
             looping: flag(c, "m_bLooping"),
             delta: flag(c, "m_bDelta"),
             blocks,
+            events: c.get("m_eventArray").map(Value::as_array).unwrap_or(&[]).iter().filter_map(|e| Some(Event {
+                cycle: e.f32("m_flCycle"),
+                name: std::ffi::CString::new(e.get("m_sEventName")?.as_str()?).ok()?,
+                data: e.get("m_EventData").cloned().unwrap_or(Value::Object(Vec::new())),
+            })).collect(),
         });
     }
 

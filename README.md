@@ -456,6 +456,27 @@ the real server (the watcher, from tick 40): managed finds the graph (73
 parameters), sets a weapon's speeds and `b_attack` through the shim, and
 each attack swings a hand 9 to 11 out, left or right as the graph picks.
 
+**Animation events and tags.** A clip's events (its `m_eventArray`: a
+footstep, a sound, a body group set, each at a cycle with KV3 data) fire
+as a sequence passes them, in a graph or played straight, once each
+however the step falls (one at a clip's very start fires as it starts,
+and a loop's fire again each time round). Managed hears them each frame
+(`RunAnimationEvents`) and reads their data through the KeyValues3 slots,
+now answered over any KV3 handed out (members, arrays, values, types). A
+graph's tags (named by its tag manager) are on while a sequence's tag
+span covers its cycle, while a state is current (or until its pose
+finishes, as the state says), or while a selector's child is chosen;
+managed hears each come on and go off (`DispatchTagEvents`), and a span
+stepped clean over as one that came and went. Measured (`cargo test`,
+from the download cache): the shotgun's `Reload_Shell` sets its
+`shells_animated` body group to 1 at 0.022 and back to 0 at 0.533; the
+crowbar's graph, told `b_attack`, turns `melee_swing` on, `melee_hit` on
+and off within it, then `melee_swing` off. Under the real server (the
+watcher, from tick 54): managed's `OnAnimTagEvent` hears the crowbar's
+swing from 65.764s to 65.887s and its hit from 65.805s to 65.865s, and
+the shotgun's reload reaches managed's own handler, which reads the event
+and sets the body group (`SetBodyGroup`, never called before).
+
 **Maps** (`engine2/src/world.rs`, `assets/vpk.rs`, `assets/entities.rs`).
 A map is a pak (`maps/flatgrass.vpk`, Valve's VPK, read here) of its
 world: its collision (`world_physics.vphys`), its entities
@@ -491,20 +512,32 @@ SBOX=../sbox-public sh spike.sh 300 +shimgame $PWD/../sandbox/sandbox.sbproj +sh
 What the game's components still can't do:
 
 - **Animation graphs' rest.** IK, look-at and foot locks aren't solved
-  (their input passes through), root motion isn't taken out, and neither
-  animation events nor tag events fire for managed. Nobody has compared
-  a pose with Facepunch's engine: a graph runs as its nodes are read
-  here.
+  (their input passes through) and root motion isn't taken out. Nobody
+  has compared a pose with Facepunch's engine: a graph runs as its nodes
+  are read here. Footsteps, the events a player's walk would fire, are
+  Citizen's, which comes only with Facepunch's closed download.
 - **Runtime models' rest.** A model built at runtime (`ModelBuilder`)
   keeps its collision, not its bones, hitboxes and meshes.
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
   has none.
 - **Workshop maps.** A map that's only on Steam's workshop needs Steam
   to download; `tools/map.sh` takes the newest revision sbox.game's CDN
-  still holds. A player sees each map's spawn points twice (380 to the
-  server's 190): not looked into yet.
+  still holds.
 
 ## Reproduce
+
+On a fresh Linux machine with Rust, `tools/setup.sh` does all of the
+first block below: the .NET SDK if there's none, the checkout beside this
+one (`../sbox-public`), patched, its interop generated, the server built,
+the natives and reference assemblies in place.
+
+```sh
+sh tools/setup.sh
+sh tools/compile.sh ../sbox-public/game/samples/sweeper
+SBOX=../sbox-public sh spike.sh 90 +shimgame $PWD/../sbox-public/game/samples/sweeper/.sbproj
+```
+
+By hand:
 
 ```sh
 # .NET 10 SDK and Rust
@@ -554,6 +587,13 @@ first.
   And it names its game `org.ident#local` to them: a local project that
   shares its ident with a published game (Facepunch's own Sandbox) sent
   its players to download the published one, through Steam's workshop.
+- A map's entities (its spawn points, soundscapes, static props, the
+  generic map objects) stay out of the snapshot, as its lights already
+  do: every player builds them from the map's pak, so a player who also
+  got the server's had each twice (380 spawn points to the server's 190),
+  the copy from the snapshot without the scene objects a map object makes
+  for itself. Measured: a player of Sandbox on flatgrass has 190, and one
+  map object, as the server does.
   These are fixes upstream could take.
 
 `tools/compile.sh` copies a project's scenes and prefabs to their `_c`
@@ -592,6 +632,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/elo_overlay.rs` | the Elo Pros launcher's client, vendored as its SDK asks (elo-pros-launcher `sdk/rust/elo_overlay.rs`) |
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
 | `spike.sh` | one turn of the loop |
+| `tools/setup.sh` | a fresh machine made ready for the loop: sbox-public checked out, patched, generated, built |
 | `tools/compile.sh` | a project's JSON resources (scenes, prefabs) as compiled resources |
 | `tools/physdrop.sh`, `tools/physdrop/` | Sweeper's physics cubes with a watcher that logs what physics does |
 | `tools/jointrig.sh`, `tools/jointrig/` | five rigs of s&box's joint components, and what each does |
