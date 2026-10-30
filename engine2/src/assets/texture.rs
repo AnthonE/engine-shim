@@ -76,7 +76,8 @@ pub fn read(r: Resource) -> Result<Texture, String> {
 }
 
 impl Texture {
-    fn faces(&self) -> usize { if self.flags & CUBE != 0 { 6 } else { 1 } }
+    /// 6 for a cube, else 1.
+    pub fn faces(&self) -> usize { if self.flags & CUBE != 0 { 6 } else { 1 } }
 
     /// A mip's size, in pixels.
     pub fn size(&self, mip: usize) -> (usize, usize) {

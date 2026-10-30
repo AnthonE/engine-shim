@@ -8,3 +8,4 @@ description = "engine2's renderer from the command line: a model drawn into a PN
 [dependencies]
 engine2 = { path = "../engine2", features = ["render"] }
 png = "0.17"
+glam = "0.30"

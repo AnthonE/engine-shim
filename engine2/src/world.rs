@@ -75,31 +75,14 @@ pub fn entity(ptr: usize) -> Option<&'static Entity> {
     entities().contains(&ptr).then(|| unsafe { &*(ptr as *const Entity) })
 }
 
-/// What a world draws (its nodes' scene objects, from `world.vwrld_c` and
-/// each node's `.vwnod_c`): each a model in the pak, where it is (a 3x4
-/// transform, row by row) and its tint. Read when first asked for.
-pub fn scene_objects(ptr: usize) -> Vec<(String, [[f32; 4]; 3], [f32; 4])> {
+/// What a world draws: its nodes' scene objects (assets/worldnode.rs),
+/// read when first asked for.
+pub fn scene_objects(ptr: usize) -> Vec<crate::assets::worldnode::Placed> {
     let Some(folder) = with(ptr, |w| w.folder.to_string_lossy().into_owned()) else { return Vec::new() };
-    static READ: OnceLock<Mutex<HashMap<String, Vec<(String, [[f32; 4]; 3], [f32; 4])>>>> = OnceLock::new();
+    static READ: OnceLock<Mutex<HashMap<String, Vec<crate::assets::worldnode::Placed>>>> = OnceLock::new();
     let read = READ.get_or_init(Default::default);
     if let Some(o) = read.lock().unwrap().get(&folder) { return o.clone(); }
-    let kv3 = |path: &str| crate::fs::read(path).and_then(|b| crate::assets::resource::Resource::parse(b).ok()).and_then(|r| r.kv3("DATA")?.ok());
-    use crate::assets::kv3::Value;
-    let mut out = Vec::new();
-    if let Some(world) = kv3(&format!("{folder}/world.vwrld_c")) {
-        for node in world.get("m_worldNodes").map(Value::as_array).unwrap_or(&[]) {
-            let Some(prefix) = node.get("m_worldNodePrefix").and_then(Value::as_str) else { continue };
-            let Some(n) = kv3(&format!("{}.vwnod_c", prefix.replace('\\', "/"))) else { continue };
-            for o in n.get("m_sceneObjects").map(Value::as_array).unwrap_or(&[]) {
-                let Some(model) = o.get("m_renderableModel").and_then(Value::as_str).filter(|m| !m.is_empty()) else { continue };
-                let rows = o.get("m_vTransform").map(Value::as_array).unwrap_or(&[]);
-                let row = |i: usize| { let f = rows.get(i).map(Value::floats).unwrap_or_default(); core::array::from_fn(|k| f.get(k).copied().unwrap_or(if k == i { 1.0 } else { 0.0 })) };
-                let tint = o.get("m_vTintColor").map(Value::floats).unwrap_or_default();
-                let tint = if tint.iter().take(3).all(|&t| t == 0.0) { [1.0; 4] } else { core::array::from_fn(|k| tint.get(k).copied().unwrap_or(1.0)) };
-                out.push((model.to_string(), [row(0), row(1), row(2)], tint));
-            }
-        }
-    }
+    let out = crate::assets::worldnode::scene_objects(&folder, crate::fs::read);
     read.lock().unwrap().insert(folder, out.clone());
     out
 }

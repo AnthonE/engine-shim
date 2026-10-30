@@ -8,7 +8,7 @@
 //! CCameraRenderer_RenderToBitmap); `render` draws one model.
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::assets::{material, mesh, resource::Resource, texture};
 use glam::{Mat4, Vec3};
@@ -26,14 +26,22 @@ pub trait Files {
 }
 
 /// Folders that hold files at their game paths (a package's, as
-/// tools/package.sh fetches them).
-pub struct Content(pub Vec<PathBuf>);
+/// tools/package.sh fetches them), and paks (a map's).
+pub struct Content(pub Vec<PathBuf>, pub Vec<crate::assets::vpk::Vpk>);
+
+impl Content {
+    /// From a list of places: a `.vpk` is a pak, anything else a folder.
+    pub fn of(places: impl IntoIterator<Item = PathBuf>) -> Content {
+        let (paks, dirs): (Vec<PathBuf>, Vec<PathBuf>) = places.into_iter().partition(|p| p.extension().is_some_and(|e| e == "vpk"));
+        Content(dirs, paks.iter().filter_map(|p| crate::assets::vpk::Vpk::open(p).ok()).collect())
+    }
+}
 
 impl Files for Content {
     fn read(&self, path: &str) -> Option<Vec<u8>> {
         let path = path.replace('\\', "/");
         let path = path.trim_start_matches('/');
-        self.0.iter().find_map(|d| std::fs::read(d.join(path)).ok())
+        self.0.iter().find_map(|d| std::fs::read(d.join(path)).ok()).or_else(|| self.1.iter().find_map(|p| p.read(path)))
     }
 }
 
@@ -62,11 +70,13 @@ struct Vertex {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ViewUniform {
     view_proj: [[f32; 4]; 4],
+    inv_view_proj: [[f32; 4]; 4],
     eye: [f32; 4],
     sun: [f32; 4],
     sun_color: [f32; 4],
     sky: [f32; 4],
     ground: [f32; 4],
+    sky_rotation: [[f32; 4]; 4],
 }
 
 #[repr(C)]
@@ -119,6 +129,9 @@ pub struct Renderer {
     view_layout: wgpu::BindGroupLayout,
     material_layout: wgpu::BindGroupLayout,
     object_layout: wgpu::BindGroupLayout,
+    sky_pipeline: wgpu::RenderPipeline,
+    sky_layout: wgpu::BindGroupLayout,
+    skies: Mutex<HashMap<String, Arc<Sky>>>,
     sampler: wgpu::Sampler,
     /// whether the GPU takes BC1 to BC7 as they are (most desktop GPUs,
     /// lavapipe, WebGPU on desktops), and what's been read already
@@ -183,6 +196,24 @@ impl Renderer {
             multiview: None,
             cache: None,
         });
+        // the sky: a triangle over the screen, its cube looked up per pixel, behind everything
+        let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sky"), source: wgpu::ShaderSource::Wgsl(include_str!("sky.wgsl").into()) });
+        let sky_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("sky"), entries: &[
+            uniform(0, wgpu::ShaderStages::FRAGMENT),
+            wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::Cube, multisampled: false }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+        ] });
+        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sky"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &sky_layout], push_constant_ranges: &[] })),
+            vertex: wgpu::VertexState { module: &sky_shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
+            fragment: Some(wgpu::FragmentState { module: &sky_shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(COLOR.into())] }),
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: false, depth_compare: wgpu::CompareFunction::Always, stencil: Default::default(), bias: Default::default() }),
+            multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
+            multiview: None,
+            cache: None,
+        });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat, address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::FilterMode::Linear,
@@ -193,7 +224,7 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &rgba).create_view(&Default::default());
         let (white, flat, unoccluded) = (pixel([255; 4]), pixel([128, 128, 153, 255]), pixel([0, 255, 153, 255]));
-        Ok(Renderer { bc, textures: Default::default(), materials: Default::default(), device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, unoccluded, adapter: format!("{} ({:?})", info.name, info.backend) })
+        Ok(Renderer { bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, unoccluded, adapter: format!("{} ({:?})", info.name, info.backend) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -242,6 +273,52 @@ impl Renderer {
         let view = gpu.create_view(&Default::default());
         self.textures.lock().unwrap().insert(key, view.clone());
         Ok(view)
+    }
+
+    /// A sky material (`sky.shader`): its cube on the GPU, read once.
+    pub fn sky(&self, content: &dyn Files, name: &str) -> Result<Arc<Sky>, String> {
+        let key = crate::fs::normal(name);
+        if let Some(s) = self.skies.lock().unwrap().get(&key) { return Ok(s.clone()); }
+        let m = material::read(&content.compiled(name).ok_or_else(|| format!("{name}: not found"))?)?;
+        let tex = m.textures.get("g_tSkyTexture").ok_or_else(|| format!("{name}: no g_tSkyTexture"))?;
+        let t = texture::read(content.compiled(tex).ok_or_else(|| format!("{tex}: not found"))?)?;
+        let (format, bytes) = match t.format {
+            texture::format::BC6H => (wgpu::TextureFormat::Bc6hRgbUfloat, 16),
+            texture::format::BC7 => (wgpu::TextureFormat::Bc7RgbaUnormSrgb, 16),
+            texture::format::DXT1 => (wgpu::TextureFormat::Bc1RgbaUnormSrgb, 8),
+            f => return Err(format!("{tex}: a sky of format {f} not drawn yet")),
+        };
+        if !self.bc || t.faces() != 6 { return Err(format!("{tex}: not a cube this GPU takes")); }
+        let top = t.available(0).ok_or_else(|| format!("{tex}: no mips"))?;
+        let (w, h) = t.size(top);
+        let gpu = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(tex), size: wgpu::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 6 }, mip_level_count: (t.mips - top) as u32, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2, format, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+        });
+        for (i, m) in (top..t.mips).enumerate() {
+            let (lw, lh) = t.size(m);
+            let (bx, by) = (lw.div_ceil(4), lh.div_ceil(4));
+            let face = bx * by * bytes;
+            let data = t.raw(m)?;
+            if data.len() < face * 6 { return Err(format!("{tex}: mip {m} short")); }
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &gpu, mip_level: i as u32, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                &data[..face * 6],
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some((bx * bytes) as u32), rows_per_image: Some(by as u32) },
+                wgpu::Extent3d { width: (bx * 4) as u32, height: (by * 4) as u32, depth_or_array_layers: 6 },
+            );
+        }
+        let view = gpu.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
+        let brightness = 2f32.powf(m.float("g_flBrightnessExposureBias", 0.0));
+        let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("sky"), contents: bytemuck::cast_slice(&[brightness, 0.0, 0.0, 0.0]), usage: wgpu::BufferUsages::UNIFORM });
+        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(name), layout: &self.sky_layout, entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
+            at(1, &view),
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+        ] });
+        let sky = Arc::new(Sky { group });
+        self.skies.lock().unwrap().insert(key, sky.clone());
+        Ok(sky)
     }
 
     /// A material's bind group, and whether it's drawn at all.
@@ -339,15 +416,22 @@ impl Renderer {
     /// Objects drawn from a view: an RGBA image, `width` by `height`, its
     /// top row first.
     pub fn draw(&self, objects: &[Instance], view: &View, width: u32, height: u32) -> Vec<u8> {
-        let sun = Vec3::new(0.6, 0.35, 0.75).normalize();
+        let (sun, sun_color) = view.sun.unwrap_or((Vec3::new(0.6, 0.35, 0.75), Vec3::new(1.6, 1.55, 1.45)));
+        // no auto exposure yet: s&box's default never goes below 1 (its
+        // range is 1 to 3), and a map's sun is lit for that
+        let exposure = 1.0;
+        let ambient = 1.0;
+        let view_proj = view.proj * view.view;
         let uniform = ViewUniform {
-            view_proj: (view.proj * view.view).to_cols_array_2d(),
-            eye: view.eye.extend(1.0).into(),
-            sun: sun.extend(0.0).into(),
-            sun_color: [1.6, 1.55, 1.45, 0.0],
-            sky: [0.55, 0.6, 0.7, 0.0],
+            view_proj: view_proj.to_cols_array_2d(),
+            inv_view_proj: view_proj.inverse().to_cols_array_2d(),
+            eye: view.eye.extend(exposure).into(),
+            sun: sun.normalize().extend(0.0).into(),
+            sun_color: sun_color.extend(0.0).into(),
+            sky: [0.55 * ambient, 0.6 * ambient, 0.7 * ambient, 0.0],
             // RENDER_DEBUG: 1 base colour, 2 normal, 3 occlusion, 4 roughness
-            ground: [0.25, 0.23, 0.2, std::env::var("RENDER_DEBUG").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0)],
+            ground: [0.25 * ambient, 0.23 * ambient, 0.2 * ambient, std::env::var("RENDER_DEBUG").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0)],
+            sky_rotation: Mat4::from_quat(view.sky_rotation.inverse()).to_cols_array_2d(),
         };
         let d = &self.device;
         let view_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("view"), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
@@ -383,6 +467,12 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            if let Some(sky) = &view.sky {
+                pass.set_pipeline(&self.sky_pipeline);
+                pass.set_bind_group(0, &view_group, &[]);
+                pass.set_bind_group(1, &sky.group, &[]);
+                pass.draw(0..3, 0..1);
+            }
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &view_group, &[]);
             for (o, group) in objects.iter().zip(&object_groups) {
@@ -435,6 +525,16 @@ pub struct View {
     pub view: Mat4,
     pub proj: Mat4,
     pub clear: [f64; 4],
+    /// the sun: towards it, and its colour (none: one of ours)
+    pub sun: Option<(Vec3, Vec3)>,
+    /// the sky behind everything (none: the clear colour), and how it's turned
+    pub sky: Option<Arc<Sky>>,
+    pub sky_rotation: glam::Quat,
+}
+
+/// A sky on the GPU (Renderer::sky).
+pub struct Sky {
+    group: wgpu::BindGroup,
 }
 
 impl View {
@@ -449,6 +549,9 @@ impl View {
             view: Mat4::look_at_rh(position, position + rot * Vec3::X, rot * Vec3::Z),
             proj: Mat4::perspective_rh(vertical, aspect, near.max(0.1), far.max(near + 1.0)),
             clear: [0.55, 0.6, 0.7, 1.0],
+            sun: None,
+            sky: None,
+            sky_rotation: glam::Quat::IDENTITY,
         }
     }
 
@@ -460,7 +563,7 @@ impl View {
         let fov = 30f32.to_radians();
         let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
         let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4] }
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY }
     }
 }
 
@@ -471,7 +574,7 @@ mod tests {
     #[test]
     fn a_downloaded_model_is_drawn() {
         let Ok(dir) = std::env::var("ENGINE2_CONTENT") else { return };
-        let content = super::Content(vec![dir.into()]);
+        let content = super::Content(vec![dir.into()], Vec::new());
         use super::Files;
         if content.read("models/sbox_props/tv/tv.vmdl_c").is_none() { return; }
         let Ok(r) = super::Renderer::new() else { eprintln!("no adapter: skipped"); return };

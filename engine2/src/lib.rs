@@ -37,6 +37,9 @@ use std::sync::OnceLock;
 /// copied out: managed's array is pinned only for the call that gives it.
 pub static MANAGED: OnceLock<Vec<usize>> = OnceLock::new();
 
+/// A string's token as s&box hashes it (StringToken: an entity's keys).
+pub fn string_token(s: &str) -> u32 { handles::murmur2(s) }
+
 /// Managed callback `i` (slots.rs's M_* constants), or null before igen_engine.
 pub fn managed(i: usize) -> usize {
     MANAGED.get().and_then(|m| m.get(i).copied()).unwrap_or(0)

@@ -6,6 +6,78 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 static WORLDS: Mutex<Option<HashMap<usize, Vec<usize>>>> = Mutex::new(None);
+
+/// Materials by name, each one object (and its name to give back).
+static MATERIALS: Mutex<Option<(HashMap<String, usize>, HashMap<usize, std::ffi::CString>)>> = Mutex::new(None);
+/// Each sky's material, once managed changes it; each directional
+/// light's direction (towards it) as made or set.
+static SKIES: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
+static SUNS: Mutex<Option<HashMap<usize, crate::slots::S_Vector3>>> = Mutex::new(None);
+
+pub fn material(name: &str) -> usize {
+    let key = crate::fs::normal(name);
+    let mut m = MATERIALS.lock().unwrap();
+    let (by_name, names) = m.get_or_insert_with(Default::default);
+    *by_name.entry(key).or_insert_with(|| {
+        let p = crate::handles::object();
+        names.insert(p, std::ffi::CString::new(name.replace('\0', "")).unwrap_or_default());
+        p
+    })
+}
+
+pub fn material_name(m: usize) -> Option<String> {
+    MATERIALS.lock().unwrap().as_ref()?.1.get(&m).map(|n| n.to_string_lossy().into_owned())
+}
+
+/// A material's shader, from its file (read once).
+pub fn material_shader(m: usize) -> Option<String> {
+    static SHADERS: Mutex<Option<HashMap<usize, Option<String>>>> = Mutex::new(None);
+    if let Some(s) = SHADERS.lock().unwrap().as_ref().and_then(|s| s.get(&m)) { return s.clone(); }
+    let shader = material_name(m)
+        .and_then(|n| crate::fs::read_compiled(&n))
+        .and_then(|b| crate::assets::resource::Resource::parse(b).ok())
+        .and_then(|r| crate::assets::material::read(&r).ok())
+        .map(|x| x.shader);
+    SHADERS.lock().unwrap().get_or_insert_with(Default::default).insert(m, shader.clone());
+    shader
+}
+
+pub fn material_name_ptr(m: usize) -> usize {
+    static EMPTY: &std::ffi::CStr = c"";
+    MATERIALS.lock().unwrap().as_ref().and_then(|x| x.1.get(&m).map(|n| n.as_ptr() as usize)).unwrap_or(EMPTY.as_ptr() as usize)
+}
+
+pub fn set_sky_material(sky: usize, m: usize) {
+    SKIES.lock().unwrap().get_or_insert_with(Default::default).insert(sky, m);
+}
+
+/// A sky object's material: the one it was set, else the one it was made with.
+pub fn sky_material(sky: usize) -> usize {
+    SKIES.lock().unwrap().as_ref().and_then(|s| s.get(&sky).copied()).or_else(|| crate::handles::links(sky).first().copied()).unwrap_or(0)
+}
+
+/// A directional light made (CreateDirectionalLight), towards it.
+pub fn add_sun(light: usize, towards: crate::slots::S_Vector3) {
+    SUNS.lock().unwrap().get_or_insert_with(Default::default).insert(light, towards);
+}
+
+/// A light turned: a directional one's new direction (every kind of light
+/// is told).
+pub fn turn_light(light: usize, towards: crate::slots::S_Vector3) {
+    if let Some(d) = SUNS.lock().unwrap().as_mut().and_then(|s| s.get_mut(&light)) { *d = towards; }
+}
+
+/// A scene object gone: whatever was kept of it here.
+pub fn forget(obj: usize) {
+    set_shown(obj, true);
+    if let Some(s) = SUNS.lock().unwrap().as_mut() { s.remove(&obj); }
+    if let Some(s) = SKIES.lock().unwrap().as_mut() { s.remove(&obj); }
+}
+
+/// The directional lights, with the direction each was made or set with.
+pub fn suns() -> Vec<(usize, crate::slots::S_Vector3)> {
+    SUNS.lock().unwrap().as_ref().map(|s| s.iter().map(|(&k, &v)| (k, v)).collect()).unwrap_or_default()
+}
 static HIDDEN: Mutex<Option<HashSet<usize>>> = Mutex::new(None);
 
 pub fn add_world(camera: usize, world: usize) {
@@ -128,11 +200,35 @@ mod draw {
                 }
             }
         }
+        // the sun and sky of its worlds: a directional light, a sky object
+        let worlds = super::worlds(camera);
+        let in_worlds = |obj: usize| crate::handles::links(obj).iter().any(|l| worlds.contains(l));
+        let mut view = view;
+        for (light, made) in super::suns() {
+            let towards = v3(made);
+            let c = v3(crate::state::get::<S_Vector3>(light, PROP_Color));
+            if !in_worlds(light) || !super::shown(light) { continue; }
+            if towards.length_squared() > 1e-6 { view.sun = Some((towards, if c.length_squared() > 0.0 { c } else { Vec3::ONE })); }
+        }
+        for world in &worlds {
+            for sky in crate::handles::made_with("SceneSkyBoxObject", *world) {
+                if !super::shown(sky) { continue; }
+                let Some(name) = super::material_name(super::sky_material(sky)) else { continue };
+                match r.sky(&EngineFiles, &name) {
+                    Ok(s) => {
+                        view.sky = Some(s);
+                        let t = crate::state::get::<S_Transform>(sky, PROP_Transform).f_Rotation.f__quat;
+                        if t.f_X != 0.0 || t.f_Y != 0.0 || t.f_Z != 0.0 || t.f_W != 0.0 { view.sky_rotation = Quat::from_xyzw(t.f_X, t.f_Y, t.f_Z, t.f_W).normalize(); }
+                    }
+                    Err(e) => crate::trace::note(&format!("render: {e}")),
+                }
+            }
+        }
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone() }).collect();
         let image = r.draw(&instances, &view, width as u32, height as u32);
         let out = unsafe { std::slice::from_raw_parts_mut(pixels as *mut u8, (width * height * 4) as usize) };
         out.copy_from_slice(&image);
-        crate::trace::note(&format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}", view.eye, instances.len()));
+        crate::trace::note(&format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}", view.eye, instances.len(), view.sun, view.sky.is_some()));
     }
 }
 

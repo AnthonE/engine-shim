@@ -2003,7 +2003,7 @@ pub unsafe fn g_pMeshSystem_ChangeModel(obj: usize, model: usize) { animation::c
 /// go of its handle.
 pub unsafe fn g_pSceneSystem_DeleteSceneObject(obj: usize) {
     animation::remove(obj);
-    crate::camera::set_shown(obj, true);
+    crate::camera::forget(obj);
     crate::handles::free(obj);
 }
 pub unsafe fn g_pSceneSystem_DeleteSceneObjectAtFrameEnd(obj: usize) { unsafe { g_pSceneSystem_DeleteSceneObject(obj) } }
@@ -2011,6 +2011,42 @@ pub unsafe fn CSceneObject_SetRenderingEnabled(obj: usize, on: i32) { crate::cam
 pub unsafe fn CSceneObject_EnableRendering(obj: usize) { crate::camera::set_shown(obj, true) }
 pub unsafe fn CSceneObject_DisableRendering(obj: usize) { crate::camera::set_shown(obj, false) }
 pub unsafe fn CSceneObject_IsRenderingEnabled(obj: usize) -> i32 { crate::camera::shown(obj) as i32 }
+
+// ---- materials: one object per name, which remembers it (a client's
+// renderer reads the file by it: camera.rs)
+
+pub unsafe fn Glue_Resources_GetMaterial(path: usize, _guid: crate::slots::S_System_Guid) -> usize {
+    crate::camera::material(&unsafe { read(path) })
+}
+pub unsafe fn IMaterial2_GetName(m: usize) -> usize { crate::camera::material_name_ptr(m) }
+/// A material's string by name: its shader (`shader`, as its file says:
+/// a sky is only a sky if it's a sky shader's), else the default.
+pub unsafe fn IMaterial2_GetString(m: usize, name: usize, default: usize) -> usize {
+    match unsafe { read(name) }.as_str() {
+        "shader" => match crate::camera::material_shader(m) {
+            Some(s) => returned(s),
+            None => returned(unsafe { read(default) }),
+        },
+        _ => returned(unsafe { read(default) }),
+    }
+}
+
+// ---- the sky and the sun (camera.rs draws them)
+
+pub unsafe fn CScnSkyBxbjct_SetMaterial(sky: usize, m: usize) { crate::camera::set_sky_material(sky, m) }
+/// A directional light (a map's sun): which way it shines from, remembered.
+pub unsafe fn g_pSceneSystem_CreateDirectionalLight(world: usize, direction: usize) -> i32 {
+    let obj = crate::handles::object();
+    crate::camera::add_sun(obj, unsafe { std::ptr::read_unaligned(direction as *const S_Vector3) });
+    crate::handles::register(obj, "SceneLightObject", &[world])
+}
+/// A light turned (managed passes its rotation): it shines along its
+/// forward, so towards it is backward.
+pub unsafe fn CScnLghtbjct_SetWorldDirection(light: usize, rotation: usize) {
+    let r = unsafe { std::ptr::read_unaligned(rotation as *const crate::slots::S_Rotation) }.f__quat;
+    let back = rapier3d::math::Rotation::from_xyzw(r.f_X, r.f_Y, r.f_Z, r.f_W) * -rapier3d::math::Vector::X;
+    crate::camera::turn_light(light, phys::v3(back))
+}
 
 // ---- cameras: what managed asks to see (camera.rs)
 

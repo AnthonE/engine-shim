@@ -95,6 +95,11 @@ pub fn related(obj: usize, ty: &str) -> i32 {
     o.links.iter().filter_map(|l| i.get(l)).find(|l| l.ty == ty).map(|l| l.handle).unwrap_or(0)
 }
 
+/// The objects `obj` was made with (a sky's material and world).
+pub fn links(obj: usize) -> Vec<usize> {
+    index().lock().unwrap().get(&obj).map(|o| o.links.clone()).unwrap_or_default()
+}
+
 /// Every object of type `ty` made with `link` (the scene objects in a world).
 pub fn made_with(ty: &str, link: usize) -> Vec<usize> {
     index().lock().unwrap().iter().filter(|(_, o)| o.ty == ty && o.links.contains(&link)).map(|(&p, _)| p).collect()

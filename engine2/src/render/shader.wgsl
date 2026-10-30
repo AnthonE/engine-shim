@@ -14,11 +14,13 @@
 
 struct View {
     view_proj: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
     eye: vec4<f32>,
     sun: vec4<f32>,       // towards the sun
     sun_color: vec4<f32>,
     sky: vec4<f32>,
     ground: vec4<f32>,
+    sky_rotation: mat4x4<f32>,
 };
 
 struct Material {
@@ -100,6 +102,11 @@ const PI: f32 = 3.14159265;
 fn sky(d: vec3<f32>, rough: f32) -> vec3<f32> {
     let up = clamp(d.z * mix(4.0, 1.0, rough), -1.0, 1.0) * 0.5 + 0.5;
     return mix(view.ground.rgb, view.sky.rgb, up);
+}
+
+// a filmic curve (ACES, as Narkowicz fits it), so the sun's highlights roll off
+fn tonemap(x: vec3<f32>) -> vec3<f32> {
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 fn ggx(n: vec3<f32>, h: vec3<f32>, rough: f32) -> f32 {
@@ -185,7 +192,5 @@ fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32>
     if (debug == 2.0) { return vec4<f32>(n * 0.5 + 0.5, 1.0); }
     if (debug == 3.0) { return vec4<f32>(vec3<f32>(ao), 1.0); }
     if (debug == 4.0) { return vec4<f32>(vec3<f32>(rough), 1.0); }
-    // a gentle curve, so the sun's highlights roll off
-    let mapped = lit / (1.0 + lit * 0.25);
-    return vec4<f32>(mapped, 1.0);
+    return vec4<f32>(tonemap(lit * view.eye.w), 1.0);
 }

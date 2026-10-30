@@ -10,6 +10,7 @@ pub mod model;
 pub mod resource;
 pub mod texture;
 pub mod vpk;
+pub mod worldnode;
 
 #[cfg(test)]
 mod tests {

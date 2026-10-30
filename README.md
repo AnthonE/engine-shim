@@ -546,16 +546,41 @@ go to the GPU as their BC blocks where it takes them (decoded only
 where it doesn't), each texture and material read once. Scene objects
 deleted (`DeleteSceneObject`) go, their handles freed.
 
+The sun is the world's directional light (`CreateDirectionalLight`,
+turned by `SetWorldDirection`, which managed passes a rotation: it
+shines along its forward), at the colour managed set (a map's
+`light_environment`: its colour times its brightness). The sky is the
+world's sky object (`CreateSkyBox`) drawn behind everything: its
+material (`sky.shader`) names a cube texture, HDR in BC6H, kept in
+Source 2's own axes (z up) and turned as the sky object is (a map's
+`env_sky` turns it). Materials are one object per name, which answers
+its name and its shader (`GetString("shader")`, read from the file: a
+sky material is only taken as one if its shader is a sky's). Exposure
+is 1, the least s&box's default auto exposure gives; a filmic curve
+(ACES) brings the light down.
+
 Measured: the headless player of Sandbox on flatgrass (with the map
 package's materials beside its pak, `ENGINE2_CONTENT`), its watcher
 asking the scene's camera for a frame every ten seconds: 266 objects
-(259 of them the map's), every material and texture found; the roof of
-the spawn building, its scaffolding, the grass to the horizon, and the
-physgun in the player's hand, posed by its animation graph. What isn't
-drawn yet: the sky (a flat colour), the map's own sun (one of ours), and
-glass and other translucent materials. A headless player has no
-tonemapper (`Graphics.IsAvailable` is false with the empty render
-device), so the watcher turns auto exposure off for its frames.
+(259 of them the map's), every material and texture found, the map's
+sun (towards 0.11, -0.59, 0.80: its `light_environment` at pitch 53,
+yaw 101; colour 3.5 times 255 245 234) and its sunrise sky, the sun's
+glow in it where the light comes from; the roof of the spawn building,
+its scaffolding, the grass to the horizon, and the physgun in the
+player's hand, posed by its animation graph. What isn't drawn yet:
+glass and other translucent materials, shadows, the baked lightmaps,
+particles, decals and the UI; the sky shows faint lines where its cube's
+faces meet. A headless player has no tonemapper (`Graphics.IsAvailable`
+is false with the empty render device), so the watcher turns auto
+exposure off for its frames.
+
+`render map` draws a map from its pak alone, its sun and sky as its
+entities name them, from any camera: the same renderer without a game.
+
+```sh
+ENGINE2_CONTENT=../sandbox/Assets/maps/flatgrass.vpk:../content-flatgrass \
+  cargo run --release -p render -- map maps/flatgrass flatgrass.png 128 -48 449 5 250
+```
 
 - **Meshes** (`engine2/src/assets/mesh.rs`): the vertex and index
   buffers a model's CTRL names (an MBUF block per embedded mesh, or a
@@ -594,7 +619,9 @@ sh tools/package.sh facepunch.tv ../content     # sbox.game's files, never commi
 ENGINE2_CONTENT=../content cargo run --release -p render -- models/sbox_props/tv/tv.vmdl tv.png 35 15 512
 ```
 
-`RENDER_DEBUG` shows what the shader read (1 base colour, 2 normal, 3
+`tools/package.sh facepunch.flatgrass <folder> '\.(vmat_c|vtex_c|vmdl_c|vmesh_c)$'`
+fetches a map's materials and textures (outside the project: a project's
+files are sent to its players). `RENDER_DEBUG` shows what the shader read (1 base colour, 2 normal, 3
 occlusion, 4 roughness).
 
 ## Reproduce
@@ -697,7 +724,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
 | `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
 | `engine2/src/camera.rs` | cameras managed asks for pixels: their worlds, what's shown, the view drawn into managed's bitmap |
-| `render/` | the renderer from the command line: one model drawn into a PNG |
+| `render/` | the renderer from the command line: a model, or a map from its pak, drawn into a PNG |
 | `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders (case blind, as managed names them), the game's own, mounted paks |
 | `engine2/src/world.rs` | maps: worlds from a map's pak, their folder and entity lumps |
 | `engine2/src/net.rs` | connections: Glue.Networking's sockets, poll groups and messages over QUIC (WebTransport) |
