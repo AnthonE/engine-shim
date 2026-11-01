@@ -568,8 +568,7 @@ yaw 101; colour 3.5 times 255 245 234) and its sunrise sky, the sun's
 glow in it where the light comes from; the roof of the spawn building,
 its scaffolding, the grass to the horizon, and the physgun in the
 player's hand, posed by its animation graph. What isn't drawn yet:
-dynamic shadows (what moves casts none), particles, decals and the UI; the sky shows faint lines where its
-cube's faces meet. A headless player has no tonemapper
+dynamic shadows (what moves casts none), particles, decals and the UI. A headless player has no tonemapper
 (`Graphics.IsAvailable` is false with the empty render device), so the
 watcher turns auto exposure off for its frames.
 
