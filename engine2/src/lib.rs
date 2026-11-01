@@ -23,6 +23,7 @@ mod models;
 mod net;
 mod physics;
 pub mod relay;
+mod audio;
 mod rendermesh;
 mod serverlist;
 mod siwe;

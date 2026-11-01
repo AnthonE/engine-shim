@@ -42,6 +42,8 @@ meshopt = "0.7"
 texture2ddecoder = "0.1.2"
 # A texture's mips compressed with zstd (pure Rust, so wasm too).
 ruzstd = "0.8"
+# Sound: MP3 decoded in pure Rust (a project's sources; compiled sounds are PCM).
+puremp3 = "0.1"
 # Drawing (feature "render"): wgpu (Vulkan, Metal, DX12, GL; WebGPU in a
 # browser), and the math and byte casts it takes.
 wgpu = { version = "25", optional = true }

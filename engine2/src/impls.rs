@@ -123,14 +123,148 @@ pub unsafe fn ImageLoader_GetMemRequired_1(w: i32, h: i32, d: i32, mips: i32, fo
     mem_required(w, h, d, mips, format)
 }
 
-// ---- sound: a device with nowhere to play, as a server's is
+// ---- sound: audio.rs. Managed mixes; native reads its sounds, keeps its
+// buffers, paces it and takes the mix.
 
-pub unsafe fn g_pAudioDevice_Name() -> usize { cstr("null") }
-pub unsafe fn g_pAudioDevice_ChannelCount() -> u32 { 2 }
-pub unsafe fn g_pAudioDevice_MixChannelCount() -> u32 { 2 }
+use crate::audio;
+
+pub unsafe fn g_pAudioDevice_Name() -> usize { cstr("engine-shim") }
+pub unsafe fn g_pAudioDevice_ChannelCount() -> u32 { audio::CHANNELS as u32 }
+pub unsafe fn g_pAudioDevice_MixChannelCount() -> u32 { audio::CHANNELS as u32 }
 pub unsafe fn g_pAudioDevice_BitsPerSample() -> u32 { 16 }
 pub unsafe fn g_pAudioDevice_BytesPerSample() -> u32 { 2 }
-pub unsafe fn g_pAudioDevice_SampleRate() -> u32 { 44_100 }
+pub unsafe fn g_pAudioDevice_SampleRate() -> u32 { audio::RATE }
+pub unsafe fn g_pAudioDevice_IsValid() -> i32 { 1 }
+pub unsafe fn g_pAudioDevice_IsActive() -> i32 { 1 }
+pub unsafe fn g_pAudioDevice_SendOutput(buffers: usize) {
+    if let Some(b) = unsafe { audio::device_buffers(buffers) } { audio::send(b) }
+}
+
+pub unsafe fn g_pSndSystmntrnl_PrecacheSound(name: usize) -> usize { audio::precache(&unsafe { read(name) }) }
+pub unsafe fn g_pSndSystmntrnl_CreateSound(name: usize, channels: i32, rate: i32, format: i32, frames: i32, _duration: f32, loop_start: i32, loop_end: i32, data: usize, size: i32) -> usize {
+    let bytes = if data == 0 || size <= 0 { &[][..] } else { unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) } };
+    audio::create(&unsafe { read(name) }, channels, rate, format, frames, loop_start, loop_end, bytes)
+}
+pub unsafe fn g_pSndSystmntrnl_PreloadSound(_sfx: usize) {}
+
+// a sound (CSfxTable), and its resource (VSound_t): the same object here
+fn sfx<T>(p: usize, f: impl FnOnce(&audio::Sound) -> T, otherwise: T) -> T { audio::sound(p).map(|s| f(&s)).unwrap_or(otherwise) }
+pub unsafe fn CSfxTable_GetCacheStatus(p: usize) -> i32 { sfx(p, |s| if s.failed { 0 } else { 2 }, 0) }
+pub unsafe fn CSfxTable_GetSampleCount(p: usize) -> i32 { sfx(p, |s| s.frames() as i32, 0) }
+pub unsafe fn CSfxTable_IsValidForPlayback(p: usize) -> i32 { sfx(p, |s| !s.failed && s.frames() > 0, false) as i32 }
+pub unsafe fn CSfxTable_FailedResourceLoad(p: usize) -> i32 { sfx(p, |s| s.failed, true) as i32 }
+pub unsafe fn CSfxTable_GetSound(p: usize) -> usize { p }
+/// Its samples as 16-bit: mono (channels averaged), or as recorded, interleaved.
+unsafe fn samples16(p: usize, out: usize, n: u32, interleaved: bool) -> i32 {
+    let Some(s) = audio::sound(p).filter(|s| !s.failed) else { return 0 };
+    if out == 0 { return 0; }
+    let out = unsafe { core::slice::from_raw_parts_mut(out as *mut i16, n as usize) };
+    let keep = interleaved && s.channels == 2;
+    let ch = s.channels.max(1);
+    let it: Box<dyn Iterator<Item = f32>> = if keep { Box::new(s.data.iter().copied()) } else { Box::new(s.data.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32)) };
+    for (o, x) in out.iter_mut().zip(it) { *o = (x.clamp(-1.0, 1.0) * 32767.0) as i16; }
+    1
+}
+pub unsafe fn CSfxTable_GetSamples(p: usize, out: usize, n: u32) -> i32 { unsafe { samples16(p, out, n, false) } }
+pub unsafe fn CSfxTable_GetSamplesInterleaved(p: usize, out: usize, n: u32) -> i32 { unsafe { samples16(p, out, n, true) } }
+pub unsafe fn CSfxTable_CreateMixer(p: usize) -> usize {
+    let m = audio::new_mixer(p);
+    // a player mixes what it plays; a dedicated server has nobody to hear it
+    if m != 0 && DEDICATED.load(Ordering::Relaxed) == 0 { audio::start() }
+    m
+}
+pub unsafe fn VSound_t_IsStrongHandleValid(p: usize) -> i32 { audio::sound(p).is_some() as i32 }
+pub unsafe fn VSound_t_IsStrongHandleLoaded(p: usize) -> i32 { sfx(p, |s| !s.failed, false) as i32 }
+pub unsafe fn VSound_t_IsError(p: usize) -> i32 { sfx(p, |s| s.failed, true) as i32 }
+pub unsafe fn VSound_t_CopyStrongHandle(p: usize) -> usize { p }
+pub unsafe fn VSound_t_DestroyStrongHandle(_p: usize) {}
+pub unsafe fn VSound_t_GetBindingPtr(p: usize) -> usize { p }
+pub unsafe fn VSound_t_format(p: usize) -> i64 { sfx(p, |s| s.format as i64, 0) }
+pub unsafe fn VSound_t_BitsPerSample(p: usize) -> i32 { sfx(p, |s| if s.format == audio::PCM8 { 8 } else { 16 }, 16) }
+pub unsafe fn VSound_t_BytesPerSample(p: usize) -> i32 { sfx(p, |s| if s.format == audio::PCM8 { 1 } else { 2 }, 2) }
+pub unsafe fn VSound_t_channels(p: usize) -> i32 { sfx(p, |s| s.channels as i32, 1) }
+pub unsafe fn VSound_t_m_sampleFrameSize(p: usize) -> i32 { unsafe { VSound_t_BytesPerSample(p) * VSound_t_channels(p) } }
+pub unsafe fn VSound_t_m_rate(p: usize) -> i32 { sfx(p, |s| s.rate as i32, audio::RATE as i32) }
+pub unsafe fn VSound_t_Duration(p: usize) -> f32 { sfx(p, |s| s.duration(), 0.0) }
+
+// a voice's place in its sound (CAudioMixer)
+fn mixer<T>(p: usize, f: impl FnOnce(&mut audio::Mixer) -> T, otherwise: T) -> T { audio::with_mixer(p, f).unwrap_or(otherwise) }
+pub unsafe fn CAudioMixer_Dispose(p: usize) { audio::drop_mixer(p) }
+pub unsafe fn CAudioMixer_GetSamplePosition(p: usize) -> i32 { mixer(p, |m| m.position as i32, 0) }
+pub unsafe fn CAudioMixer_SetSamplePosition(p: usize, at: i32) { mixer(p, |m| m.position = at.max(0) as f64, ()) }
+pub unsafe fn CAudioMixer_GetPositionForSave(p: usize) -> i32 { unsafe { CAudioMixer_GetSamplePosition(p) } }
+pub unsafe fn CAudioMixer_SetPositionFromSaved(p: usize, at: i32) { unsafe { CAudioMixer_SetSamplePosition(p, at) } }
+pub unsafe fn CAudioMixer_ShouldContinueMixing(p: usize) -> i32 { mixer(p, |m| !m.finished(), false) as i32 }
+pub unsafe fn CAudioMixer_IsReadyToMix(p: usize) -> i32 { audio::with_mixer(p, |_| ()).is_some() as i32 }
+pub unsafe fn CAudioMixer_SetSampleEnd(p: usize, end: u32) { mixer(p, |m| m.end = Some(end), ()) }
+/// Positive: wait that many samples first; negative: skip ahead.
+pub unsafe fn CAudioMixer_DelayOrSkipSamples(p: usize, n: i32) {
+    mixer(p, |m| if n >= 0 { m.delay += n as i64 } else { m.position += (-n) as f64 }, ())
+}
+pub unsafe fn CAudioMixer_GetSfxTable(p: usize) -> usize { mixer(p, |m| m.sfx, 0) }
+pub unsafe fn CAudioMixer_GetSampleCount(p: usize) -> i32 { mixer(p, |m| m.sound.frames() as i32, 0) }
+pub unsafe fn CAudioMixer_GetChannelCount(p: usize) -> i32 { mixer(p, |m| m.sound.channels as i32, 1) }
+pub unsafe fn CAudioMixer_SetTimeScale(p: usize, scale: f32) -> i32 { mixer(p, |m| { m.time_scale = scale; true }, false) as i32 }
+pub unsafe fn CAudioMixer_EnableLooping(p: usize, on: i32) { mixer(p, |m| m.looping = on != 0, ()) }
+pub unsafe fn CAudioMixer_ReadToBuffer(p: usize, pitch: f32, buffers: usize) {
+    let Some(b) = (unsafe { audio::device_buffers(buffers) }) else { return };
+    let mut out: Vec<&mut [f32; audio::SAMPLES]> = b.bufs.iter_mut().map(|x| &mut x.0).collect();
+    if audio::with_mixer(p, |m| m.read(pitch, &mut out)).is_none() { for o in out.iter_mut() { o.fill(0.0) } }
+    audio::debug("read", &out[0][..]);
+}
+
+// mix buffers: 512 floats, managed's to fill through their pointer
+pub unsafe fn CAudioMixBuffer_Create() -> usize { audio::new_buffer() }
+pub unsafe fn CAudioMixBuffer_Dispose(p: usize) { unsafe { audio::free_buffer(p) } }
+pub unsafe fn CAudioMixBuffer_GetDataPointer(p: usize) -> usize { p }
+pub unsafe fn CAudioMixBuffer_Silence(p: usize) { if let Some(b) = unsafe { audio::buffer(p) } { b.fill(0.0) } }
+pub unsafe fn CAudioMixBuffer_AbsLevel(p: usize) -> f32 { unsafe { audio::buffer(p) }.map(|b| audio::levels(b).0).unwrap_or(0.0) }
+pub unsafe fn CAudioMixBuffer_AvergeLevel(p: usize) -> f32 { unsafe { audio::buffer(p) }.map(|b| audio::levels(b).1).unwrap_or(0.0) }
+pub unsafe fn CAudioMixBuffer_Ramp(p: usize, a: f32, b: f32) { if let Some(x) = unsafe { audio::buffer(p) } { audio::ramp(x, a, b) } }
+pub unsafe fn CAudioMixBuffer_CopyFrom(p: usize, from: usize) {
+    if p == from { return; }
+    if let (Some(x), Some(y)) = unsafe { (audio::buffer(p), audio::buffer(from)) } { x.copy_from_slice(y) }
+}
+pub unsafe fn CAudioMixBuffer_Mix(p: usize, from: usize, scale: f32) { unsafe { CAudioMixBuffer_MixRamp(p, from, scale, scale) } }
+pub unsafe fn CAudioMixBuffer_MixRamp(p: usize, from: usize, a: f32, b: f32) {
+    let Some(y) = (unsafe { audio::buffer(from) }).map(|y| *y) else { return };
+    if let Some(x) = unsafe { audio::buffer(p) } { audio::mix_ramp(x, &y, a, b) }
+}
+// Steam Audio's effects (audio.rs): the direct path and where a sound comes
+// from; reverb and pathing add nothing yet
+pub unsafe fn CDirectEffect_Create() -> usize { audio::new_effect() }
+pub unsafe fn CDirectEffect_Dispose(p: usize) { unsafe { audio::free_effect(p) } }
+pub unsafe fn CDirectEffect_Apply(p: usize, distance: f32, air0: f32, air1: f32, air2: f32, occlusion: f32, t0: f32, t1: f32, t2: f32, input: usize, output: usize) {
+    let (Some(e), Some(i), Some(o)) = (unsafe { audio::effect(p) }, unsafe { audio::device_buffers(input) }, unsafe { audio::device_buffers(output) }) else { return };
+    audio::direct(e, distance, [air0, air1, air2], occlusion, [t0, t1, t2], i, o)
+}
+pub unsafe fn CBinauralEffect_Create() -> usize { audio::new_effect() }
+pub unsafe fn CBinauralEffect_Dispose(p: usize) { unsafe { audio::free_effect(p) } }
+pub unsafe fn CBinauralEffect_Apply(p: usize, direction: usize, blend: f32, _nearest: i32, input: usize, output: usize) {
+    let (Some(e), Some(i), Some(o)) = (unsafe { audio::effect(p) }, unsafe { audio::device_buffers(input) }, unsafe { audio::device_buffers(output) }) else { return };
+    let d = if direction == 0 { [1.0, 0.0, 0.0] } else { let v = phys::vec(unsafe { *(direction as *const S_Vector3) }); [v.x, v.y, v.z] };
+    audio::binaural(e, d, blend, i, o)
+}
+pub unsafe fn CReverbEffect_Create() -> usize { audio::new_effect() }
+pub unsafe fn CReverbEffect_Dispose(p: usize) { unsafe { audio::free_effect(p) } }
+pub unsafe fn CPathEffect_Create() -> usize { audio::new_effect() }
+pub unsafe fn CPathEffect_Dispose(p: usize) { unsafe { audio::free_effect(p) } }
+/// Reverb and pathing: nothing added (their output silent, never stale).
+unsafe fn silent(output: usize) { if let Some(o) = unsafe { audio::device_buffers(output) } { for b in o.bufs.iter_mut() { b.0.fill(0.0) } } }
+pub unsafe fn CReverbEffect_Apply(_p: usize, _low: f32, _mid: f32, _high: f32, _input: usize, output: usize) { unsafe { silent(output) } }
+pub unsafe fn CPathEffect_Apply(_p: usize, _a: f32, _b: f32, _c: f32, _d: f32, _e: f32, _f: f32, _g: f32, _input: usize, output: usize) { unsafe { silent(output) } }
+
+/// managed's memcpy (MixBuffer.CopyFrom): as V_memcpy, overlap tolerated.
+pub unsafe fn NativeLowLevel_Copy(dest: usize, src: usize, count: i64) {
+    if dest == 0 || src == 0 || count <= 0 { return; }
+    unsafe { core::ptr::copy(src as *const u8, dest as *mut u8, count as usize) }
+}
+
+pub unsafe fn CdMxDvcBffrs_Create(channels: i32) -> usize { audio::new_device_buffers(channels) }
+pub unsafe fn CdMxDvcBffrs_Destroy(p: usize) { unsafe { audio::free_device_buffers(p) } }
+pub unsafe fn CdMxDvcBffrs_GetBuffer(p: usize, i: i32) -> usize {
+    unsafe { audio::device_buffers(p) }.and_then(|d| d.bufs.get_mut(i.max(0) as usize)).map(|b| b as *mut audio::MixBuf as usize).unwrap_or(0)
+}
 
 /// What the engine would show in a box: on a server, a line on stderr.
 pub unsafe fn global_Plat_MessageBox(title: usize, text: usize) {

@@ -1400,36 +1400,36 @@ unsafe extern "C" fn s17(_a0: usize) -> u8 { hit(17); unsafe { crate::impls::Get
 unsafe extern "C" fn s18(_a0: usize, _a1: u8) { hit(18); crate::state::set(_a0, 1, _a1) }
 unsafe extern "C" fn s19(_a0: usize) -> i32 { hit(19); unsafe { crate::impls::Get__CAttachment_m_bIgnoreRotation(_a0) } }
 unsafe extern "C" fn s20(_a0: usize, _a1: i32) { hit(20); crate::state::set(_a0, 2, _a1) }
-unsafe extern "C" fn s21() -> usize { hit(21); crate::trace::object(21) }
-unsafe extern "C" fn s22(_a0: usize) { hit(22);  }
-unsafe extern "C" fn s23(_a0: usize) -> usize { hit(23); crate::trace::object(23) }
-unsafe extern "C" fn s24(_a0: usize) { hit(24);  }
-unsafe extern "C" fn s25(_a0: usize) -> f32 { hit(25); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s26(_a0: usize) -> f32 { hit(26); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s27(_a0: usize, _a1: f32, _a2: f32) { hit(27);  }
-unsafe extern "C" fn s28(_a0: usize, _a1: usize) { hit(28);  }
-unsafe extern "C" fn s29(_a0: usize, _a1: usize, _a2: f32) { hit(29);  }
-unsafe extern "C" fn s30(_a0: usize, _a1: usize, _a2: f32, _a3: f32) { hit(30);  }
-unsafe extern "C" fn s31(_a0: i32) -> usize { hit(31); crate::trace::object(31) }
-unsafe extern "C" fn s32(_a0: usize) { hit(32);  }
-unsafe extern "C" fn s33(_a0: usize, _a1: i32) -> usize { hit(33); crate::trace::object(33) }
-unsafe extern "C" fn s34(_a0: usize) { hit(34);  }
-unsafe extern "C" fn s35(_a0: usize) -> i32 { hit(35); crate::state::get::<i32>(_a0, 3) }
-unsafe extern "C" fn s36(_a0: usize) -> i32 { hit(36); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s37(_a0: usize, _a1: i32) { hit(37); crate::state::set(_a0, 3, _a1) }
-unsafe extern "C" fn s38(_a0: usize, _a1: u32) { hit(38);  }
-unsafe extern "C" fn s39(_a0: usize, _a1: i32) { hit(39);  }
-unsafe extern "C" fn s40(_a0: usize) -> i32 { hit(40); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s41(_a0: usize) -> i32 { hit(41); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s42(_a0: usize, _a1: i32) { hit(42);  }
+unsafe extern "C" fn s21() -> usize { hit(21); unsafe { crate::impls::CAudioMixBuffer_Create() } }
+unsafe extern "C" fn s22(_a0: usize) { hit(22); unsafe { crate::impls::CAudioMixBuffer_Dispose(_a0) } }
+unsafe extern "C" fn s23(_a0: usize) -> usize { hit(23); unsafe { crate::impls::CAudioMixBuffer_GetDataPointer(_a0) } }
+unsafe extern "C" fn s24(_a0: usize) { hit(24); unsafe { crate::impls::CAudioMixBuffer_Silence(_a0) } }
+unsafe extern "C" fn s25(_a0: usize) -> f32 { hit(25); unsafe { crate::impls::CAudioMixBuffer_AbsLevel(_a0) } }
+unsafe extern "C" fn s26(_a0: usize) -> f32 { hit(26); unsafe { crate::impls::CAudioMixBuffer_AvergeLevel(_a0) } }
+unsafe extern "C" fn s27(_a0: usize, _a1: f32, _a2: f32) { hit(27); unsafe { crate::impls::CAudioMixBuffer_Ramp(_a0, _a1, _a2) } }
+unsafe extern "C" fn s28(_a0: usize, _a1: usize) { hit(28); unsafe { crate::impls::CAudioMixBuffer_CopyFrom(_a0, _a1) } }
+unsafe extern "C" fn s29(_a0: usize, _a1: usize, _a2: f32) { hit(29); unsafe { crate::impls::CAudioMixBuffer_Mix(_a0, _a1, _a2) } }
+unsafe extern "C" fn s30(_a0: usize, _a1: usize, _a2: f32, _a3: f32) { hit(30); unsafe { crate::impls::CAudioMixBuffer_MixRamp(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s31(_a0: i32) -> usize { hit(31); unsafe { crate::impls::CdMxDvcBffrs_Create(_a0) } }
+unsafe extern "C" fn s32(_a0: usize) { hit(32); unsafe { crate::impls::CdMxDvcBffrs_Destroy(_a0) } }
+unsafe extern "C" fn s33(_a0: usize, _a1: i32) -> usize { hit(33); unsafe { crate::impls::CdMxDvcBffrs_GetBuffer(_a0, _a1) } }
+unsafe extern "C" fn s34(_a0: usize) { hit(34); unsafe { crate::impls::CAudioMixer_Dispose(_a0) } }
+unsafe extern "C" fn s35(_a0: usize) -> i32 { hit(35); unsafe { crate::impls::CAudioMixer_GetSamplePosition(_a0) } }
+unsafe extern "C" fn s36(_a0: usize) -> i32 { hit(36); unsafe { crate::impls::CAudioMixer_ShouldContinueMixing(_a0) } }
+unsafe extern "C" fn s37(_a0: usize, _a1: i32) { hit(37); unsafe { crate::impls::CAudioMixer_SetSamplePosition(_a0, _a1) } }
+unsafe extern "C" fn s38(_a0: usize, _a1: u32) { hit(38); unsafe { crate::impls::CAudioMixer_SetSampleEnd(_a0, _a1) } }
+unsafe extern "C" fn s39(_a0: usize, _a1: i32) { hit(39); unsafe { crate::impls::CAudioMixer_DelayOrSkipSamples(_a0, _a1) } }
+unsafe extern "C" fn s40(_a0: usize) -> i32 { hit(40); unsafe { crate::impls::CAudioMixer_IsReadyToMix(_a0) } }
+unsafe extern "C" fn s41(_a0: usize) -> i32 { hit(41); unsafe { crate::impls::CAudioMixer_GetPositionForSave(_a0) } }
+unsafe extern "C" fn s42(_a0: usize, _a1: i32) { hit(42); unsafe { crate::impls::CAudioMixer_SetPositionFromSaved(_a0, _a1) } }
 unsafe extern "C" fn s43(_a0: usize, _a1: usize) { hit(43);  }
 unsafe extern "C" fn s44(_a0: usize) -> S_audio_source_indexstate_t { hit(44); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s45(_a0: usize) -> usize { hit(45); crate::trace::object(45) }
-unsafe extern "C" fn s46(_a0: usize) -> i32 { hit(46); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s47(_a0: usize) -> i32 { hit(47); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s48(_a0: usize, _a1: f32) -> i32 { hit(48); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s49(_a0: usize, _a1: i32) { hit(49);  }
-unsafe extern "C" fn s50(_a0: usize, _a1: f32, _a2: usize) { hit(50);  }
+unsafe extern "C" fn s45(_a0: usize) -> usize { hit(45); unsafe { crate::impls::CAudioMixer_GetSfxTable(_a0) } }
+unsafe extern "C" fn s46(_a0: usize) -> i32 { hit(46); unsafe { crate::impls::CAudioMixer_GetSampleCount(_a0) } }
+unsafe extern "C" fn s47(_a0: usize) -> i32 { hit(47); unsafe { crate::impls::CAudioMixer_GetChannelCount(_a0) } }
+unsafe extern "C" fn s48(_a0: usize, _a1: f32) -> i32 { hit(48); unsafe { crate::impls::CAudioMixer_SetTimeScale(_a0, _a1) } }
+unsafe extern "C" fn s49(_a0: usize, _a1: i32) { hit(49); unsafe { crate::impls::CAudioMixer_EnableLooping(_a0, _a1) } }
+unsafe extern "C" fn s50(_a0: usize, _a1: f32, _a2: usize) { hit(50); unsafe { crate::impls::CAudioMixer_ReadToBuffer(_a0, _a1, _a2) } }
 unsafe extern "C" fn s51(_a0: usize) { hit(51);  }
 unsafe extern "C" fn s52(_a0: usize, _a1: usize, _a2: usize, _a3: i32) { hit(52);  }
 unsafe extern "C" fn s53(_a0: usize, _a1: S_Sandbox_StringToken, _a2: f32) -> i32 { hit(53); unsafe { core::mem::zeroed() } }
@@ -1447,9 +1447,9 @@ unsafe extern "C" fn s64(_a0: usize) { hit(64);  }
 unsafe extern "C" fn s65(_a0: usize) { hit(65);  }
 unsafe extern "C" fn s66(_a0: usize) -> usize { hit(66); crate::trace::object(66) }
 unsafe extern "C" fn s67(_a0: usize) -> usize { hit(67); crate::trace::object(67) }
-unsafe extern "C" fn s68() -> usize { hit(68); crate::trace::object(68) }
-unsafe extern "C" fn s69(_a0: usize) { hit(69);  }
-unsafe extern "C" fn s70(_a0: usize, _a1: usize, _a2: f32, _a3: i32, _a4: usize, _a5: usize) { hit(70);  }
+unsafe extern "C" fn s68() -> usize { hit(68); unsafe { crate::impls::CBinauralEffect_Create() } }
+unsafe extern "C" fn s69(_a0: usize) { hit(69); unsafe { crate::impls::CBinauralEffect_Dispose(_a0) } }
+unsafe extern "C" fn s70(_a0: usize, _a1: usize, _a2: f32, _a3: i32, _a4: usize, _a5: usize) { hit(70); unsafe { crate::impls::CBinauralEffect_Apply(_a0, _a1, _a2, _a3, _a4, _a5) } }
 unsafe extern "C" fn s71(_a0: usize, _a1: usize) { hit(71); unsafe { crate::impls::CBuilderHitBox_SetBoneName(_a0, _a1) } }
 unsafe extern "C" fn s72(_a0: usize, _a1: usize) { hit(72); unsafe { crate::impls::CBuilderHitBox_SetSurface(_a0, _a1) } }
 unsafe extern "C" fn s73(_a0: usize, _a1: usize) { hit(73); unsafe { crate::impls::CBuilderHitBox_AddTag(_a0, _a1) } }
@@ -1625,9 +1625,9 @@ unsafe extern "C" fn s242(_a0: usize) -> f32 { hit(242); crate::state::get::<f32
 unsafe extern "C" fn s243(_a0: usize, _a1: f32) { hit(243); crate::state::set(_a0, 45, _a1) }
 unsafe extern "C" fn s244(_a0: usize) -> f32 { hit(244); crate::state::get::<f32>(_a0, 46) }
 unsafe extern "C" fn s245(_a0: usize, _a1: f32) { hit(245); crate::state::set(_a0, 46, _a1) }
-unsafe extern "C" fn s246() -> usize { hit(246); crate::trace::object(246) }
-unsafe extern "C" fn s247(_a0: usize) { hit(247);  }
-unsafe extern "C" fn s248(_a0: usize, _a1: f32, _a2: f32, _a3: f32, _a4: f32, _a5: f32, _a6: f32, _a7: f32, _a8: f32, _a9: usize, _a10: usize) { hit(248);  }
+unsafe extern "C" fn s246() -> usize { hit(246); unsafe { crate::impls::CDirectEffect_Create() } }
+unsafe extern "C" fn s247(_a0: usize) { hit(247); unsafe { crate::impls::CDirectEffect_Dispose(_a0) } }
+unsafe extern "C" fn s248(_a0: usize, _a1: f32, _a2: f32, _a3: f32, _a4: f32, _a5: f32, _a6: f32, _a7: f32, _a8: f32, _a9: usize, _a10: usize) { hit(248); unsafe { crate::impls::CDirectEffect_Apply(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8, _a9, _a10) } }
 unsafe extern "C" fn s249(_a0: usize) -> usize { hit(249); _a0 }
 unsafe extern "C" fn s250(_a0: usize) -> usize { hit(250); _a0 }
 unsafe extern "C" fn s251(_a0: usize) -> i32 { hit(251); crate::handles::create(251, "SceneObject", &[_a0]) }
@@ -2051,9 +2051,9 @@ unsafe extern "C" fn s668(_a0: usize, _a1: i32) { hit(668);  }
 unsafe extern "C" fn s669(_a0: usize, _a1: usize) { hit(669);  }
 unsafe extern "C" fn s670(_a0: usize, _a1: usize, _a2: i32, _a3: usize, _a4: i32) { hit(670);  }
 unsafe extern "C" fn s671(_a0: usize, _a1: usize, _a2: i32) -> usize { hit(671); unsafe { crate::impls::CModelBuilder_CreateRuntimeModel(_a0, _a1, _a2) } }
-unsafe extern "C" fn s672() -> usize { hit(672); crate::trace::object(672) }
-unsafe extern "C" fn s673(_a0: usize) { hit(673);  }
-unsafe extern "C" fn s674(_a0: usize, _a1: f32, _a2: f32, _a3: f32, _a4: f32, _a5: f32, _a6: f32, _a7: f32, _a8: usize, _a9: usize) { hit(674);  }
+unsafe extern "C" fn s672() -> usize { hit(672); unsafe { crate::impls::CPathEffect_Create() } }
+unsafe extern "C" fn s673(_a0: usize) { hit(673); unsafe { crate::impls::CPathEffect_Dispose(_a0) } }
+unsafe extern "C" fn s674(_a0: usize, _a1: f32, _a2: f32, _a3: f32, _a4: f32, _a5: f32, _a6: f32, _a7: f32, _a8: usize, _a9: usize) { hit(674); unsafe { crate::impls::CPathEffect_Apply(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8, _a9) } }
 unsafe extern "C" fn s675(_a0: usize, _a1: usize) { hit(675); unsafe { crate::impls::CPhysBodyDesc_SetBoneName(_a0, _a1) } }
 unsafe extern "C" fn s676(_a0: usize, _a1: S_Sandbox_StringToken) { hit(676); unsafe { crate::impls::CPhysBodyDesc_SetSurface(_a0, _a1) } }
 unsafe extern "C" fn s677(_a0: usize, _a1: usize) { hit(677); unsafe { crate::impls::CPhysBodyDesc_SetBindPose(_a0, _a1) } }
@@ -2270,9 +2270,9 @@ unsafe extern "C" fn s887(_a0: usize) -> usize { hit(887); crate::trace::object(
 unsafe extern "C" fn s888(_a0: usize, _a1: usize) { hit(888);  }
 unsafe extern "C" fn s889(_a0: usize) -> f32 { hit(889); crate::state::get::<f32>(_a0, 129) }
 unsafe extern "C" fn s890(_a0: usize, _a1: f32) { hit(890); crate::state::set(_a0, 129, _a1) }
-unsafe extern "C" fn s891() -> usize { hit(891); crate::trace::object(891) }
-unsafe extern "C" fn s892(_a0: usize) { hit(892);  }
-unsafe extern "C" fn s893(_a0: usize, _a1: f32, _a2: f32, _a3: f32, _a4: usize, _a5: usize) { hit(893);  }
+unsafe extern "C" fn s891() -> usize { hit(891); unsafe { crate::impls::CReverbEffect_Create() } }
+unsafe extern "C" fn s892(_a0: usize) { hit(892); unsafe { crate::impls::CReverbEffect_Dispose(_a0) } }
+unsafe extern "C" fn s893(_a0: usize, _a1: f32, _a2: f32, _a3: f32, _a4: usize, _a5: usize) { hit(893); unsafe { crate::impls::CReverbEffect_Apply(_a0, _a1, _a2, _a3, _a4, _a5) } }
 unsafe extern "C" fn s894(_a0: usize) -> usize { hit(894); _a0 }
 unsafe extern "C" fn s895(_a0: usize) -> usize { hit(895); _a0 }
 unsafe extern "C" fn s896(_a0: usize, _a1: i32, _a2: usize) { hit(896);  }
@@ -2748,14 +2748,14 @@ unsafe extern "C" fn s1365(_a0: u32) -> usize { hit(1365); unsafe { crate::impls
 unsafe extern "C" fn s1366(_a0: usize) { hit(1366); unsafe { crate::impls::CServerList_Destroy(_a0) } }
 unsafe extern "C" fn s1367(_a0: usize) { hit(1367); unsafe { crate::impls::CServerList_StartQuery(_a0) } }
 unsafe extern "C" fn s1368(_a0: usize, _a1: usize, _a2: usize) { hit(1368); unsafe { crate::impls::CServerList_AddFilter(_a0, _a1, _a2) } }
-unsafe extern "C" fn s1369(_a0: usize) -> i32 { hit(1369); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1370(_a0: usize) -> i32 { hit(1370); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1371(_a0: usize, _a1: usize, _a2: u32) -> i32 { hit(1371); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1372(_a0: usize, _a1: usize, _a2: u32) -> i32 { hit(1372); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1373(_a0: usize) -> usize { hit(1373); crate::trace::object(1373) }
-unsafe extern "C" fn s1374(_a0: usize) -> i32 { hit(1374); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1375(_a0: usize) -> i32 { hit(1375); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1376(_a0: usize) -> usize { hit(1376); crate::trace::object(1376) }
+unsafe extern "C" fn s1369(_a0: usize) -> i32 { hit(1369); unsafe { crate::impls::CSfxTable_GetCacheStatus(_a0) } }
+unsafe extern "C" fn s1370(_a0: usize) -> i32 { hit(1370); unsafe { crate::impls::CSfxTable_GetSampleCount(_a0) } }
+unsafe extern "C" fn s1371(_a0: usize, _a1: usize, _a2: u32) -> i32 { hit(1371); unsafe { crate::impls::CSfxTable_GetSamples(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1372(_a0: usize, _a1: usize, _a2: u32) -> i32 { hit(1372); unsafe { crate::impls::CSfxTable_GetSamplesInterleaved(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1373(_a0: usize) -> usize { hit(1373); unsafe { crate::impls::CSfxTable_GetSound(_a0) } }
+unsafe extern "C" fn s1374(_a0: usize) -> i32 { hit(1374); unsafe { crate::impls::CSfxTable_IsValidForPlayback(_a0) } }
+unsafe extern "C" fn s1375(_a0: usize) -> i32 { hit(1375); unsafe { crate::impls::CSfxTable_FailedResourceLoad(_a0) } }
+unsafe extern "C" fn s1376(_a0: usize) -> usize { hit(1376); unsafe { crate::impls::CSfxTable_CreateMixer(_a0) } }
 unsafe extern "C" fn s1377() -> usize { hit(1377); crate::trace::object(1377) }
 unsafe extern "C" fn s1378(_a0: usize) { hit(1378);  }
 unsafe extern "C" fn s1379(_a0: usize, _a1: usize, _a2: i32) { hit(1379);  }
@@ -3734,7 +3734,7 @@ unsafe extern "C" fn s2351(_a0: usize) -> usize { hit(2351); crate::trace::objec
 unsafe extern "C" fn s2352(_a0: usize) -> usize { hit(2352); crate::trace::object(2352) }
 unsafe extern "C" fn s2353(_a0: usize) -> usize { hit(2353); crate::trace::object(2353) }
 unsafe extern "C" fn s2354(_a0: usize, _a1: usize, _a2: i32, _a3: usize, _a4: i32, _a5: usize) { hit(2354);  }
-unsafe extern "C" fn s2355(_a0: usize, _a1: usize, _a2: i64) { hit(2355);  }
+unsafe extern "C" fn s2355(_a0: usize, _a1: usize, _a2: i64) { hit(2355); unsafe { crate::impls::NativeLowLevel_Copy(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2356(_a0: usize, _a1: i32, _a2: u32) -> u64 { hit(2356); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2357(_a0: usize, _a1: usize, _a2: u32, _a3: usize, _a4: i32, _a5: usize) { hit(2357);  }
 unsafe extern "C" fn s2358() { hit(2358);  }
@@ -4171,20 +4171,20 @@ unsafe extern "C" fn s2788(_a0: usize) -> S_Transform { hit(2788); crate::state:
 unsafe extern "C" fn s2789(_a0: usize, _a1: usize) { hit(2789); unsafe { crate::state::set_from::<S_Transform>(_a0, 336, _a1) } }
 unsafe extern "C" fn s2790(_a0: usize) -> S_Transform { hit(2790); crate::state::get::<S_Transform>(_a0, 337) }
 unsafe extern "C" fn s2791(_a0: usize, _a1: usize) { hit(2791); unsafe { crate::state::set_from::<S_Transform>(_a0, 337, _a1) } }
-unsafe extern "C" fn s2792(_a0: usize) { hit(2792);  }
-unsafe extern "C" fn s2793(_a0: usize) -> i32 { hit(2793); 1 }
-unsafe extern "C" fn s2794(_a0: usize) -> i32 { hit(2794); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2795(_a0: usize) -> i32 { hit(2795); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2796(_a0: usize) -> usize { hit(2796); crate::trace::object(2796) }
-unsafe extern "C" fn s2797(_a0: usize) -> usize { hit(2797); crate::trace::object(2797) }
+unsafe extern "C" fn s2792(_a0: usize) { hit(2792); unsafe { crate::impls::VSound_t_DestroyStrongHandle(_a0) } }
+unsafe extern "C" fn s2793(_a0: usize) -> i32 { hit(2793); unsafe { crate::impls::VSound_t_IsStrongHandleValid(_a0) } }
+unsafe extern "C" fn s2794(_a0: usize) -> i32 { hit(2794); unsafe { crate::impls::VSound_t_IsError(_a0) } }
+unsafe extern "C" fn s2795(_a0: usize) -> i32 { hit(2795); unsafe { crate::impls::VSound_t_IsStrongHandleLoaded(_a0) } }
+unsafe extern "C" fn s2796(_a0: usize) -> usize { hit(2796); unsafe { crate::impls::VSound_t_CopyStrongHandle(_a0) } }
+unsafe extern "C" fn s2797(_a0: usize) -> usize { hit(2797); unsafe { crate::impls::VSound_t_GetBindingPtr(_a0) } }
 unsafe extern "C" fn s2798(_a0: usize) -> S_System_Guid { hit(2798); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2799(_a0: usize) -> i64 { hit(2799); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2800(_a0: usize) -> i32 { hit(2800); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2801(_a0: usize) -> i32 { hit(2801); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2802(_a0: usize) -> i32 { hit(2802); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2803(_a0: usize) -> i32 { hit(2803); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2804(_a0: usize) -> i32 { hit(2804); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2805(_a0: usize) -> f32 { hit(2805); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2799(_a0: usize) -> i64 { hit(2799); unsafe { crate::impls::VSound_t_format(_a0) } }
+unsafe extern "C" fn s2800(_a0: usize) -> i32 { hit(2800); unsafe { crate::impls::VSound_t_BitsPerSample(_a0) } }
+unsafe extern "C" fn s2801(_a0: usize) -> i32 { hit(2801); unsafe { crate::impls::VSound_t_channels(_a0) } }
+unsafe extern "C" fn s2802(_a0: usize) -> i32 { hit(2802); unsafe { crate::impls::VSound_t_BytesPerSample(_a0) } }
+unsafe extern "C" fn s2803(_a0: usize) -> i32 { hit(2803); unsafe { crate::impls::VSound_t_m_sampleFrameSize(_a0) } }
+unsafe extern "C" fn s2804(_a0: usize) -> i32 { hit(2804); unsafe { crate::impls::VSound_t_m_rate(_a0) } }
+unsafe extern "C" fn s2805(_a0: usize) -> f32 { hit(2805); unsafe { crate::impls::VSound_t_Duration(_a0) } }
 unsafe extern "C" fn s2806(_a0: usize, _a1: i32) -> usize { hit(2806); unsafe { crate::impls::VertexLayout_Create(_a0, _a1) } }
 unsafe extern "C" fn s2807(_a0: usize) { hit(2807); unsafe { crate::impls::VertexLayout_Destroy(_a0) } }
 unsafe extern "C" fn s2808(_a0: usize) { hit(2808); unsafe { crate::impls::VertexLayout_Free(_a0) } }
@@ -4247,14 +4247,14 @@ unsafe extern "C" fn s2864() -> u32 { hit(2864); unsafe { crate::impls::g_pAudio
 unsafe extern "C" fn s2865() -> u32 { hit(2865); unsafe { crate::impls::g_pAudioDevice_BitsPerSample() } }
 unsafe extern "C" fn s2866() -> u32 { hit(2866); unsafe { crate::impls::g_pAudioDevice_BytesPerSample() } }
 unsafe extern "C" fn s2867() -> u32 { hit(2867); unsafe { crate::impls::g_pAudioDevice_SampleRate() } }
-unsafe extern "C" fn s2868() -> i32 { hit(2868); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2868() -> i32 { hit(2868); unsafe { crate::impls::g_pAudioDevice_IsActive() } }
 unsafe extern "C" fn s2869() { hit(2869);  }
 unsafe extern "C" fn s2870() { hit(2870);  }
 unsafe extern "C" fn s2871(_a0: i32) { hit(2871);  }
 unsafe extern "C" fn s2872() { hit(2872);  }
 unsafe extern "C" fn s2873() { hit(2873);  }
-unsafe extern "C" fn s2874() -> i32 { hit(2874); 1 }
-unsafe extern "C" fn s2875(_a0: usize) { hit(2875);  }
+unsafe extern "C" fn s2874() -> i32 { hit(2874); unsafe { crate::impls::g_pAudioDevice_IsValid() } }
+unsafe extern "C" fn s2875(_a0: usize) { hit(2875); unsafe { crate::impls::g_pAudioDevice_SendOutput(_a0) } }
 unsafe extern "C" fn s2876(_a0: usize) -> usize { hit(2876); crate::trace::object(2876) }
 unsafe extern "C" fn s2877(_a0: usize) { hit(2877);  }
 unsafe extern "C" fn s2878() { hit(2878);  }
@@ -4425,9 +4425,9 @@ unsafe extern "C" fn s3042(_a0: i32) -> usize { hit(3042); crate::trace::object(
 unsafe extern "C" fn s3043() -> usize { hit(3043); crate::trace::object(3043) }
 unsafe extern "C" fn s3044(_a0: usize) { hit(3044);  }
 unsafe extern "C" fn s3045(_a0: usize) { hit(3045);  }
-unsafe extern "C" fn s3046(_a0: usize) -> usize { hit(3046); crate::trace::object(3046) }
-unsafe extern "C" fn s3047(_a0: usize, _a1: i32, _a2: i32, _a3: i32, _a4: i32, _a5: f32, _a6: i32, _a7: i32, _a8: usize, _a9: i32) -> usize { hit(3047); crate::trace::object(3047) }
-unsafe extern "C" fn s3048(_a0: usize) { hit(3048);  }
+unsafe extern "C" fn s3046(_a0: usize) -> usize { hit(3046); unsafe { crate::impls::g_pSndSystmntrnl_PrecacheSound(_a0) } }
+unsafe extern "C" fn s3047(_a0: usize, _a1: i32, _a2: i32, _a3: i32, _a4: i32, _a5: f32, _a6: i32, _a7: i32, _a8: usize, _a9: i32) -> usize { hit(3047); unsafe { crate::impls::g_pSndSystmntrnl_CreateSound(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8, _a9) } }
+unsafe extern "C" fn s3048(_a0: usize) { hit(3048); unsafe { crate::impls::g_pSndSystmntrnl_PreloadSound(_a0) } }
 unsafe extern "C" fn s3049() { hit(3049);  }
 unsafe extern "C" fn s3050(_a0: S_Sandbox_StringToken, _a1: usize, _a2: f32, _a3: f32) -> u32 { hit(3050); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3051(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32, _a5: i32, _a6: S_Sandbox_StringToken, _a7: usize) -> usize { hit(3051); unsafe { crate::impls::g_pWrldRndrrMgr_CreateWorld(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7) } }

@@ -781,6 +781,36 @@ fetches a map's materials and textures (outside the project: a project's
 files are sent to its players). `RENDER_DEBUG` shows what the shader read (1 base colour, 2 normal, 3
 occlusion, 4 roughness, 5 the light that bounced, 6 the direct light).
 
+## What a player hears
+
+`engine2/src/audio.rs`. s&box mixes in C# (`Sandbox.Audio.MixingThread`);
+native reads its sounds, keeps its buffers, paces it and takes the mix.
+
+- **The device**: stereo at 44.1 kHz. A thread asks managed for each 512
+  samples (`MixOneBuffer`) at the pace a sound card plays them, and takes
+  what managed sends back (`SendOutput`): to a WAV file at
+  `ENGINE2_AUDIO_CAPTURE`, else nowhere yet (the client's window will
+  bring a sound card). A dedicated server mixes nothing.
+- **Sounds**: a compiled sound (`.vsnd_c`: rate, format, channels, loop
+  and length in its DATA block, the samples after the resource), or a
+  project's source (`.wav`, `.mp3`, decoded in pure Rust), read once.
+- **Voices**: each playing sound's mixer reads it 512 samples at a time
+  at the pitch managed asks (between samples, linearly), loops where the
+  sound says, waits out a delay, stops at an end.
+- **Where it comes from**: Steam Audio's effects, simpler. The direct
+  path (distance, air, what's in the way) as one gain where Steam Audio
+  has a three-band EQ, gliding from buffer to buffer; a sound's direction
+  as managed's own fallback pans it (`snd_steamaudio 0`), where Steam
+  Audio has an HRTF. Reverb and pathing add nothing yet.
+
+Measured: a headless player of Sandbox's zoo, its mix captured, hears its
+weapon drawn (peak 0.31 in the first second) and, when its watcher plays
+Sandbox's own `rpg_shoot.sound` (a WAV source) where the camera is, the
+shot at 0.96, dying away over four seconds; the physgun's idle hum (an
+MP3 at 48 kHz) under it. Managed takes 0.3 ms of each buffer's 11.6.
+Core's own sounds (footsteps, impacts) come only with Facepunch's closed
+download, and are not found.
+
 ## Reproduce
 
 On a fresh Linux machine with Rust, `tools/setup.sh` does all of the
@@ -883,6 +913,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation; what a builder is given (bones, attachments, mesh groups, hitboxes) as a file's model |
+| `engine2/src/audio.rs` | sound: the device and its pace, sounds read and decoded, voices' mixers, mix buffers, Steam Audio's effects |
 | `engine2/src/rendermesh.rs` | meshes made at runtime: MeshGlue's render meshes, their vertex and index buffers, managed's vertex layouts |
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
 | `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
