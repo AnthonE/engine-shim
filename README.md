@@ -640,6 +640,16 @@ didn't before: the floor and walls in their dev grid material and the
 painted stripe across the floor, around the physgun in the player's hand
 (31 objects a frame where there were 20).
 
+**Skins and body groups.** An object shows what managed chose of its
+model: the mesh groups its body groups pick (`ModelRenderer.BodyGroups`,
+`SetBodyGroup` by a part's name; the model's default until then) and its
+material group (`SetMaterialGroup`), each draw's material swapped for the
+one in its place in that group. Measured (`cargo test`, s&box's download
+cache and `tools/package.sh facepunch.soda_can`): the cola can covers the
+same 2,857 pixels in each of its three skins and looks different in each;
+the MP5 covers 815 as it comes, 689 without its magazine, 834 with its
+rail mount on.
+
 **A map is lit as it was baked.** A map compiled with baked lighting
 (flatgrass is: `m_worldLightingInfo` in its `world.vwrld_c`) is lit from
 it, as s&box's own shaders read it (`vr_lighting.fxc`, public in

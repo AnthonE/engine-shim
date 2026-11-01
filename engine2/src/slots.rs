@@ -2383,7 +2383,7 @@ unsafe extern "C" fn s1000(_a0: usize) -> u64 { hit(1000); unsafe { core::mem::z
 unsafe extern "C" fn s1001(_a0: usize) -> i32 { hit(1001); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1002(_a0: usize) -> usize { hit(1002); unsafe { crate::impls::CScnnmtblbjct_GetModelHandle(_a0) } }
 unsafe extern "C" fn s1003(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1003);  }
-unsafe extern "C" fn s1004(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { hit(1004);  }
+unsafe extern "C" fn s1004(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { hit(1004); unsafe { crate::impls::CScnnmtblbjct_SetBodyGroup(_a0, _a1, _a2) } }
 unsafe extern "C" fn s1005(_a0: usize, _a1: i32) { hit(1005);  }
 unsafe extern "C" fn s1006(_a0: usize) -> i32 { hit(1006); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1007(_a0: usize, _a1: i32) { hit(1007);  }
@@ -2640,18 +2640,18 @@ unsafe extern "C" fn s1257(_a0: usize) -> i32 { hit(1257); crate::handles::relat
 unsafe extern "C" fn s1258(_a0: usize, _a1: S_Sandbox_StringToken, _a2: usize, _a3: u32) { hit(1258);  }
 unsafe extern "C" fn s1259(_a0: usize, _a1: usize) { hit(1259);  }
 unsafe extern "C" fn s1260(_a0: usize) -> usize { hit(1260); crate::trace::object(1260) }
-unsafe extern "C" fn s1261(_a0: usize, _a1: u64) { hit(1261);  }
-unsafe extern "C" fn s1262(_a0: usize, _a1: u64) { hit(1262);  }
-unsafe extern "C" fn s1263(_a0: usize, _a1: u64) { hit(1263);  }
-unsafe extern "C" fn s1264(_a0: usize) -> u64 { hit(1264); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1261(_a0: usize, _a1: u64) { hit(1261); unsafe { crate::impls::CSceneObject_EnableMeshGroups(_a0, _a1) } }
+unsafe extern "C" fn s1262(_a0: usize, _a1: u64) { hit(1262); unsafe { crate::impls::CSceneObject_DisableMeshGroups(_a0, _a1) } }
+unsafe extern "C" fn s1263(_a0: usize, _a1: u64) { hit(1263); unsafe { crate::impls::CSceneObject_ResetMeshGroups(_a0, _a1) } }
+unsafe extern "C" fn s1264(_a0: usize) -> u64 { hit(1264); unsafe { crate::impls::CSceneObject_GetCurrentMeshGroupMask(_a0) } }
 unsafe extern "C" fn s1265(_a0: usize) -> i32 { hit(1265); crate::handles::related(_a0, "SceneWorld") }
 unsafe extern "C" fn s1266(_a0: usize, _a1: i32) { hit(1266);  }
 unsafe extern "C" fn s1267(_a0: usize) { hit(1267);  }
 unsafe extern "C" fn s1268(_a0: usize) -> u64 { hit(1268); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1269(_a0: usize) -> i32 { hit(1269); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1270(_a0: usize) -> usize { hit(1270); unsafe { crate::impls::CSceneObject_GetModelHandle(_a0) } }
-unsafe extern "C" fn s1271(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1271);  }
-unsafe extern "C" fn s1272(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { hit(1272);  }
+unsafe extern "C" fn s1271(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1271); unsafe { crate::impls::CSceneObject_SetMaterialGroup(_a0, _a1) } }
+unsafe extern "C" fn s1272(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { hit(1272); unsafe { crate::impls::CSceneObject_SetBodyGroup(_a0, _a1, _a2) } }
 unsafe extern "C" fn s1273(_a0: usize, _a1: i32) { hit(1273);  }
 unsafe extern "C" fn s1274(_a0: usize) -> i32 { hit(1274); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1275(_a0: usize, _a1: i32) { hit(1275);  }

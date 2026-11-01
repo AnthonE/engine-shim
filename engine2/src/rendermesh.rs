@@ -312,10 +312,11 @@ pub fn version(meshes: &[usize]) -> u64 {
 /// Meshes as the renderer draws a compiled model's (assets/mesh.rs): their
 /// buffers copied, their draws of triangles (a strip unrolled into them),
 /// each naming its material.
-pub fn for_drawing(meshes: &[usize], material_name: impl Fn(usize) -> String) -> Vec<DrawMesh> {
+/// `masks`: each mesh's mesh groups, as its builder was given them.
+pub fn for_drawing(meshes: &[usize], masks: &[u64], material_name: impl Fn(usize) -> String) -> Vec<DrawMesh> {
     let t = things();
     let mut out = Vec::new();
-    for p in meshes {
+    for (n, p) in meshes.iter().enumerate() {
         let Some(Thing::Mesh(m)) = t.all.get(p) else { continue };
         let Some(Thing::Vertices(v)) = t.all.get(&m.vertices) else { continue };
         let vb = VertexBuffer { count: v.count, stride: v.stride, attributes: v.fields.clone(), data: v.data.clone() };
@@ -345,7 +346,7 @@ pub fn for_drawing(meshes: &[usize], material_name: impl Fn(usize) -> String) ->
         }
         if draws.is_empty() { continue; }
         let ib = IndexBuffer { count: list.len(), size: 4, data: list.iter().flat_map(|i| i.to_le_bytes()).collect() };
-        out.push(DrawMesh { draws, buffers: Buffers { vertices: vec![vb], indices: vec![ib] }, bones: Vec::new() });
+        out.push(DrawMesh { draws, buffers: Buffers { vertices: vec![vb], indices: vec![ib] }, bones: Vec::new(), group_mask: masks.get(n).copied().unwrap_or(u64::MAX) });
     }
     out
 }
@@ -388,7 +389,7 @@ mod tests {
         assert_eq!((s.min, s.max, s.vertices), ([0.0; 3], [10.0, 10.0, 0.0], 4), "bounds from its vertices when none are set");
         assert_eq!(s.draws, [DrawCall { material: 42, primitive: TRIANGLES, start_index: 0, index_count: 6, start_vertex: 0, vertex_count: 4 }]);
 
-        let d = for_drawing(&[mesh], |m| format!("materials/{m}.vmat"));
+        let d = for_drawing(&[mesh], &[], |m| format!("materials/{m}.vmat"));
         assert_eq!(d.len(), 1);
         let v = &d[0].buffers.vertices[0];
         assert_eq!(v.floats("POSITION", 0).unwrap()[2], [10.0, 10.0, 0.0, 0.0]);
@@ -405,7 +406,7 @@ mod tests {
         unsafe { core::ptr::copy_nonoverlapping(vertex([20.0, 0.0, 0.0], [0.0; 2]).as_ptr(), p as *mut u8, 64) };
         unlock(vb);
         assert_ne!(version(&[mesh]), before);
-        assert_eq!(for_drawing(&[mesh], |_| String::new())[0].buffers.vertices[0].floats("POSITION", 0).unwrap()[1][0], 20.0);
+        assert_eq!(for_drawing(&[mesh], &[], |_| String::new())[0].buffers.vertices[0].floats("POSITION", 0).unwrap()[1][0], 20.0);
         assert_eq!(lock(vb, 64, 4 * 64), 0, "past its end");
     }
 
@@ -418,12 +419,12 @@ mod tests {
         // no index buffer: the vertices in order
         let list = new_mesh(1, TRIANGLES, "list");
         unsafe { give(list, vb, 0, 0) };
-        assert_eq!(for_drawing(&[list], |_| String::new())[0].buffers.indices[0].indices(), [0, 1, 2, 3, 4, 5]);
+        assert_eq!(for_drawing(&[list], &[], |_| String::new())[0].buffers.indices[0].indices(), [0, 1, 2, 3, 4, 5]);
         // a strip, its odd triangles turned back round
         let strip = new_mesh(1, TRIANGLE_STRIP, "strip");
         unsafe { give(strip, vb, 0, 0) };
         with_mesh(strip, |m| m.vertex_range = (0, 5));
-        assert_eq!(for_drawing(&[strip], |_| String::new())[0].buffers.indices[0].indices(), [0, 1, 2, 2, 1, 3, 2, 3, 4]);
+        assert_eq!(for_drawing(&[strip], &[], |_| String::new())[0].buffers.indices[0].indices(), [0, 1, 2, 2, 1, 3, 2, 3, 4]);
         // two draw calls of two materials over one buffer
         let two = new_mesh(1, TRIANGLES, "two");
         unsafe { give(two, vb, 0, 0) };
@@ -432,7 +433,7 @@ mod tests {
             DrawCall { material: 8, primitive: TRIANGLES, start_index: 0, index_count: 0, start_vertex: 3, vertex_count: 3 },
             DrawCall { material: 9, primitive: 1, start_index: 0, index_count: 0, start_vertex: 0, vertex_count: 2 },
         ]);
-        let d = for_drawing(&[two], |m| m.to_string());
+        let d = for_drawing(&[two], &[], |m| m.to_string());
         let names: Vec<_> = d[0].draws.iter().map(|x| (x.material.clone(), x.start_index, x.index_count)).collect();
         assert_eq!(names, [("7".to_string(), 0, 3), ("8".to_string(), 3, 3)], "lines aren't drawn");
         assert_eq!(d[0].buffers.indices[0].indices(), [0, 1, 2, 3, 4, 5]);

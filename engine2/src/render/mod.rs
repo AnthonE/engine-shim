@@ -115,6 +115,19 @@ struct GpuDraw {
     base_vertex: i32,
     material: wgpu::BindGroup,
     kind: Kind,
+    /// the material in its place in each of the model's material groups
+    /// (skins), where it differs
+    skins: Vec<Option<(wgpu::BindGroup, Kind)>>,
+}
+
+impl GpuDraw {
+    /// Its material and how it's drawn, in skin `skin`.
+    fn look(&self, skin: usize) -> (&wgpu::BindGroup, Kind) {
+        match self.skins.get(skin) {
+            Some(Some((g, k))) => (g, *k),
+            _ => (&self.material, self.kind),
+        }
+    }
 }
 
 /// How a material is drawn: with what's opaque; over what's behind it
@@ -132,11 +145,15 @@ struct GpuMesh {
     vertices: Vec<wgpu::Buffer>,
     indices: Vec<wgpu::Buffer>,
     draws: Vec<GpuDraw>,
+    /// the mesh groups it's in
+    group_mask: u64,
 }
 
 /// A model read and on the GPU, with what it covers.
 pub struct Model {
     meshes: Vec<GpuMesh>,
+    /// the mesh groups shown unless an object chooses others
+    pub default_mask: u64,
     pub min: Vec3,
     pub max: Vec3,
     /// whether every vertex has a place in a map's lightmaps (a map's own
@@ -604,12 +621,15 @@ impl Renderer {
     pub fn model(&self, content: &dyn Files, name: &str) -> Result<Model, String> {
         let r = content.compiled(name).ok_or_else(|| format!("{name}: not found"))?;
         let meshes = mesh::model(&r, |n| content.read(&if n.ends_with("_c") { n.to_string() } else { format!("{n}_c") }))?;
-        self.model_of(content, name, &meshes)
+        let (default_mask, skins) = mesh::skins(&r);
+        self.model_of(content, name, &meshes, default_mask, &skins)
     }
 
     /// A model of these meshes (a file's, or ones built at runtime:
     /// rendermesh.rs), its materials found in `content`; `name` says whose.
-    pub fn model_of(&self, content: &dyn Files, name: &str, meshes: &[mesh::Mesh]) -> Result<Model, String> {
+    /// `default_mask`: the mesh groups shown by default; `skins`: its
+    /// material groups, the first the materials its meshes name.
+    pub fn model_of(&self, content: &dyn Files, name: &str, meshes: &[mesh::Mesh], default_mask: u64, skins: &[Vec<String>]) -> Result<Model, String> {
         let mut notes = Vec::new();
         let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         let mut out = Vec::new();
@@ -644,13 +664,21 @@ impl Renderer {
                 if d.vertex_buffer >= vertices.len() { return None; }
                 let (material, kind) = self.material(content, &d.material, &mut notes);
                 let end = (d.start_index + d.index_count).min(len);
-                kind.map(|kind| GpuDraw { vertex_buffer: d.vertex_buffer, index_buffer: d.index_buffer, range: d.start_index as u32..end as u32, base_vertex: d.base_vertex as i32, material, kind })
+                // its place in the first material group, and what's there in each other
+                let place = skins.first().and_then(|g| g.iter().position(|m| crate::fs::normal(m) == crate::fs::normal(&d.material)));
+                let skins = skins.iter().map(|g| {
+                    let other = g.get(place?)?;
+                    if crate::fs::normal(other) == crate::fs::normal(&d.material) { return None; }
+                    let (m, k) = self.material(content, other, &mut notes);
+                    Some((m, k?))
+                }).collect();
+                kind.map(|kind| GpuDraw { vertex_buffer: d.vertex_buffer, index_buffer: d.index_buffer, range: d.start_index as u32..end as u32, base_vertex: d.base_vertex as i32, material, kind, skins })
             }).collect();
             let indices = index_lists.iter().map(|i| self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(i), usage: wgpu::BufferUsages::INDEX })).collect();
-            out.push(GpuMesh { vertices, indices, draws });
+            out.push(GpuMesh { vertices, indices, draws, group_mask: m.group_mask });
         }
         if out.is_empty() { return Err(format!("{name}: no meshes")); }
-        Ok(Model { meshes: out, min, max, notes, lightmap_uv })
+        Ok(Model { meshes: out, default_mask, min, max, notes, lightmap_uv })
     }
 
     /// Objects drawn from a view: an RGBA image, `width` by `height`, its
@@ -748,9 +776,9 @@ impl Renderer {
         let mut later: Vec<(f32, usize, usize, usize)> = Vec::new();
         for (k, o) in objects.iter().enumerate() {
             let at = o.transform.transform_point3((o.model.min + o.model.max) * 0.5).distance_squared(view.eye);
-            for (mi, m) in o.model.meshes.iter().enumerate() {
+            for (mi, m) in o.model.meshes.iter().enumerate().filter(|(_, m)| o.shows(m)) {
                 for (di, dr) in m.draws.iter().enumerate() {
-                    if dr.kind != Kind::Opaque { later.push((at, k, mi, di)); }
+                    if dr.look(o.skin).1 != Kind::Opaque { later.push((at, k, mi, di)); }
                 }
             }
         }
@@ -774,8 +802,8 @@ impl Renderer {
                 pass.set_bind_group(1, &self.empty, &[]);
                 for (o, group) in objects.iter().zip(&object_groups).filter(|(o, _)| casts(o)) {
                     pass.set_bind_group(2, group, &[]);
-                    for m in &o.model.meshes {
-                        for dr in m.draws.iter().filter(|dr| dr.kind == Kind::Opaque) {
+                    for m in o.model.meshes.iter().filter(|m| o.shows(m)) {
+                        for dr in m.draws.iter().filter(|dr| dr.look(o.skin).1 == Kind::Opaque) {
                             pass.set_vertex_buffer(0, m.vertices[dr.vertex_buffer].slice(..));
                             pass.set_index_buffer(m.indices[dr.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
                             pass.draw_indexed(dr.range.clone(), dr.base_vertex, 0..1);
@@ -808,11 +836,11 @@ impl Renderer {
             for (o, group) in objects.iter().zip(&object_groups) {
                 pass.set_bind_group(2, group, &[]);
                 pass.set_bind_group(3, &lit(o).1.group, &[]);
-                for m in &o.model.meshes {
-                    for d in m.draws.iter().filter(|d| d.kind == Kind::Opaque) {
+                for m in o.model.meshes.iter().filter(|m| o.shows(m)) {
+                    for d in m.draws.iter().filter(|d| d.look(o.skin).1 == Kind::Opaque) {
                         pass.set_vertex_buffer(0, m.vertices[d.vertex_buffer].slice(..));
                         pass.set_index_buffer(m.indices[d.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
-                        pass.set_bind_group(1, &d.material, &[]);
+                        pass.set_bind_group(1, d.look(o.skin).0, &[]);
                         pass.draw_indexed(d.range.clone(), d.base_vertex, 0..1);
                     }
                 }
@@ -842,14 +870,15 @@ impl Renderer {
             for &(_, k, mi, di) in &later {
                 let (o, m) = (&objects[k], &objects[k].model.meshes[mi]);
                 let dr = &m.draws[di];
-                let (pipeline, view_group) = match dr.kind {
+                let (material, kind) = dr.look(o.skin);
+                let (pipeline, view_group) = match kind {
                     Kind::Blend => (&self.blend_pipeline, &view_group),
                     Kind::Glass => (&self.glass_pipeline, &glass_view),
                     _ => (&self.cheap_glass_pipeline, &glass_view),
                 };
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, view_group, &[]);
-                pass.set_bind_group(1, &dr.material, &[]);
+                pass.set_bind_group(1, material, &[]);
                 pass.set_bind_group(2, &object_groups[k], &[]);
                 pass.set_bind_group(3, &lit(o).1.group, &[]);
                 pass.set_vertex_buffer(0, m.vertices[dr.vertex_buffer].slice(..));
@@ -934,6 +963,17 @@ pub struct Instance<'a> {
     pub lightmapped: bool,
     /// where it's lit from, choosing a probe volume (none: its centre)
     pub origin: Option<Vec3>,
+    /// the mesh groups it shows (its body groups' choices; none: its
+    /// model's default) and its material group
+    pub mask: Option<u64>,
+    pub skin: usize,
+}
+
+impl Instance<'_> {
+    /// Whether it shows this mesh of its model.
+    fn shows(&self, m: &GpuMesh) -> bool {
+        m.group_mask & self.mask.unwrap_or(self.model.default_mask) != 0
+    }
 }
 
 /// Where a view is from: the eye, its view and projection, what's behind
@@ -1216,6 +1256,76 @@ impl View {
 mod tests {
     use glam::{Mat4, Vec3};
 
+    /// s&box's own download cache (`ENGINE2_SAMPLE_ASSETS`): its files at
+    /// their game paths, a hash in each name (`x.<hash>.vmdl_c`).
+    struct Cache(std::path::PathBuf);
+
+    impl super::Files for Cache {
+        fn read(&self, path: &str) -> Option<Vec<u8>> {
+            let path = path.replace('\\', "/").to_ascii_lowercase();
+            let (dir, file) = path.rsplit_once('/').unwrap_or(("", &path));
+            let (stem, ext) = file.split_once('.')?;
+            let found = std::fs::read_dir(self.0.join(dir)).ok()?.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| {
+                let n = p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+                n == file || (n.starts_with(&format!("{stem}.")) && n.ends_with(&format!(".{ext}")) && n.matches('.').count() == 2)
+            })?;
+            std::fs::read(found).ok()
+        }
+    }
+
+    /// Packages fetched (`ENGINE2_CONTENT`), then the download cache.
+    struct Both(super::Content, Cache);
+
+    impl super::Files for Both {
+        fn read(&self, path: &str) -> Option<Vec<u8>> { self.0.read(path).or_else(|| self.1.read(path)) }
+    }
+
+    /// An object drawn alone, framed; and how many pixels differ from the
+    /// same view with nothing in it, and the frame.
+    fn alone(r: &super::Renderer, m: &super::Model, mask: Option<u64>, skin: usize) -> (usize, Vec<u8>) {
+        let view = super::View::framing(m, 35.0, 15.0);
+        let image = r.draw(&[super::Instance { model: m, transform: Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask, skin }], &view, 96, 96);
+        let empty = r.draw(&[], &view, 96, 96);
+        let covered = image.chunks_exact(4).zip(empty.chunks_exact(4)).filter(|(a, b)| a[..3].iter().zip(&b[..3]).any(|(x, y)| x.abs_diff(*y) > 2)).count();
+        (covered, image)
+    }
+
+    fn differ(a: &[u8], b: &[u8]) -> usize {
+        a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(a, b)| a[..3].iter().zip(&b[..3]).any(|(x, y)| x.abs_diff(*y) > 8)).count()
+    }
+
+    /// A model's skins and body groups, as an object chooses them: the
+    /// cola can (three material groups) drawn in each, and the MP5 as it
+    /// comes, without its magazine, and with a rail mount.
+    #[test]
+    fn skins_and_body_groups_are_drawn_as_chosen() {
+        let Ok(dir) = std::env::var("ENGINE2_SAMPLE_ASSETS") else { return };
+        let Ok(r) = super::Renderer::new() else { eprintln!("no adapter: skipped"); return };
+        let dirs: Vec<std::path::PathBuf> = std::env::var("ENGINE2_CONTENT").map(|d| std::env::split_paths(&d).collect()).unwrap_or_default();
+        let cache = Both(super::Content(dirs, Vec::new()), Cache(dir.into()));
+        use super::Files;
+        if cache.read("models/sbox_props/cola_can/cola_can.vmdl_c").is_none() { eprintln!("no cola can: skipped"); return; }
+        let can = r.model(&cache, "models/sbox_props/cola_can/cola_can.vmdl").unwrap();
+        if !can.notes.is_empty() { eprintln!("the can's textures aren't here (tools/package.sh facepunch.soda_can): skipped"); return; }
+        let skins: Vec<(usize, Vec<u8>)> = (0..3).map(|s| alone(&r, &can, None, s)).collect();
+        for (i, (c, _)) in skins.iter().enumerate() { eprintln!("can skin {i}: {c} pixels"); }
+        assert!(skins.iter().all(|(c, _)| *c == skins[0].0), "the same can, in each");
+        assert!(differ(&skins[0].1, &skins[1].1) > skins[0].0 / 4 && differ(&skins[1].1, &skins[2].1) > skins[0].0 / 4, "in another livery");
+
+        let gun = r.model(&cache, "models/weapons/sbox_smg_mp5/w_mp5.vmdl").unwrap();
+        // MP5_@0, Magazine_@0, Magazine_@1, top_rail_mount_@0, top_rail_mount_@1:
+        // its body, a magazine or none, no rail mount or one (its meshes are
+        // in 1, 2 and 16; the other choices are empty)
+        assert_eq!(gun.default_mask, 0b01011);
+        assert_eq!(gun.meshes.iter().map(|m| m.group_mask).collect::<Vec<_>>(), [1, 2, 16]);
+        let (default, d) = alone(&r, &gun, None, 0);
+        let (empty, e) = alone(&r, &gun, Some(0b01101), 0);
+        let (mounted, m) = alone(&r, &gun, Some(0b10011), 0);
+        eprintln!("mp5: as it comes {default} pixels, without its magazine {empty}, with the rail mount {mounted}");
+        assert!(empty < default && differ(&d, &e) > 20, "its magazine taken out");
+        assert!(mounted > default && differ(&d, &m) > 20, "a rail mount put on");
+    }
+
     /// A mesh made at runtime (rendermesh.rs, as managed's Mesh makes an
     /// editor mesh's faces) is drawn as a file's is: a floor 64 square,
     /// looked down on, fills the middle of the frame and not its corners.
@@ -1238,12 +1348,12 @@ mod tests {
         let content = super::Content(dirs, Vec::new());
         use super::Files;
         let material = if content.read("materials/dev/reflectivity_30.vmat_c").is_some() { "materials/dev/reflectivity_30.vmat" } else { "" };
-        let meshes = rm::for_drawing(&[mesh], |_| material.to_string());
-        let m = r.model_of(&content, "a floor", &meshes).unwrap();
+        let meshes = rm::for_drawing(&[mesh], &[], |_| material.to_string());
+        let m = r.model_of(&content, "a floor", &meshes, u64::MAX, &[]).unwrap();
         if !material.is_empty() { assert!(m.notes.is_empty(), "{:?}", m.notes); }
         assert_eq!((m.min, m.max), (Vec3::new(-32.0, -32.0, 0.0), Vec3::new(32.0, 32.0, 0.0)));
         let view = super::View::camera(Vec3::new(0.0, 0.0, 100.0), [90.0, 0.0, 0.0], 60.0, 1.0, 1000.0, 1.0);
-        let image = r.draw(&[super::Instance { model: &m, transform: Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None }], &view, 64, 64);
+        let image = r.draw(&[super::Instance { model: &m, transform: Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 }], &view, 64, 64);
         // against the same view with nothing in it (the background is opaque)
         let empty = r.draw(&[], &view, 64, 64);
         let differs = |i: usize| image[i * 4..i * 4 + 3].iter().zip(&empty[i * 4..i * 4 + 3]).any(|(a, b)| a.abs_diff(*b) > 2);
@@ -1306,7 +1416,7 @@ mod tests {
             Some((m, Mat4::from_cols_array_2d(&[[rows[0][0], rows[1][0], rows[2][0], 0.0], [rows[0][1], rows[1][1], rows[2][1], 0.0], [rows[0][2], rows[1][2], rows[2][2], 0.0], [rows[0][3], rows[1][3], rows[2][3], 1.0]])))
         }).collect();
         let drum = r.model(&content, "models/sbox_props/oil_drum/oil_drum_a.vmdl").unwrap();
-        let mut objects: Vec<super::Instance> = world.iter().map(|(m, t)| super::Instance { model: m, transform: *t, tint: [1.0; 4], bones: Vec::new(), lightmapped: true, origin: None }).collect();
+        let mut objects: Vec<super::Instance> = world.iter().map(|(m, t)| super::Instance { model: m, transform: *t, tint: [1.0; 4], bones: Vec::new(), lightmapped: true, origin: None, mask: None, skin: 0 }).collect();
         let size = 256;
         let luma = |image: &[u8], p: Vec3| {
             let c = (view.proj * view.view).project_point3(p);
@@ -1317,7 +1427,7 @@ mod tests {
         let away = Vec3::new(-sun.towards.x, -sun.towards.y, 0.0).normalize();
         let (behind, before) = (Vec3::new(-560.0, 560.0, 4.0) + away * 30.0, Vec3::new(-560.0, 560.0, 4.0) - away * 30.0);
         let bare = r.draw(&objects, &view, size as u32, size as u32);
-        objects.push(super::Instance { model: &drum, transform: Mat4::from_translation(Vec3::new(-560.0, 560.0, 4.0)), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None });
+        objects.push(super::Instance { model: &drum, transform: Mat4::from_translation(Vec3::new(-560.0, 560.0, 4.0)), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 });
         let with = r.draw(&objects, &view, size as u32, size as u32);
         let (b0, f0, b1, f1) = (luma(&bare, behind), luma(&bare, before), luma(&with, behind), luma(&with, before));
         eprintln!("without the drum: far side {b0:.0}, near side {f0:.0}; with it: {b1:.0}, {f1:.0}");
@@ -1340,7 +1450,7 @@ mod tests {
         let kinds: Vec<super::Kind> = m.meshes.iter().flat_map(|x| x.draws.iter().map(|d| d.kind)).collect();
         eprintln!("{kinds:?}");
         assert!(kinds.contains(&super::Kind::Glass), "its window");
-        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None }], &super::View::framing(&m, 0.0, 0.0), 128, 128);
+        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 }], &super::View::framing(&m, 0.0, 0.0), 128, 128);
         assert!(image.chunks_exact(4).filter(|p| p[3] > 0).count() > 128 * 128 / 4, "it fills the frame");
     }
 
@@ -1355,7 +1465,7 @@ mod tests {
         let Ok(r) = super::Renderer::new() else { eprintln!("no adapter: skipped"); return };
         let m = r.model(&content, "models/sbox_props/tv/tv.vmdl").unwrap();
         assert!(m.notes.is_empty(), "{:?}", m.notes);
-        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None }], &super::View::framing(&m, 35.0, 15.0), 128, 128);
+        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 }], &super::View::framing(&m, 35.0, 15.0), 128, 128);
         let covered: Vec<&[u8]> = image.chunks_exact(4).filter(|p| p[3] > 0).collect();
         let mean = covered.iter().map(|p| p[0] as f32 + p[1] as f32 + p[2] as f32).sum::<f32>() / (3 * covered.len()) as f32;
         eprintln!("{} of {} pixels covered, mean {mean:.0}", covered.len(), 128 * 128);

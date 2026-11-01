@@ -2141,6 +2141,15 @@ pub unsafe fn CSceneObject_EnableRendering(obj: usize) { crate::camera::set_show
 pub unsafe fn CSceneObject_DisableRendering(obj: usize) { crate::camera::set_shown(obj, false) }
 pub unsafe fn CSceneObject_IsRenderingEnabled(obj: usize) -> i32 { crate::camera::shown(obj) as i32 }
 
+// what an object shows of its model: body groups (as mesh groups) and its skin
+pub unsafe fn CSceneObject_ResetMeshGroups(obj: usize, mask: u64) { crate::camera::set_mesh_groups(obj, mask) }
+pub unsafe fn CSceneObject_EnableMeshGroups(obj: usize, mask: u64) { crate::camera::set_mesh_groups(obj, crate::camera::mesh_groups(obj) | mask) }
+pub unsafe fn CSceneObject_DisableMeshGroups(obj: usize, mask: u64) { crate::camera::set_mesh_groups(obj, crate::camera::mesh_groups(obj) & !mask) }
+pub unsafe fn CSceneObject_GetCurrentMeshGroupMask(obj: usize) -> u64 { crate::camera::mesh_groups(obj) }
+pub unsafe fn CSceneObject_SetBodyGroup(obj: usize, part: S_Sandbox_StringToken, choice: i32) { crate::camera::set_body_group(obj, part.f_Value, choice) }
+pub unsafe fn CScnnmtblbjct_SetBodyGroup(obj: usize, part: S_Sandbox_StringToken, choice: i32) { crate::camera::set_body_group(obj, part.f_Value, choice) }
+pub unsafe fn CSceneObject_SetMaterialGroup(obj: usize, group: S_Sandbox_StringToken) { crate::camera::set_skin(obj, group.f_Value) }
+
 // ---- materials: one object per name, which remembers it (a client's
 // renderer reads the file by it: camera.rs)
 
@@ -3079,10 +3088,26 @@ mod built_models {
             assert_eq!(phys::vec(Get__CHitBox_m_vMaxBounds(hb)), rapier3d::math::Vector::new(0.0, 0.0, 8.0));
 
             // and it draws: its mesh, its material by name
-            let drawn = crate::rendermesh::for_drawing(&models::meshes_of(model).unwrap(), |m| crate::camera::material_name(m).unwrap_or_default());
+            let drawn = crate::rendermesh::for_drawing(&models::meshes_of(model).unwrap(), &[], |m| crate::camera::material_name(m).unwrap_or_default());
             assert_eq!(drawn.len(), 1);
             assert_eq!(drawn[0].draws[0].material, "materials/dev/reflectivity_30.vmat");
             assert_eq!(drawn[0].buffers.indices[0].indices(), [0, 1, 2, 0, 2, 3]);
+
+            // a scene object of it shows its default body groups until managed
+            // chooses (ModelRenderer.SetBodyGroup, SceneModel.SetBodyGroup by name)
+            let obj = crate::handles::object();
+            animation::create(obj, model);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 1);
+            let door = S_Sandbox_StringToken { f_Value: crate::string_token("door") };
+            CScnnmtblbjct_SetBodyGroup(obj, door, 1);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 2);
+            CSceneObject_SetBodyGroup(obj, door, 0);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 1);
+            CSceneObject_ResetMeshGroups(obj, 3);
+            CSceneObject_DisableMeshGroups(obj, 1);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 2);
+            CSceneObject_SetBodyGroup(obj, S_Sandbox_StringToken { f_Value: crate::string_token("no such part") }, 0);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 2, "a part it hasn't: nothing changes");
 
             // a builder given only collision makes a model as before: no file of its own
             let bare = CModelBuilder_Create();

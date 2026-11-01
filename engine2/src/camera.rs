@@ -17,6 +17,48 @@ static SUNS: Mutex<Option<HashMap<usize, crate::slots::S_Vector3>>> = Mutex::new
 /// lights the ones its lightmaps name them by).
 static BAKED: Mutex<Option<HashMap<usize, (i32, f32)>>> = Mutex::new(None);
 
+/// What each scene object shows of its model: the mesh groups (its body
+/// groups' choices) once managed set them, and its material group (skin).
+static MESH_GROUPS: Mutex<Option<HashMap<usize, u64>>> = Mutex::new(None);
+static SKINS: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
+
+/// An object's mesh groups: as set, else its model's default.
+pub fn mesh_groups(obj: usize) -> u64 {
+    if let Some(&m) = MESH_GROUPS.lock().unwrap().as_ref().and_then(|g| g.get(&obj)) { return m; }
+    crate::models::file(crate::animation::model_of(obj)).map(|f| f.default_mask).unwrap_or(u64::MAX)
+}
+
+/// An object's mesh groups if managed chose them (none: its model's default).
+pub fn chosen_mesh_groups(obj: usize) -> Option<u64> {
+    MESH_GROUPS.lock().unwrap().as_ref().and_then(|g| g.get(&obj).copied())
+}
+
+pub fn set_mesh_groups(obj: usize, mask: u64) {
+    MESH_GROUPS.lock().unwrap().get_or_insert_with(Default::default).insert(obj, mask);
+}
+
+/// A body group of the object's model (by its name's token) set to a
+/// choice: that choice's mesh groups in place of the others'.
+pub fn set_body_group(obj: usize, token: u32, choice: i32) {
+    let Some(f) = crate::models::file(crate::animation::model_of(obj)) else { return };
+    let Some(part) = f.body_parts.iter().find(|p| crate::handles::murmur2(&p.name.to_string_lossy()) == token) else { return };
+    let Some(&(_, chosen)) = part.choices.get(choice.max(0) as usize) else { return };
+    let all = part.choices.iter().fold(0, |a, c| a | c.1);
+    set_mesh_groups(obj, (mesh_groups(obj) & !all) | chosen);
+}
+
+/// An object's material group (skin): its index among its model's.
+pub fn skin(obj: usize) -> usize {
+    SKINS.lock().unwrap().as_ref().and_then(|s| s.get(&obj).copied()).unwrap_or(0)
+}
+
+/// A skin set by its name's token (one the model doesn't have: its first).
+pub fn set_skin(obj: usize, token: u32) {
+    let groups = crate::models::file(crate::animation::model_of(obj)).map(|f| &f.material_groups[..]).unwrap_or(&[]);
+    let i = groups.iter().position(|g| crate::handles::murmur2(&g.to_string_lossy()) == token).unwrap_or(0);
+    SKINS.lock().unwrap().get_or_insert_with(Default::default).insert(obj, i);
+}
+
 pub fn set_bake_index(light: usize, index: i32) {
     BAKED.lock().unwrap().get_or_insert_with(Default::default).entry(light).or_insert((-1, 1.0)).0 = index;
 }
@@ -187,8 +229,11 @@ mod draw {
         let m = M.get_or_init(Default::default);
         let version = crate::rendermesh::version(meshes);
         if let Some((v, g)) = m.lock().unwrap().get(&model) { if *v == version { return g.clone(); } }
-        let drawn = crate::rendermesh::for_drawing(meshes, |mat| super::material_name(mat).unwrap_or_default());
-        let g = r.model_of(&EngineFiles, &format!("a model built at runtime ({model:#x})"), &drawn).map_err(|e| crate::trace::note(&format!("render: {e}"))).ok().map(Arc::new);
+        let file = crate::models::file(model);
+        let masks = file.map(|f| f.mesh_group_masks.clone()).unwrap_or_default();
+        let drawn = crate::rendermesh::for_drawing(meshes, &masks, |mat| super::material_name(mat).unwrap_or_default());
+        let default = file.map(|f| f.default_mask).unwrap_or(u64::MAX);
+        let g = r.model_of(&EngineFiles, &format!("a model built at runtime ({model:#x})"), &drawn, default, &[]).map_err(|e| crate::trace::note(&format!("render: {e}"))).ok().map(Arc::new);
         if let Some(g) = &g { for n in &g.notes { crate::trace::note(&format!("render: {n}")); } }
         m.lock().unwrap().insert(model, (version, g.clone()));
         g
@@ -277,7 +322,7 @@ mod draw {
             width as f32 / height as f32,
         );
         // what's in its worlds and shown: each object's model, where, how tinted
-        let mut placed: Vec<(Arc<Model>, Mat4, [f32; 4], Vec<Mat4>, bool)> = Vec::new();
+        let mut placed: Vec<(Arc<Model>, Mat4, [f32; 4], Vec<Mat4>, bool, Option<u64>, usize)> = Vec::new();
         for world in super::worlds(camera) {
             for obj in crate::handles::made_with("SceneObject", world) {
                 if !super::shown(obj) { continue; }
@@ -291,7 +336,7 @@ mod draw {
                 let m = mat(&crate::animation::Xf::from_managed(&crate::state::get::<S_Transform>(obj, PROP_Transform)));
                 let tint = crate::state::get::<S_Vector4>(obj, PROP_TintRGBA).f__vec;
                 let tint = if tint.f_X + tint.f_Y + tint.f_Z + tint.f_W == 0.0 { [1.0; 4] } else { [tint.f_X, tint.f_Y, tint.f_Z, tint.f_W] };
-                placed.push((g, m, tint, skin(obj, model), false));
+                placed.push((g, m, tint, skin(obj, model), false, super::chosen_mesh_groups(obj), super::skin(obj)));
             }
         }
         // the lights in its worlds that a map's lightmaps name, by their bake index
@@ -328,7 +373,7 @@ mod draw {
                         [rows[0][2], rows[1][2], rows[2][2], 0.0],
                         [rows[0][3], rows[1][3], rows[2][3], 1.0],
                     ]);
-                    placed.push((g, m, tint, Vec::new(), true));
+                    placed.push((g, m, tint, Vec::new(), true, None, 0));
                     world_objects += 1;
                 }
             }
@@ -358,7 +403,7 @@ mod draw {
                 }
             }
         }
-        let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None }).collect();
+        let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
         let image = r.draw(&instances, &view, width as u32, height as u32);
         let out = unsafe { std::slice::from_raw_parts_mut(pixels as *mut u8, (width * height * 4) as usize) };
         out.copy_from_slice(&image);
