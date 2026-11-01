@@ -355,6 +355,9 @@ SBOX=../sbox-public sh spike.sh 120 +shimgame $PWD/../sandbox/sandbox.sbproj +sh
 grep shimwatch target/spike/server.log
 ```
 
+All of the above in one step, the server and a player rendering frames
+of flatgrass: `sh tools/fullgame.sh [seconds]`.
+
 **The size of a server, measured.** The server and a player together call
 540 distinct slots: 244 written by hand, 106 generated (handles and
 remembered properties), 190 still stubs, most of them rendering, the
