@@ -64,6 +64,8 @@ struct Vertex {
     /// skinned: its bones in the model's skeleton, and how much each moves it
     bones: [u32; 4],
     weights: [f32; 4],
+    /// where it is in the map's lightmaps (TEXCOORD3, before the world's scale)
+    lightmap: [f32; 2],
 }
 
 #[repr(C)]
@@ -84,7 +86,7 @@ struct ViewUniform {
 struct ObjectUniform {
     model: [[f32; 4]; 4],
     tint: [f32; 4],
-    /// x: skinned by the bone palette (1)
+    /// x: skinned by the bone palette (1), y: lit from the view's lightmaps (1)
     flags: [f32; 4],
 }
 
@@ -95,6 +97,9 @@ struct MaterialUniform {
     params: [f32; 4],
     mode: [f32; 4],
     tint_b: [f32; 4],
+    tint_c: [f32; 4],
+    blend: [f32; 4],
+    scale: [f32; 4],
 }
 
 /// A run of triangles to draw: its buffers (by index), its range, its material.
@@ -118,6 +123,9 @@ pub struct Model {
     meshes: Vec<GpuMesh>,
     pub min: Vec3,
     pub max: Vec3,
+    /// whether every vertex has a place in a map's lightmaps (a map's own
+    /// geometry, compiled with baked lighting)
+    pub lightmap_uv: bool,
     /// what was missing or couldn't be read, for whoever's looking
     pub notes: Vec<String>,
 }
@@ -132,6 +140,10 @@ pub struct Renderer {
     sky_pipeline: wgpu::RenderPipeline,
     sky_layout: wgpu::BindGroupLayout,
     skies: Mutex<HashMap<String, Arc<Sky>>>,
+    lighting_layout: wgpu::BindGroupLayout,
+    /// the lighting group of a view with no lightmaps
+    unlit: Lightmaps,
+    clamp: wgpu::Sampler,
     sampler: wgpu::Sampler,
     /// whether the GPU takes BC1 to BC7 as they are (most desktop GPUs,
     /// lavapipe, WebGPU on desktops), and what's been read already
@@ -139,11 +151,13 @@ pub struct Renderer {
     textures: Mutex<HashMap<(String, bool), wgpu::TextureView>>,
     materials: Mutex<HashMap<String, (wgpu::BindGroup, bool, Vec<String>)>>,
     /// for a material without a texture: white (a colour, occlusion, a
-    /// tint mask), a flat normal (roughness 0.6), and a blendable's
-    /// metalness, occlusion and roughness (not metal, not occluded, 0.6)
+    /// tint mask), a flat normal (roughness 0.6), and a blendable's g_tRma
+    /// of either version (not metal, not occluded, all revealed: version 1
+    /// reads metalness, occlusion, mask; version 0 roughness 0.6,
+    /// metalness, occlusion, mask)
     white: wgpu::TextureView,
     flat: wgpu::TextureView,
-    unoccluded: wgpu::TextureView,
+    rma: [wgpu::TextureView; 2],
     pub adapter: String,
 }
 
@@ -169,13 +183,23 @@ impl Renderer {
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("material"), entries: &[
             uniform(0, wgpu::ShaderStages::FRAGMENT), tex(1), tex(2),
             wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
-            tex(4), tex(5), tex(6), tex(7), tex(8),
+            tex(4), tex(5), tex(6), tex(7), tex(8), tex(9), tex(10), tex(11),
         ] });
         let object_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("object"), entries: &[
             uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
             wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::VERTEX, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
         ] });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &material_layout, &object_layout], push_constant_ranges: &[] });
+        // a map's baked lighting (as s&box's vr_lighting.fxc reads it): its
+        // lightmaps (direct lights' indices and strengths, irradiance, and
+        // the directional part of it) and the lights the indices name
+        let lighting_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("lighting"), entries: &[
+            uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), tex(1), tex(2),
+            wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
+            tex(4),
+            wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+        ] });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &material_layout, &object_layout, &lighting_layout], push_constant_ranges: &[] });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("complex"),
             layout: Some(&layout),
@@ -186,7 +210,7 @@ impl Renderer {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Uint32x4, 6 => Float32x4],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Uint32x4, 6 => Float32x4, 7 => Float32x2],
                 }],
             },
             fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(COLOR.into())] }),
@@ -223,8 +247,12 @@ impl Renderer {
             label: None, size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &rgba).create_view(&Default::default());
-        let (white, flat, unoccluded) = (pixel([255; 4]), pixel([128, 128, 153, 255]), pixel([0, 255, 153, 255]));
-        Ok(Renderer { bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, unoccluded, adapter: format!("{} ({:?})", info.name, info.backend) })
+        let (white, flat, rma) = (pixel([255; 4]), pixel([128, 128, 153, 255]), [pixel([153, 0, 255, 0]), pixel([0, 255, 0, 255])]);
+        let clamp = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::FilterMode::Linear, ..Default::default()
+        });
+        let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, [0.0; 4], [&white, &white, &white, &white], &[BakedLight::default()]);
+        Ok(Renderer { bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, adapter: format!("{} ({:?})", info.name, info.backend) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -246,6 +274,7 @@ impl Renderer {
             (f::BC7, false) => Some((wgpu::TextureFormat::Bc7RgbaUnorm, 16)),
             (f::ATI1N, _) => Some((wgpu::TextureFormat::Bc4RUnorm, 8)),
             (f::ATI2N, _) => Some((wgpu::TextureFormat::Bc5RgUnorm, 16)),
+            (f::BC6H, _) => Some((wgpu::TextureFormat::Bc6hRgbUfloat, 16)),
             _ => None,
         };
         let (format, levels): (wgpu::TextureFormat, Vec<(usize, usize, Vec<u8>, u32, u32)>) = match blocks {
@@ -321,6 +350,28 @@ impl Renderer {
         Ok(sky)
     }
 
+    /// A map's baked lighting (`maps/<name>`: its world's lighting info
+    /// and the lightmaps it names), lit by `lights`, by their bake indices.
+    /// None if the map was compiled without it.
+    pub fn lightmaps(&self, content: &dyn Files, folder: &str, lights: &[BakedLight]) -> Result<Option<Lightmaps>, String> {
+        let world = content.compiled(&format!("{folder}/world.vwrld")).ok_or_else(|| format!("{folder}: no world"))?;
+        let d = world.kv3("DATA").ok_or("vwrld: no DATA")?.map_err(|e| e.to_string())?;
+        let Some(info) = d.get("m_worldLightingInfo") else { return Ok(None) };
+        let maps: Vec<&str> = info.get("m_lightMaps").map(crate::assets::kv3::Value::as_array).unwrap_or(&[]).iter().filter_map(|v| v.as_str()).collect();
+        if info.get("m_bHasLightmaps").and_then(|v| v.as_i64()) == Some(0) || maps.len() < 4 { return Ok(None); }
+        let version = info.i64("m_nLightmapGameVersionNumber");
+        if version != 1 { return Err(format!("{folder}: lightmaps of game version {version} not read yet")); }
+        let scale = info.get("m_vLightmapUvScale").map(|v| v.floats()).unwrap_or_default();
+        // in the order the world lists them: indices, strengths, irradiance, directional
+        let views = [0, 1, 2, 3].map(|i| self.texture(content, maps[i], false));
+        let [Ok(a), Ok(b), Ok(c), Ok(e)] = views else {
+            return Err(views.into_iter().filter_map(Result::err).collect::<Vec<_>>().join("; "));
+        };
+        let size = content.compiled(maps[0]).and_then(|r| texture::read(r).ok()).map(|t| (t.width as f32, t.height as f32)).unwrap_or((1.0, 1.0));
+        let uniform = [scale.first().copied().unwrap_or(1.0), scale.get(1).copied().unwrap_or(1.0), size.0, size.1];
+        Ok(Some(Lightmaps::group(&self.device, &self.lighting_layout, &self.clamp, uniform, [&a, &b, &c, &e], lights)))
+    }
+
     /// A material's bind group, and whether it's drawn at all.
     fn material(&self, content: &dyn Files, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, bool) {
         let key = crate::fs::normal(name);
@@ -340,32 +391,43 @@ impl Renderer {
             None => default.clone(),
         };
         let blendable = m.shader.contains("blendable");
+        // blendable's layers (F_MULTIBLEND: 0 one, 1 two, 2 three), and how its textures are packed
+        let version = m.shader_version.clamp(0, 1) as usize;
+        let layers = if blendable { (m.int("F_MULTIBLEND") + 1).clamp(1, 3) } else { 0 };
         let views = if blendable {
-            [tex("g_tColorA", true, &self.white), tex("g_tRmaA", false, &self.unoccluded), tex("g_tNormalA", false, &self.flat),
-             tex("g_tColorB", true, &self.white), tex("g_tNormalB", false, &self.flat), tex("g_tRmaB", false, &self.unoccluded), self.white.clone()]
+            let rma = &self.rma[version];
+            [tex("g_tColorA", true, &self.white), tex("g_tRmaA", false, rma), tex("g_tNormalA", false, &self.flat),
+             tex("g_tColorB", true, &self.white), tex("g_tNormalB", false, &self.flat), tex("g_tRmaB", false, rma), self.white.clone(),
+             tex("g_tColorC", true, &self.white), tex("g_tNormalC", false, &self.flat), tex("g_tRmaC", false, rma)]
         } else {
             [tex("g_tColor", true, &self.white), tex("g_tAmbientOcclusion", false, &self.white), tex("g_tNormal", false, &self.flat),
-             self.white.clone(), self.flat.clone(), self.white.clone(), tex("g_tTintMask", false, &self.white)]
+             self.white.clone(), self.flat.clone(), self.white.clone(), tex("g_tTintMask", false, &self.white),
+             self.white.clone(), self.flat.clone(), self.white.clone()]
         };
         let has_normal = m.textures.keys().any(|t| t.starts_with("g_tNormal"));
-        let (tint, tint_b) = if blendable {
-            (m.vector("g_flTintColorA", [1.0; 4]), m.vector("g_flTintColorB", [1.0; 4]))
+        let (tint, tint_b, tint_c) = if blendable {
+            (m.vector("g_flTintColorA", [1.0; 4]), m.vector("g_flTintColorB", [1.0; 4]), m.vector("g_flTintColorC", [1.0; 4]))
         } else {
-            (m.vector("g_vColorTint", [1.0; 4]), [1.0; 4])
+            (m.vector("g_vColorTint", [1.0; 4]), [1.0; 4], [1.0; 4])
         };
+        let (scale_b, scale_c) = (m.vector("g_vTexCoordScale2", [1.0; 4]), m.vector("g_vTexCoordScale3", [1.0; 4]));
         let alpha_test = if m.int("F_ALPHA_TEST") != 0 { m.float("g_flAlphaTestReference", 0.5) } else { 0.0 };
         let flag = |b: bool| b as i32 as f32;
         let uniform = MaterialUniform {
             tint: [tint[0], tint[1], tint[2], 1.0],
             params: [alpha_test, m.float("g_flMetalness", 0.0), flag(m.int("F_METALNESS_TEXTURE") != 0), flag(has_normal)],
-            mode: [flag(blendable), flag(m.int("F_TINT_MASK") != 0), flag(blendable || m.int("F_PAINT_VERTEX_COLORS") != 0), 0.0],
+            mode: [layers as f32, flag(m.int("F_TINT_MASK") != 0), flag(if blendable { m.int("F_USE_TINT_MASKS_IN_VERTEX_PAINT") != 0 } else { m.int("F_PAINT_VERTEX_COLORS") != 0 }), version as f32],
             tint_b: [tint_b[0], tint_b[1], tint_b[2], 1.0],
+            tint_c: [tint_c[0], tint_c[1], tint_c[2], 1.0],
+            blend: [m.float("g_flBlendSoftnessB", 0.5), m.float("g_flBlendSoftnessC", 0.5), m.float("g_flRoughnessScaleFactor", 1.0), 0.0],
+            scale: [scale_b[0], scale_b[1], scale_c[0], scale_c[1]],
         };
         let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(name), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(name), layout: &self.material_layout, entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
             at(1, &views[0]), at(2, &views[1]), at(4, &views[2]), at(5, &views[3]), at(6, &views[4]), at(7, &views[5]), at(8, &views[6]),
+            at(9, &views[7]), at(10, &views[8]), at(11, &views[9]),
         ] });
         // translucent and decal materials wait for their own pass
         let drawn = !(m.int("F_TRANSLUCENT") != 0 || m.int("F_DECAL") != 0 || m.shader.contains("glass"));
@@ -379,6 +441,7 @@ impl Renderer {
         let mut notes = Vec::new();
         let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         let mut out = Vec::new();
+        let mut lightmap_uv = true;
         for m in &meshes {
             let mut vertices = Vec::new();
             for vb in &m.buffers.vertices {
@@ -390,11 +453,16 @@ impl Renderer {
                 let skin = vb.skin().unwrap_or_else(|| vec![([0; 4], [0.0; 4]); vb.count]);
                 let remap = |b: u32| m.bones.get(b as usize).copied().unwrap_or(b);
                 let paint = vb.floats("TEXCOORD", 5).unwrap_or_else(|| vec![[1.0; 4]; vb.count]);
+                // a map's geometry has its place in the lightmaps as its
+                // TEXCOORD3, named in lower case (s&box's LightmapUV semantic)
+                let lightmap = vb.floats("TEXCOORD", 3).filter(|_| vb.attribute("TEXCOORD", 3).is_some_and(|a| a.name == "texcoord"));
+                lightmap_uv &= lightmap.is_some();
+                let lightmap = lightmap.unwrap_or_else(|| vec![[0.0; 4]; vb.count]);
                 let v: Vec<Vertex> = (0..vb.count).map(|i| {
                     let p = positions[i];
                     min = min.min(Vec3::new(p[0], p[1], p[2]));
                     max = max.max(Vec3::new(p[0], p[1], p[2]));
-                    Vertex { position: [p[0], p[1], p[2]], normal: normals[i], uv: [uvs[i][0], uvs[i][1]], blend: blend[i], paint: paint[i], bones: skin[i].0.map(remap), weights: skin[i].1 }
+                    Vertex { position: [p[0], p[1], p[2]], normal: normals[i], uv: [uvs[i][0], uvs[i][1]], blend: blend[i], paint: paint[i], bones: skin[i].0.map(remap), weights: skin[i].1, lightmap: [lightmap[i][0], lightmap[i][1]] }
                 }).collect();
                 vertices.push(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&v), usage: wgpu::BufferUsages::VERTEX }));
             }
@@ -410,7 +478,7 @@ impl Renderer {
             out.push(GpuMesh { vertices, indices, draws });
         }
         if out.is_empty() { return Err(format!("{name}: no meshes")); }
-        Ok(Model { meshes: out, min, max, notes })
+        Ok(Model { meshes: out, min, max, notes, lightmap_uv })
     }
 
     /// Objects drawn from a view: an RGBA image, `width` by `height`, its
@@ -437,7 +505,8 @@ impl Renderer {
         let view_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("view"), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
         let view_group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("view"), layout: &self.view_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() }] });
         let object_groups: Vec<wgpu::BindGroup> = objects.iter().map(|o| {
-            let u = ObjectUniform { model: o.transform.to_cols_array_2d(), tint: o.tint, flags: [(!o.bones.is_empty()) as i32 as f32, 0.0, 0.0, 0.0] };
+            let lit = o.lightmapped && o.model.lightmap_uv && view.lightmaps.is_some();
+            let u = ObjectUniform { model: o.transform.to_cols_array_2d(), tint: o.tint, flags: [(!o.bones.is_empty()) as i32 as f32, lit as i32 as f32, 0.0, 0.0] };
             let b = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("object"), contents: bytemuck::bytes_of(&u), usage: wgpu::BufferUsages::UNIFORM });
             let palette: Vec<[[f32; 4]; 4]> = if o.bones.is_empty() { vec![Mat4::IDENTITY.to_cols_array_2d()] } else { o.bones.iter().map(|m| m.to_cols_array_2d()).collect() };
             let p = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("bones"), contents: bytemuck::cast_slice(&palette), usage: wgpu::BufferUsages::STORAGE });
@@ -475,6 +544,7 @@ impl Renderer {
             }
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &view_group, &[]);
+            pass.set_bind_group(3, &view.lightmaps.as_deref().unwrap_or(&self.unlit).group, &[]);
             for (o, group) in objects.iter().zip(&object_groups) {
                 pass.set_bind_group(2, group, &[]);
                 for m in &o.model.meshes {
@@ -516,6 +586,9 @@ pub struct Instance<'a> {
     pub transform: Mat4,
     pub tint: [f32; 4],
     pub bones: Vec<Mat4>,
+    /// lit by the view's lightmaps, if its model has a place in them (a
+    /// map's own geometry)
+    pub lightmapped: bool,
 }
 
 /// Where a view is from: the eye, its view and projection, what's behind
@@ -530,6 +603,90 @@ pub struct View {
     /// the sky behind everything (none: the clear colour), and how it's turned
     pub sky: Option<Arc<Sky>>,
     pub sky_rotation: glam::Quat,
+    /// the map's baked lighting, for the objects it lights
+    pub lightmaps: Option<Arc<Lightmaps>>,
+}
+
+/// A light a map's lightmaps name by its bake index (managed's
+/// `SetBakeLightIndex`, a light entity's `bakelightindex`): their texels
+/// hold how much of it reaches them, its shadows baked in, and it's shaded
+/// as it's seen from there.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BakedLight {
+    pub index: u8,
+    /// a sun: shining from `towards` (else a light at `position`)
+    pub sun: bool,
+    pub position: Vec3,
+    pub towards: Vec3,
+    /// its colour times its brightness, times its bake scale
+    pub color: Vec3,
+}
+
+impl BakedLight {
+    /// The baked lights among a map's entities, as managed's map loader
+    /// (SceneMapLoader) makes them: a light's colour times its brightness
+    /// (a local light's times its attenuation's scale too), times the bake
+    /// scale the compiler gave it.
+    pub fn from_entities(entities: &[crate::assets::entities::Entity]) -> Vec<BakedLight> {
+        let mut out = Vec::new();
+        for e in entities {
+            let get = |k: &str| e.get(crate::string_token(k));
+            let floats = |k: &str| get(k).map(|v| v.split_whitespace().filter_map(|x| x.parse::<f32>().ok()).collect::<Vec<_>>()).unwrap_or_default();
+            let num = |k: &str, d: f32| floats(k).first().copied().unwrap_or(d);
+            let sun = match get("classname") {
+                Some("light_environment" | "light_directional") => true,
+                Some("light_spot" | "light_omni" | "light_rect" | "light_capsule") => false,
+                _ => continue,
+            };
+            let index = num("bakelightindex", -1.0);
+            if !(0.0..255.0).contains(&index) || num("enabled", 1.0) == 0.0 { continue; }
+            let a = floats("angles");
+            let angle = |i: usize| a.get(i).copied().unwrap_or(0.0).to_radians();
+            let rot = glam::Quat::from_rotation_z(angle(1)) * glam::Quat::from_rotation_y(angle(0)) * glam::Quat::from_rotation_x(angle(2));
+            let c = floats("color");
+            let mut color = Vec3::new(c.first().copied().unwrap_or(255.0), c.get(1).copied().unwrap_or(255.0), c.get(2).copied().unwrap_or(255.0)) / 255.0 * num("brightness", 1.0);
+            if !sun {
+                let scale = num("attenuation2", 1.0) * 10000.0 + num("attenuation1", 0.0) * 100.0 + num("attenuation0", 0.0);
+                if scale > 0.0 { color *= scale; }
+            }
+            let o = floats("origin");
+            out.push(BakedLight {
+                index: index as u8,
+                sun,
+                position: Vec3::new(o.first().copied().unwrap_or(0.0), o.get(1).copied().unwrap_or(0.0), o.get(2).copied().unwrap_or(0.0)),
+                towards: rot * -Vec3::X,
+                color: color * num("bakelightindexscale", 1.0),
+            });
+        }
+        out
+    }
+}
+
+/// A map's baked lighting on the GPU (Renderer::lightmaps).
+pub struct Lightmaps {
+    group: wgpu::BindGroup,
+}
+
+impl Lightmaps {
+    fn group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, uniform: [f32; 4], maps: [&wgpu::TextureView; 4], lights: &[BakedLight]) -> Lightmaps {
+        // every index has a light: black, if none was baked with it
+        let mut table = vec![[[0f32; 4]; 3]; 256];
+        for l in lights {
+            table[l.index as usize] = [
+                [l.position.x, l.position.y, l.position.z, if l.sun { 2.0 } else { 1.0 }],
+                l.towards.normalize_or_zero().extend(0.0).into(),
+                l.color.extend(0.0).into(),
+            ];
+        }
+        let u = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("lightmaps"), contents: bytemuck::cast_slice(&uniform), usage: wgpu::BufferUsages::UNIFORM });
+        let l = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("baked lights"), contents: bytemuck::cast_slice(&table), usage: wgpu::BufferUsages::STORAGE });
+        Lightmaps { group: device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("lightmaps"), layout, entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: u.as_entire_binding() },
+            at(1, maps[0]), at(2, maps[1]), at(3, maps[2]), at(4, maps[3]),
+            wgpu::BindGroupEntry { binding: 5, resource: l.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(sampler) },
+        ] }) }
+    }
 }
 
 /// A sky on the GPU (Renderer::sky).
@@ -552,6 +709,7 @@ impl View {
             sun: None,
             sky: None,
             sky_rotation: glam::Quat::IDENTITY,
+            lightmaps: None,
         }
     }
 
@@ -563,7 +721,7 @@ impl View {
         let fov = 30f32.to_radians();
         let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
         let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY }
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None }
     }
 }
 
@@ -580,7 +738,7 @@ mod tests {
         let Ok(r) = super::Renderer::new() else { eprintln!("no adapter: skipped"); return };
         let m = r.model(&content, "models/sbox_props/tv/tv.vmdl").unwrap();
         assert!(m.notes.is_empty(), "{:?}", m.notes);
-        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new() }], &super::View::framing(&m, 35.0, 15.0), 128, 128);
+        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false }], &super::View::framing(&m, 35.0, 15.0), 128, 128);
         let covered: Vec<&[u8]> = image.chunks_exact(4).filter(|p| p[3] > 0).collect();
         let mean = covered.iter().map(|p| p[0] as f32 + p[1] as f32 + p[2] as f32).sum::<f32>() / (3 * covered.len()) as f32;
         eprintln!("{} of {} pixels covered, mean {mean:.0}", covered.len(), 128 * 128);

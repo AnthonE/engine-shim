@@ -1,7 +1,9 @@
 //! Materials (`.vmat_c`): the shader a surface is drawn with
 //! (`shaders/complex.shader` for nearly all of them) and what it's set to:
 //! its textures by parameter (`g_tColor`, `g_tNormal`...), and its ints,
-//! floats and vectors (`F_ALPHA_TEST`, `g_flMetalness`, `g_vColorTint`...).
+//! floats and vectors (`F_ALPHA_TEST`, `g_flMetalness`, `g_vColorTint`...),
+//! and the version of its shader it was compiled for (`m_shaderVersion`:
+//! blendable packs its textures one way at 0, another at 1).
 use std::collections::HashMap;
 
 use super::kv3::Value;
@@ -11,6 +13,7 @@ use super::resource::Resource;
 pub struct Material {
     pub name: String,
     pub shader: String,
+    pub shader_version: i64,
     pub textures: HashMap<String, String>,
     pub ints: HashMap<String, i64>,
     pub floats: HashMap<String, f32>,
@@ -24,6 +27,7 @@ pub fn read(r: &Resource) -> Result<Material, String> {
     Ok(Material {
         name: d.get("m_materialName").and_then(Value::as_str).unwrap_or("").to_string(),
         shader: d.get("m_shaderName").and_then(Value::as_str).unwrap_or("").to_string(),
+        shader_version: d.get("m_shaderVersion").and_then(Value::as_i64).unwrap_or(0),
         textures: list("m_textureParams").iter().filter_map(|p| Some((name(p), p.get("m_pValue")?.as_str()?.to_string()))).collect(),
         ints: list("m_intParams").iter().map(|p| (name(p), p.i64("m_nValue"))).collect(),
         floats: list("m_floatParams").iter().map(|p| (name(p), p.f32("m_flValue"))).collect(),

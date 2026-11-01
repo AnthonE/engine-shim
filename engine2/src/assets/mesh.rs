@@ -178,6 +178,9 @@ impl VertexBuffer {
                 R16G16B16A16_FLOAT => [half_at(d, at), half_at(d, at + 2), half_at(d, at + 4), half_at(d, at + 6)],
                 R16G16_FLOAT => [half_at(d, at), half_at(d, at + 2), 0.0, 0.0],
                 R8G8B8A8_UNORM => core::array::from_fn(|k| d.get(at + k).copied().unwrap_or(0) as f32 / 255.0),
+                R16G16_UNORM | R16G16B16A16_UNORM => core::array::from_fn(|k| if k < 2 || a.format == R16G16B16A16_UNORM {
+                    d.get(at + k * 2..at + k * 2 + 2).map(|x| u16::from_le_bytes(x.try_into().unwrap()) as f32 / 65535.0).unwrap_or(0.0)
+                } else { 0.0 }),
                 _ => [0.0; 4],
             }
         }).collect())

@@ -224,7 +224,7 @@ mod draw {
                 }
             }
         }
-        let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone() }).collect();
+        let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: false }).collect();
         let image = r.draw(&instances, &view, width as u32, height as u32);
         let out = unsafe { std::slice::from_raw_parts_mut(pixels as *mut u8, (width * height * 4) as usize) };
         out.copy_from_slice(&image);

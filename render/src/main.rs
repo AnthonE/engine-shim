@@ -3,7 +3,7 @@
 //!   ENGINE2_CONTENT=../content render models/sbox_props/tv/tv.vmdl tv.png [yaw] [pitch] [size]
 //!   ENGINE2_CONTENT=../maps/flatgrass.vpk:../content render map maps/flatgrass out.png x y z pitch yaw [width height]
 use engine2::assets::{entities, kv3::Value, resource::Resource, worldnode};
-use engine2::render::{Content, Files, Instance, Renderer, View};
+use engine2::render::{BakedLight, Content, Files, Instance, Renderer, View};
 use glam::{Mat4, Quat, Vec3};
 
 fn main() {
@@ -40,8 +40,16 @@ fn main() {
                 _ => {}
             }
         }
-        let mut models = Vec::new();
         let mut notes = Vec::new();
+        // its baked lighting, lit by its lights (RENDER_LIGHTMAPS=0: without)
+        let lights = BakedLight::from_entities(&lump(&content, folder));
+        if std::env::var("RENDER_LIGHTMAPS").as_deref() != Ok("0") {
+            match r.lightmaps(&content, folder, &lights) {
+                Ok(l) => view.lightmaps = l.map(std::sync::Arc::new),
+                Err(e) => notes.push(e),
+            }
+        }
+        let mut models = Vec::new();
         for (name, rows, tint) in worldnode::scene_objects(folder, |p| content.read(p)) {
             match r.model(&content, &name) {
                 Ok(m) => { notes.extend(m.notes.clone()); models.push((m, rows, tint)); }
@@ -58,11 +66,12 @@ fn main() {
             ]),
             tint: *tint,
             bones: Vec::new(),
+            lightmapped: true,
         }).collect();
         let loaded = t.elapsed();
         let image = r.draw(&instances, &view, w, h);
         png(std::path::Path::new(out), w, h, &image).unwrap_or_else(|e| fail(&e));
-        eprintln!("{folder} on {}: {} objects, sun {:?}, sky {}, loaded in {loaded:.2?}, drawn in {:.2?}", r.adapter, instances.len(), view.sun, view.sky.is_some(), t.elapsed() - loaded);
+        eprintln!("{folder} on {}: {} objects, sun {:?}, sky {}, lightmaps {} ({} baked lights), loaded in {loaded:.2?}, drawn in {:.2?}", r.adapter, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), lights.len(), t.elapsed() - loaded);
         notes.sort();
         notes.dedup();
         for n in notes { eprintln!("  {n}"); }
@@ -72,7 +81,7 @@ fn main() {
     let m = r.model(&content, model).unwrap_or_else(|e| fail(&e));
     let loaded = t.elapsed();
     let size = num(5, 768.0) as u32;
-    let image = r.draw(&[Instance { model: &m, transform: Default::default(), tint: [1.0; 4], bones: Vec::new() }], &View::framing(&m, num(3, 35.0), num(4, 20.0)), size, size);
+    let image = r.draw(&[Instance { model: &m, transform: Default::default(), tint: [1.0; 4], bones: Vec::new(), lightmapped: false }], &View::framing(&m, num(3, 35.0), num(4, 20.0)), size, size);
     png(std::path::Path::new(out), size, size, &image).unwrap_or_else(|e| fail(&e));
     eprintln!("{model} on {}: bounds {:?}..{:?}, loaded in {loaded:.2?}, drawn in {:.2?}", r.adapter, m.min, m.max, t.elapsed() - loaded);
     for n in &m.notes { eprintln!("  {n}"); }
