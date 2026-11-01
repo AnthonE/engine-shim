@@ -1,11 +1,15 @@
 // s&box's two stock material shaders, as near as we get yet: complex (91%
-// of materials) and blendable (two layers, blended by vertex paint).
+// of materials) and blendable (layers, blended by vertex paint), and glass.
 //
 // complex's textures as s&box compiles them: g_tColor (colour; alpha the
 // alpha test's mask, or metalness with F_METALNESS_TEXTURE), g_tNormal
 // (the normal hemi-octahedral in red and green, roughness in blue, as
 // vr_shared_standard_ps_code.fxc reads it), g_tAmbientOcclusion (red),
-// g_tTintMask (red: how much of g_vColorTint a texel takes).
+// g_tTintMask (red: how much of g_vColorTint a texel takes), g_tMetalness
+// (green, with F_METALNESS_TEXTURE; without it, metalness is the colour's
+// alpha), g_tSelfIllumMask (F_SELF_ILLUM: what glows, how brightly the
+// material says; black where there's none). Translucent (F_TRANSLUCENT):
+// the colour's alpha is how opaque, drawn over what's behind.
 // blendable's, as blendable.shader reads them: up to three layers here,
 // each a colour (its alpha how much of the layer's tint it takes), a
 // normal and g_tRma. A material of shader version 1 packs its normal as
@@ -13,6 +17,12 @@
 // mask; one of version 0 (most content yet) a plain normal, and g_tRma as
 // roughness, metalness, occlusion and the reveal mask. The vertices' paint:
 // TEXCOORD4 how much of layers B and C (red, green), TEXCOORD5 a tint.
+//
+// glass.shader's (its default, refractive glass): what's behind it, seen
+// through it, tinted by its colour and less of it at grazing angles, where
+// its reflections take over; F_CHEAP_GLASS is drawn over what's behind,
+// its colour's alpha how opaque. Its g_tNormal a plain normal (its alpha a
+// tint mask), its g_tRma roughness, metalness, occlusion.
 //
 // Lit by one sun (GGX) and a sky that metal reflects; the tangent frame
 // from the surface's derivatives, as s&box's meshes carry no tangents.
@@ -56,9 +66,14 @@ struct Material {
     blend: vec4<f32>,
     // layer B's texture coordinates' scale (x, y), and C's (z, w)
     scale: vec4<f32>,
+    // x: translucent's opacity scale (0: opaque), or glass's blur; y:
+    // glass's albedo absorption, z: cheap glass (1), w: self-illuminated (1)
+    extra: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
+// what's been drawn so far, for glass to show through it
+@group(0) @binding(1) var scene: texture_2d<f32>;
 @group(1) @binding(0) var<uniform> material: Material;
 @group(1) @binding(1) var color_a: texture_2d<f32>;
 @group(1) @binding(2) var occlusion_a: texture_2d<f32>;
@@ -232,81 +247,22 @@ fn mix_layer(a: Layer, b: Layer, k: f32) -> Layer {
     return o;
 }
 
-@fragment
-fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let layers = material.mode.x;
-    let blendable = layers > 0.5;
-    // every sample taken before any branch on it, as derivatives need
-    var albedo = textureSample(color_a, samp, i.uv);
-    let packed = textureSample(normal_a, samp, i.uv);
-    let occ = textureSample(occlusion_a, samp, i.uv);
-    let uv_b = i.uv * material.scale.xy;
-    let uv_c = i.uv * material.scale.zw;
-    let albedo_b = textureSample(color_b, samp, uv_b);
-    let packed_b = textureSample(normal_b, samp, uv_b);
-    let occ_b = textureSample(occlusion_b, samp, uv_b);
-    let albedo_c = textureSample(color_c, samp, uv_c);
-    let packed_c = textureSample(normal_c, samp, uv_c);
-    let occ_c = textureSample(occlusion_c, samp, uv_c);
-    // complex's tint mask is where blendable has layer B's colour
-    let mask = albedo_b.r;
-    let dp1 = dpdx(i.world);
-    let dp2 = dpdy(i.world);
-    let du1 = dpdx(i.uv);
-    let du2 = dpdy(i.uv);
-
-    var base: vec3<f32>;
-    var ao: f32;
-    var metal: f32;
-    var rough = 0.6;
+// A surface as a material's textures make it, to be lit.
+struct Surface {
+    base: vec3<f32>,
     // the normal in the surface's tangent space (flat without a normal map)
-    var ts = vec3<f32>(0.0, 0.0, 1.0);
-    if (blendable) {
-        // a model without paint isn't painted black
-        var paint = i.paint;
-        if (paint.w == 0.0) { paint = vec4<f32>(1.0); }
-        var tint = object.tint.rgb;
-        if (material.mode.z > 0.5) { tint = tint * paint.rgb; }
-        var m = layer(albedo, packed, occ, material.tint.rgb * tint);
-        if (layers > 1.5 && i.blend.r > 0.0) {
-            let b = layer(albedo_b, packed_b, occ_b, material.tint_b.rgb * tint);
-            m = mix_layer(m, b, reveal(i.blend.r, material.blend.x, b.mask));
-        }
-        if (layers > 2.5 && i.blend.g > 0.0) {
-            let c = layer(albedo_c, packed_c, occ_c, material.tint_c.rgb * tint);
-            m = mix_layer(m, c, reveal(i.blend.g, material.blend.y, c.mask));
-        }
-        base = m.albedo;
-        ts = m.ts;
-        rough = m.rough;
-        metal = m.metal;
-        ao = m.ao;
-    } else {
-        if (material.params.x > 0.0 && albedo.a < material.params.x) {
-            discard;
-        }
-        var tint = material.tint.rgb;
-        if (material.mode.y > 0.5) {
-            tint = mix(vec3<f32>(1.0), tint, mask);
-        }
-        if (material.mode.z > 0.5) {
-            tint = tint * i.paint.rgb;
-        }
-        base = albedo.rgb * tint * object.tint.rgb;
-        ao = occ.r;
-        metal = material.params.y;
-        if (material.params.z > 0.5) { metal = albedo.a; }
-        if (material.params.w > 0.5) {
-            ts = hemi_oct(packed.rg);
-            rough = packed.b;
-        }
-    }
-    rough = pow(rough, material.blend.z);
+    ts: vec3<f32>,
+    rough: f32,
+    metal: f32,
+    ao: f32,
+};
 
+// The surface's normal in the world: its tangent-space normal on the
+// cotangent frame, from how position and uv change across the pixel.
+fn frame(i: Out, front: bool, ts: vec3<f32>, mapped: bool, dp1: vec3<f32>, dp2: vec3<f32>, du1: vec2<f32>, du2: vec2<f32>) -> vec3<f32> {
     var n = normalize(i.normal);
     if (!front) { n = -n; }
-    if (material.params.w > 0.5) {
-        // the cotangent frame, from how position and uv change across the pixel
+    if (mapped) {
         let dp2perp = cross(dp2, n);
         let dp1perp = cross(n, dp1);
         let t = dp2perp * du1.x + dp1perp * du2.x;
@@ -314,6 +270,23 @@ fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32>
         let inv = inverseSqrt(max(max(dot(t, t), dot(b, b)), 1e-20));
         n = normalize(t * inv * ts.x + b * inv * ts.y + n * ts.z);
     }
+    return n;
+}
+
+// How a surface is lit: the colour it sends back (before the tonemap),
+// with the light that bounced and the direct light, for RENDER_DEBUG.
+struct Lit {
+    color: vec3<f32>,
+    ambient: vec3<f32>,
+    direct: vec3<f32>,
+};
+
+fn light(i: Out, n: vec3<f32>, s: Surface) -> Lit {
+    let base = s.base;
+    let rough = s.rough;
+    let metal = s.metal;
+    let ao = s.ao;
+    let ts = s.ts;
     let l = normalize(view.sun.xyz);
     let v = normalize(view.eye.xyz - i.world);
     let h = normalize(l + v);
@@ -393,14 +366,158 @@ fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32>
         reflected = reflected * min(luminance(bounced) / max(luminance(ambient), 0.001), 1.0);
         ambient = bounced;
     }
-    let lit = diffuse * (direct + ambient) * ao
-        + fresnel * (direct_spec + reflected * ao);
+    var o: Lit;
+    o.color = diffuse * (direct + ambient) * ao + fresnel * (direct_spec + reflected * ao);
+    o.ambient = ambient;
+    o.direct = direct;
+    return o;
+}
+
+// What RENDER_DEBUG asks to see instead (0: nothing).
+fn debug_view(s: Surface, n: vec3<f32>, l: Lit) -> vec4<f32> {
     let debug = view.ground.w;
-    if (debug == 1.0) { return vec4<f32>(base, 1.0); }
+    if (debug == 1.0) { return vec4<f32>(s.base, 1.0); }
     if (debug == 2.0) { return vec4<f32>(n * 0.5 + 0.5, 1.0); }
-    if (debug == 3.0) { return vec4<f32>(vec3<f32>(ao), 1.0); }
-    if (debug == 4.0) { return vec4<f32>(vec3<f32>(rough), 1.0); }
-    if (debug == 5.0) { return vec4<f32>(tonemap(ambient), 1.0); }
-    if (debug == 6.0) { return vec4<f32>(tonemap(direct), 1.0); }
-    return vec4<f32>(tonemap(lit * view.eye.w), 1.0);
+    if (debug == 3.0) { return vec4<f32>(vec3<f32>(s.ao), 1.0); }
+    if (debug == 4.0) { return vec4<f32>(vec3<f32>(s.rough), 1.0); }
+    if (debug == 5.0) { return vec4<f32>(tonemap(l.ambient), 1.0); }
+    if (debug == 6.0) { return vec4<f32>(tonemap(l.direct), 1.0); }
+    return vec4<f32>(0.0);
+}
+
+@fragment
+fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let layers = material.mode.x;
+    let blendable = layers > 0.5;
+    // every sample taken before any branch on it, as derivatives need
+    var albedo = textureSample(color_a, samp, i.uv);
+    let packed = textureSample(normal_a, samp, i.uv);
+    let occ = textureSample(occlusion_a, samp, i.uv);
+    let uv_b = i.uv * material.scale.xy;
+    let uv_c = i.uv * material.scale.zw;
+    let albedo_b = textureSample(color_b, samp, uv_b);
+    let packed_b = textureSample(normal_b, samp, uv_b);
+    let occ_b = textureSample(occlusion_b, samp, uv_b);
+    let albedo_c = textureSample(color_c, samp, uv_c);
+    let packed_c = textureSample(normal_c, samp, uv_c);
+    let occ_c = textureSample(occlusion_c, samp, uv_c);
+    // complex's tint mask, self-illumination mask and metalness are where
+    // blendable has layer B's colour, normal and g_tRma
+    let mask = albedo_b.r;
+    let dp1 = dpdx(i.world);
+    let dp2 = dpdy(i.world);
+    let du1 = dpdx(i.uv);
+    let du2 = dpdy(i.uv);
+
+    var s: Surface;
+    s.rough = 0.6;
+    s.ts = vec3<f32>(0.0, 0.0, 1.0);
+    var alpha = 1.0;
+    var glow = vec3<f32>(0.0);
+    if (blendable) {
+        // a model without paint isn't painted black
+        var paint = i.paint;
+        if (paint.w == 0.0) { paint = vec4<f32>(1.0); }
+        var tint = object.tint.rgb;
+        if (material.mode.z > 0.5) { tint = tint * paint.rgb; }
+        var m = layer(albedo, packed, occ, material.tint.rgb * tint);
+        if (layers > 1.5 && i.blend.r > 0.0) {
+            let b = layer(albedo_b, packed_b, occ_b, material.tint_b.rgb * tint);
+            m = mix_layer(m, b, reveal(i.blend.r, material.blend.x, b.mask));
+        }
+        if (layers > 2.5 && i.blend.g > 0.0) {
+            let c = layer(albedo_c, packed_c, occ_c, material.tint_c.rgb * tint);
+            m = mix_layer(m, c, reveal(i.blend.g, material.blend.y, c.mask));
+        }
+        s.base = m.albedo;
+        s.ts = m.ts;
+        s.rough = m.rough;
+        s.metal = m.metal;
+        s.ao = m.ao;
+    } else {
+        if (material.params.x > 0.0 && albedo.a < material.params.x) {
+            discard;
+        }
+        var tint = material.tint.rgb;
+        if (material.mode.y > 0.5) {
+            tint = mix(vec3<f32>(1.0), tint, mask);
+        }
+        if (material.mode.z > 0.5) {
+            tint = tint * i.paint.rgb;
+        }
+        s.base = albedo.rgb * tint * object.tint.rgb;
+        s.ao = occ.r;
+        s.metal = material.params.y;
+        if (material.params.z > 1.5) { s.metal = occ_b.g; } else if (material.params.z > 0.5) { s.metal = albedo.a; }
+        if (material.params.w > 0.5) {
+            s.ts = hemi_oct(packed.rg);
+            s.rough = packed.b;
+        }
+        if (material.extra.x > 0.0) { alpha = clamp(albedo.a * material.extra.x, 0.0, 1.0); }
+        if (material.extra.w > 0.5) {
+            // its glow (tint_c: the tint, as bright as the material says;
+            // its w how much of the colour it takes)
+            let e = packed_b.rgb * material.tint_c.rgb;
+            glow = mix(e, e * s.base, material.tint_c.w);
+        }
+    }
+    s.rough = pow(s.rough, material.blend.z);
+    let n = frame(i, front, s.ts, material.params.w > 0.5, dp1, dp2, du1, du2);
+    let l = light(i, n, s);
+    let d = debug_view(s, n, l);
+    if (d.a > 0.0) { return d; }
+    return vec4<f32>(tonemap((l.color + glow) * view.eye.w), alpha);
+}
+
+@fragment
+fn fs_glass(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let color = textureSample(color_a, samp, i.uv);
+    let packed = textureSample(normal_a, samp, i.uv);
+    let rma = textureSample(occlusion_a, samp, i.uv);
+    let dp1 = dpdx(i.world);
+    let dp2 = dpdy(i.world);
+    let du1 = dpdx(i.uv);
+    let du2 = dpdy(i.uv);
+    let nt = normalize(packed.rgb * 2.0 - 1.0);
+    var s: Surface;
+    s.ts = vec3<f32>(nt.x, -nt.y, nt.z);
+    s.rough = pow(rma.r, material.blend.z);
+    s.ao = rma.b;
+    // glass is never metal
+    s.metal = 0.0;
+    let albedo = color.rgb * mix(vec3<f32>(1.0), material.tint.rgb * object.tint.rgb, packed.a);
+    let n = frame(i, front, s.ts, true, dp1, dp2, du1, du2);
+    if (material.extra.z > 0.5) {
+        // cheap glass: lit as it is, over what's behind it
+        s.base = albedo;
+        let l = light(i, n, s);
+        return vec4<f32>(tonemap(l.color * view.eye.w), color.a);
+    }
+    // what's behind, less what it reflects, through its colour; its own
+    // colour only as much as it absorbs (glass.shader's AlbedoAbsorption)
+    let absorbed = s.rough * material.extra.y;
+    s.base = albedo * absorbed;
+    let v = normalize(view.eye.xyz - i.world);
+    let ndv = clamp(dot(n, v), 0.0, 1.0);
+    let reflects = 0.04 + (max(1.0 - s.rough, 0.04) - 0.04) * pow(1.0 - ndv, 5.0);
+    // blurred as rough as it is and as glancing the view (glass.shader reads
+    // a mip of what's behind, sqrt(amount) * 7 down: here a disc of taps as
+    // wide as that mip's texels)
+    let amount = material.extra.x * s.rough / max(ndv, 0.05);
+    let radius = exp2(sqrt(amount) * 7.0) - 1.0;
+    let size = vec2<f32>(textureDimensions(scene));
+    var behind = vec3<f32>(0.0);
+    for (var t = 0; t < 16; t++) {
+        // a golden-angle spiral filling the disc
+        let r = radius * sqrt((f32(t) + 0.5) / 16.0);
+        let a = f32(t) * 2.39996323;
+        let at = clamp(i.clip.xy + r * vec2<f32>(cos(a), sin(a)), vec2<f32>(0.0), size - 1.0);
+        behind += textureLoad(scene, vec2<i32>(at), 0).rgb;
+    }
+    behind = behind / 16.0;
+    let through = behind * (1.0 - reflects) * albedo * (1.0 - absorbed);
+    let l = light(i, n, s);
+    let d = debug_view(s, n, l);
+    if (d.a > 0.0) { return d; }
+    return vec4<f32>(through + tonemap(l.color * view.eye.w), 1.0);
 }

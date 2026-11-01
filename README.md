@@ -568,8 +568,7 @@ yaw 101; colour 3.5 times 255 245 234) and its sunrise sky, the sun's
 glow in it where the light comes from; the roof of the spawn building,
 its scaffolding, the grass to the horizon, and the physgun in the
 player's hand, posed by its animation graph. What isn't drawn yet:
-glass and other translucent materials, dynamic shadows (what moves casts
-none), particles, decals and the UI; the sky shows faint lines where its
+dynamic shadows (what moves casts none), particles, decals and the UI; the sky shows faint lines where its
 cube's faces meet. A headless player has no tonemapper
 (`Graphics.IsAvailable` is false with the empty render device), so the
 watcher turns auto exposure off for its frames.
@@ -623,6 +622,21 @@ Read the other way, flatgrass's walls and floors were black. Now its
 corrugated metal, brick, concrete and roofs look as in Facepunch's own
 screenshots of it on sbox.game (their newer revision has another sky).
 
+**Glass, translucency and glow**, as `glass.shader` and
+`vr_shared_standard_ps_code.fxc` (both public) draw them. What's opaque is
+drawn first; then, farthest first, what isn't: glass (its default,
+refractive kind) sees a copy of what's been drawn behind it, tinted by its
+colour, less of it where it reflects at grazing angles, blurred as rough
+as it is (`g_flBlurAmount`: s&box reads a mip of the copy, here a disc of
+taps as wide); cheap glass (`F_CHEAP_GLASS`) and translucent materials
+(`F_TRANSLUCENT`, opacity the colour's alpha times `g_flOpacityScale`) are
+drawn over it. A self-illuminated material (`F_SELF_ILLUM`) glows where
+its `g_tSelfIllumMask` says, 2^brightness times its tint. And metalness
+comes from `g_tMetalness`'s green where a material has one. Measured: the
+microwave's window and flatgrass's windows and skylights are glass now
+(they were missing: the microwave showed its inside), and the hall's
+strip lights glow.
+
 `render map` draws a map from its pak alone, its sun and sky as its
 entities name them, lit by its lightmaps and probes (`RENDER_LIGHTMAPS=0`:
 without), from any camera: the same renderer without a game.
@@ -662,11 +676,11 @@ ENGINE2_CONTENT=../sandbox/Assets/maps/flatgrass.vpk:../content-flatgrass \
 Measured against the thumbnails Facepunch's own engine rendered for
 sbox.game, on seven of Sandbox's props (the TV, oil drum, office chair,
 washing machine, microwave, traffic cone, wooden chair): each has its
-shape, textures, colours and materials' character. What differs: glass
-and other translucent and decal materials aren't drawn yet (the
-microwave's window shows its inside), the lighting is a plain sky rather
-than a studio's reflections, and the office chair's back lacks a detail
-layer its material has.
+shape, textures, colours and materials' character. What differs: the
+lighting is a plain sky rather than a studio's reflections (the
+microwave's glass shows its inside more brightly than theirs, which is
+darker inside), and the office chair's back lacks a detail layer its
+material has.
 
 ```sh
 sudo apt-get install mesa-vulkan-drivers        # no GPU: lavapipe

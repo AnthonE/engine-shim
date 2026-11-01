@@ -100,6 +100,7 @@ struct MaterialUniform {
     tint_c: [f32; 4],
     blend: [f32; 4],
     scale: [f32; 4],
+    extra: [f32; 4],
 }
 
 /// A run of triangles to draw: its buffers (by index), its range, its material.
@@ -109,6 +110,17 @@ struct GpuDraw {
     range: std::ops::Range<u32>,
     base_vertex: i32,
     material: wgpu::BindGroup,
+    kind: Kind,
+}
+
+/// How a material is drawn: with what's opaque; over what's behind it
+/// (translucent, cheap glass); or seeing what's behind it (glass).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Kind {
+    Opaque,
+    Blend,
+    Glass,
+    CheapGlass,
 }
 
 /// A mesh's draws on the GPU, and the buffers they read.
@@ -134,6 +146,13 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    /// translucent, glass and cheap glass, and what glass's view and
+    /// material groups hold (what's been drawn; its three textures)
+    blend_pipeline: wgpu::RenderPipeline,
+    glass_pipeline: wgpu::RenderPipeline,
+    cheap_glass_pipeline: wgpu::RenderPipeline,
+    glass_view_layout: wgpu::BindGroupLayout,
+    glass_layout: wgpu::BindGroupLayout,
     view_layout: wgpu::BindGroupLayout,
     material_layout: wgpu::BindGroupLayout,
     object_layout: wgpu::BindGroupLayout,
@@ -151,7 +170,7 @@ pub struct Renderer {
     /// lavapipe, WebGPU on desktops), and what's been read already
     bc: bool,
     textures: Mutex<HashMap<(String, bool), wgpu::TextureView>>,
-    materials: Mutex<HashMap<String, (wgpu::BindGroup, bool, Vec<String>)>>,
+    materials: Mutex<HashMap<String, (wgpu::BindGroup, Option<Kind>, Vec<String>)>>,
     /// for a material without a texture: white (a colour, occlusion, a
     /// tint mask), a flat normal (roughness 0.6), and a blendable's g_tRma
     /// of either version (not metal, not occluded, all revealed: version 1
@@ -160,6 +179,8 @@ pub struct Renderer {
     white: wgpu::TextureView,
     flat: wgpu::TextureView,
     rma: [wgpu::TextureView; 2],
+    /// black: no glow where a material has no self-illumination mask
+    none2d: wgpu::TextureView,
     pub adapter: String,
 }
 
@@ -204,26 +225,34 @@ impl Renderer {
             array(7), array(8), array(9),
         ] });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &material_layout, &object_layout, &lighting_layout], push_constant_ranges: &[] });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("complex"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Uint32x4, 6 => Float32x4, 7 => Float32x2],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(COLOR.into())] }),
+        let glass_view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), tex(1)] });
+        let glass_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass"), entries: &[
+            uniform(0, wgpu::ShaderStages::FRAGMENT), tex(1), tex(2),
+            wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            tex(4),
+        ] });
+        let glass_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&glass_view_layout, &glass_layout, &object_layout, &lighting_layout], push_constant_ranges: &[] });
+        let vertex_layout = [wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Uint32x4, 6 => Float32x4, 7 => Float32x2],
+        }];
+        // what's opaque writes depth; what's drawn over what's behind doesn't
+        let make = |label, layout: &wgpu::PipelineLayout, entry, blend: Option<wgpu::BlendState>, depth_write| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &vertex_layout },
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(entry), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: COLOR, blend, write_mask: wgpu::ColorWrites::ALL })] }),
             primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
-            depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less, stencil: Default::default(), bias: Default::default() }),
+            depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: depth_write, depth_compare: wgpu::CompareFunction::Less, stencil: Default::default(), bias: Default::default() }),
             multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
             multiview: None,
             cache: None,
         });
+        let pipeline = make("complex", &layout, "fs_main", None, true);
+        let blend_pipeline = make("translucent", &layout, "fs_main", Some(wgpu::BlendState::ALPHA_BLENDING), false);
+        let glass_pipeline = make("glass", &glass_pipeline_layout, "fs_glass", None, false);
+        let cheap_glass_pipeline = make("cheap glass", &glass_pipeline_layout, "fs_glass", Some(wgpu::BlendState::ALPHA_BLENDING), false);
         // the sky: a triangle over the screen, its cube looked up per pixel, behind everything
         let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sky"), source: wgpu::ShaderSource::Wgsl(include_str!("sky.wgsl").into()) });
         let sky_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("sky"), entries: &[
@@ -251,7 +280,7 @@ impl Renderer {
             label: None, size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &rgba).create_view(&Default::default());
-        let (white, flat, rma) = (pixel([255; 4]), pixel([128, 128, 153, 255]), [pixel([153, 0, 255, 0]), pixel([0, 255, 0, 255])]);
+        let (white, flat, rma, none2d) = (pixel([255; 4]), pixel([128, 128, 153, 255]), [pixel([153, 0, 255, 0]), pixel([0, 255, 0, 255])], pixel([0, 0, 0, 255]));
         let clamp = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::FilterMode::Linear, ..Default::default()
         });
@@ -260,7 +289,7 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&white, &white, &white, &white], [&none, &none, &none], &[BakedLight::default()]);
-        Ok(Renderer { none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, adapter: format!("{} ({:?})", info.name, info.backend) })
+        Ok(Renderer { blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -424,8 +453,8 @@ impl Renderer {
         Ok(ProbeVolume { place, lighting: lightmaps })
     }
 
-    /// A material's bind group, and whether it's drawn at all.
-    fn material(&self, content: &dyn Files, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, bool) {
+    /// A material's bind group, and how it's drawn (none: not yet).
+    fn material(&self, content: &dyn Files, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, Option<Kind>) {
         let key = crate::fs::normal(name);
         if let Some((g, drawn, n)) = self.materials.lock().unwrap().get(&key) { notes.extend(n.iter().cloned()); return (g.clone(), *drawn); }
         let mut own = Vec::new();
@@ -435,13 +464,34 @@ impl Renderer {
         (g, drawn)
     }
 
-    fn read_material(&self, content: &dyn Files, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, bool) {
+    fn read_material(&self, content: &dyn Files, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, Option<Kind>) {
         let m = content.compiled(name).ok_or_else(|| format!("{name}: not found")).and_then(|r| material::read(&r));
         let m = m.unwrap_or_else(|e| { notes.push(e); Default::default() });
         let mut tex = |param: &str, srgb: bool, default: &wgpu::TextureView| match m.textures.get(param) {
             Some(t) => self.texture(content, t, srgb).unwrap_or_else(|e| { notes.push(e); default.clone() }),
             None => default.clone(),
         };
+        let flag = |b: bool| b as i32 as f32;
+        if m.shader.contains("glass") {
+            // glass.shader: its colour (alpha how opaque, for cheap glass), a
+            // plain normal (alpha a tint mask), roughness, metalness, occlusion
+            let tint = m.vector("g_flTintColor", [1.0; 4]);
+            let cheap = m.int("F_CHEAP_GLASS") != 0;
+            let uniform = MaterialUniform {
+                tint: [tint[0], tint[1], tint[2], 1.0],
+                blend: [0.5, 0.5, m.float("g_flRoughnessScaleFactor", 1.0), 0.0],
+                extra: [m.float("g_flBlurAmount", 0.0), m.float("AlbedoAbsorption", 0.0), flag(cheap), 0.0],
+                ..bytemuck::Zeroable::zeroed()
+            };
+            let views = [tex("g_tColor", true, &self.white), tex("g_tNormal", false, &self.flat), tex("g_tRma", false, &self.rma[0])];
+            let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(name), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
+            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(name), layout: &self.glass_layout, entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                at(1, &views[0]), at(4, &views[1]), at(2, &views[2]),
+            ] });
+            return (group, Some(if cheap { Kind::CheapGlass } else { Kind::Glass }));
+        }
         let blendable = m.shader.contains("blendable");
         // blendable's layers (F_MULTIBLEND: 0 one, 1 two, 2 three), and how its textures are packed
         let version = m.shader_version.clamp(0, 1) as usize;
@@ -452,9 +502,10 @@ impl Renderer {
              tex("g_tColorB", true, &self.white), tex("g_tNormalB", false, &self.flat), tex("g_tRmaB", false, rma),
              tex("g_tColorC", true, &self.white), tex("g_tNormalC", false, &self.flat), tex("g_tRmaC", false, rma)]
         } else {
-            // its tint mask where blendable has layer B's colour
+            // its tint mask, self-illumination mask and metalness where
+            // blendable has layer B's colour, normal and g_tRma
             [tex("g_tColor", true, &self.white), tex("g_tAmbientOcclusion", false, &self.white), tex("g_tNormal", false, &self.flat),
-             tex("g_tTintMask", false, &self.white), self.flat.clone(), self.white.clone(),
+             tex("g_tTintMask", false, &self.white), tex("g_tSelfIllumMask", true, &self.none2d), tex("g_tMetalness", false, &self.white),
              self.white.clone(), self.flat.clone(), self.white.clone()]
         };
         let has_normal = m.textures.keys().any(|t| t.starts_with("g_tNormal"));
@@ -465,15 +516,27 @@ impl Renderer {
         };
         let (scale_b, scale_c) = (m.vector("g_vTexCoordScale2", [1.0; 4]), m.vector("g_vTexCoordScale3", [1.0; 4]));
         let alpha_test = if m.int("F_ALPHA_TEST") != 0 { m.float("g_flAlphaTestReference", 0.5) } else { 0.0 };
-        let flag = |b: bool| b as i32 as f32;
+        let translucent = !blendable && m.int("F_TRANSLUCENT") != 0;
+        // metalness: from g_tMetalness where it has one, else the colour's alpha
+        let metal_from = if m.int("F_METALNESS_TEXTURE") == 0 { 0.0 } else if m.textures.contains_key("g_tMetalness") { 2.0 } else { 1.0 };
+        // its glow (vr_shared_standard_ps_code.fxc): 2^brightness, scale, tint (sRGB)
+        let illum = !blendable && m.int("F_SELF_ILLUM") != 0;
+        let glow = {
+            let t = m.vector("g_vSelfIllumTint", [1.0; 4]);
+            let k = 2f32.powf(m.float("g_flSelfIllumBrightness", 0.0)) * m.float("g_flSelfIllumScale", 1.0).clamp(0.0, 1.0);
+            let lin = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+            [lin(t[0]) * k, lin(t[1]) * k, lin(t[2]) * k, m.float("g_flSelfIllumAlbedoFactor", 1.0)]
+        };
         let uniform = MaterialUniform {
             tint: [tint[0], tint[1], tint[2], 1.0],
-            params: [alpha_test, m.float("g_flMetalness", 0.0), flag(m.int("F_METALNESS_TEXTURE") != 0), flag(has_normal)],
+            params: [alpha_test, m.float("g_flMetalness", 0.0), metal_from, flag(has_normal)],
             mode: [layers as f32, flag(m.int("F_TINT_MASK") != 0), flag(if blendable { m.int("F_USE_TINT_MASKS_IN_VERTEX_PAINT") != 0 } else { m.int("F_PAINT_VERTEX_COLORS") != 0 }), version as f32],
             tint_b: [tint_b[0], tint_b[1], tint_b[2], 1.0],
-            tint_c: [tint_c[0], tint_c[1], tint_c[2], 1.0],
+            // complex's glow where blendable has layer C's tint
+            tint_c: if illum { glow } else { [tint_c[0], tint_c[1], tint_c[2], 1.0] },
             blend: [m.float("g_flBlendSoftnessB", 0.5), m.float("g_flBlendSoftnessC", 0.5), m.float("g_flRoughnessScaleFactor", 1.0), 0.0],
             scale: [scale_b[0], scale_b[1], scale_c[0], scale_c[1]],
+            extra: [if translucent { m.float("g_flOpacityScale", 1.0).max(1e-3) } else { 0.0 }, 0.0, 0.0, flag(illum)],
         };
         let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(name), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(name), layout: &self.material_layout, entries: &[
@@ -482,9 +545,9 @@ impl Renderer {
             at(1, &views[0]), at(2, &views[1]), at(4, &views[2]), at(5, &views[3]), at(6, &views[4]), at(7, &views[5]),
             at(9, &views[6]), at(10, &views[7]), at(11, &views[8]),
         ] });
-        // translucent and decal materials wait for their own pass
-        let drawn = !(m.int("F_TRANSLUCENT") != 0 || m.int("F_DECAL") != 0 || m.shader.contains("glass"));
-        (group, drawn)
+        // decals wait for their own pass
+        let kind = if m.int("F_DECAL") != 0 || m.shader.contains("overlay") { None } else if translucent { Some(Kind::Blend) } else { Some(Kind::Opaque) };
+        (group, kind)
     }
 
     /// A model (`models/x.vmdl`) read from `content` onto the GPU.
@@ -523,9 +586,9 @@ impl Renderer {
             let draws = m.draws.iter().filter_map(|d| {
                 let len = index_lists.get(d.index_buffer)?.len();
                 if d.vertex_buffer >= vertices.len() { return None; }
-                let (material, drawn) = self.material(content, &d.material, &mut notes);
+                let (material, kind) = self.material(content, &d.material, &mut notes);
                 let end = (d.start_index + d.index_count).min(len);
-                drawn.then(|| GpuDraw { vertex_buffer: d.vertex_buffer, index_buffer: d.index_buffer, range: d.start_index as u32..end as u32, base_vertex: d.base_vertex as i32, material })
+                kind.map(|kind| GpuDraw { vertex_buffer: d.vertex_buffer, index_buffer: d.index_buffer, range: d.start_index as u32..end as u32, base_vertex: d.base_vertex as i32, material, kind })
             }).collect();
             let indices = index_lists.iter().map(|i| self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(i), usage: wgpu::BufferUsages::INDEX })).collect();
             out.push(GpuMesh { vertices, indices, draws });
@@ -586,6 +649,19 @@ impl Renderer {
         let msaa = target(COLOR, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
         let resolved = target(COLOR, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
         let depth = target(DEPTH, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
+        // what's drawn over what's behind it, farthest first
+        let mut later: Vec<(f32, usize, usize, usize)> = Vec::new();
+        for (k, o) in objects.iter().enumerate() {
+            let at = o.transform.transform_point3((o.model.min + o.model.max) * 0.5).distance_squared(view.eye);
+            for (mi, m) in o.model.meshes.iter().enumerate() {
+                for (di, dr) in m.draws.iter().enumerate() {
+                    if dr.kind != Kind::Opaque { later.push((at, k, mi, di)); }
+                }
+            }
+        }
+        later.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let store = if later.is_empty() { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store };
+        let resolved_view = resolved.create_view(&Default::default());
         let mut encoder = d.create_command_encoder(&Default::default());
         {
             let [r, g, b, a] = view.clear;
@@ -593,10 +669,10 @@ impl Renderer {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &msaa,
-                    resolve_target: Some(&resolved.create_view(&Default::default())),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store: wgpu::StoreOp::Discard },
+                    resolve_target: Some(&resolved_view),
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }), stencil_ops: None }),
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store }), stencil_ops: None }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
@@ -612,13 +688,50 @@ impl Renderer {
                 pass.set_bind_group(2, group, &[]);
                 pass.set_bind_group(3, &lit(o).1.group, &[]);
                 for m in &o.model.meshes {
-                    for d in &m.draws {
+                    for d in m.draws.iter().filter(|d| d.kind == Kind::Opaque) {
                         pass.set_vertex_buffer(0, m.vertices[d.vertex_buffer].slice(..));
                         pass.set_index_buffer(m.indices[d.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
                         pass.set_bind_group(1, &d.material, &[]);
                         pass.draw_indexed(d.range.clone(), d.base_vertex, 0..1);
                     }
                 }
+            }
+        }
+        if !later.is_empty() {
+            // what's been drawn, for glass to see through, then what's left over it
+            let behind = target(COLOR, 1, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
+            encoder.copy_texture_to_texture(resolved.as_image_copy(), behind.as_image_copy(), wgpu::Extent3d { width, height, depth_or_array_layers: 1 });
+            let glass_view = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("glass view"), layout: &self.glass_view_layout, entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() },
+                at(1, &behind.create_view(&Default::default())),
+            ] });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &msaa,
+                    resolve_target: Some(&resolved_view),
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard }), stencil_ops: None }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            for &(_, k, mi, di) in &later {
+                let (o, m) = (&objects[k], &objects[k].model.meshes[mi]);
+                let dr = &m.draws[di];
+                let (pipeline, view_group) = match dr.kind {
+                    Kind::Blend => (&self.blend_pipeline, &view_group),
+                    Kind::Glass => (&self.glass_pipeline, &glass_view),
+                    _ => (&self.cheap_glass_pipeline, &glass_view),
+                };
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, view_group, &[]);
+                pass.set_bind_group(1, &dr.material, &[]);
+                pass.set_bind_group(2, &object_groups[k], &[]);
+                pass.set_bind_group(3, &lit(o).1.group, &[]);
+                pass.set_vertex_buffer(0, m.vertices[dr.vertex_buffer].slice(..));
+                pass.set_index_buffer(m.indices[dr.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(dr.range.clone(), dr.base_vertex, 0..1);
             }
         }
         // read it back, a row at a time as copies align them
@@ -893,6 +1006,24 @@ mod tests {
         assert_eq!(choose(50.0, 1.0), Some(1), "inside both: the higher priority");
         assert_eq!(choose(245.0, 10.0), Some(2), "inside none: the nearest it touches");
         assert_eq!(choose(200.0, 1.0), None, "inside none, touching none");
+    }
+
+    /// The microwave from sbox.game (tools/package.sh facepunch.microwave),
+    /// if this machine has it: its window is glass, drawn over what's
+    /// behind it (its inside), seen through, darker than the white body.
+    #[test]
+    fn a_window_is_glass() {
+        let Ok(dir) = std::env::var("ENGINE2_CONTENT") else { return };
+        let content = super::Content(vec![dir.into()], Vec::new());
+        use super::Files;
+        if content.read("models/props/microwave/microwave.vmdl_c").is_none() { return; }
+        let Ok(r) = super::Renderer::new() else { eprintln!("no adapter: skipped"); return };
+        let m = r.model(&content, "models/props/microwave/microwave.vmdl").unwrap();
+        let kinds: Vec<super::Kind> = m.meshes.iter().flat_map(|x| x.draws.iter().map(|d| d.kind)).collect();
+        eprintln!("{kinds:?}");
+        assert!(kinds.contains(&super::Kind::Glass), "its window");
+        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None }], &super::View::framing(&m, 0.0, 0.0), 128, 128);
+        assert!(image.chunks_exact(4).filter(|p| p[3] > 0).count() > 128 * 128 / 4, "it fills the frame");
     }
 
     /// The TV from sbox.game (tools/package.sh facepunch.tv), if this
