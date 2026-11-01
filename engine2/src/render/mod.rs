@@ -160,6 +160,9 @@ pub struct Renderer {
     empty: wgpu::BindGroup,
     glass_pipeline: wgpu::RenderPipeline,
     cheap_glass_pipeline: wgpu::RenderPipeline,
+    /// the frame exposed and tonemapped (tonemap.wgsl)
+    tonemap_pipeline: wgpu::RenderPipeline,
+    tonemap_layout: wgpu::BindGroupLayout,
     glass_view_layout: wgpu::BindGroupLayout,
     glass_layout: wgpu::BindGroupLayout,
     view_layout: wgpu::BindGroupLayout,
@@ -193,7 +196,9 @@ pub struct Renderer {
     pub adapter: String,
 }
 
-const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// The frame as it's drawn (linear, HDR), and as it's shown (tonemapped)
+const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const SHOWN: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SAMPLES: u32 = 4;
 /// the sun's shadow map's size, and how far from the eye what casts into it may be
@@ -285,6 +290,19 @@ impl Renderer {
         let blend_pipeline = make("translucent", &layout, "fs_main", Some(wgpu::BlendState::ALPHA_BLENDING), false);
         let glass_pipeline = make("glass", &glass_pipeline_layout, "fs_glass", None, false);
         let cheap_glass_pipeline = make("cheap glass", &glass_pipeline_layout, "fs_glass", Some(wgpu::BlendState::ALPHA_BLENDING), false);
+        let tonemap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("tonemap"), source: wgpu::ShaderSource::Wgsl(include_str!("tonemap.wgsl").into()) });
+        let tonemap_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("tonemap"), entries: &[uniform(0, wgpu::ShaderStages::FRAGMENT), tex(1)] });
+        let tonemap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("tonemap"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&tonemap_layout], push_constant_ranges: &[] })),
+            vertex: wgpu::VertexState { module: &tonemap_shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
+            fragment: Some(wgpu::FragmentState { module: &tonemap_shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(SHOWN.into())] }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview: None,
+            cache: None,
+        });
         // the sky: a triangle over the screen, its cube looked up per pixel, behind everything
         let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sky"), source: wgpu::ShaderSource::Wgsl(include_str!("sky.wgsl").into()) });
         let sky_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("sky"), entries: &[
@@ -321,7 +339,7 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&none, &none, &none, &none], &[BakedLight::default()]);
-        Ok(Renderer { empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
+        Ok(Renderer { tonemap_pipeline, tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -718,7 +736,7 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[],
         });
         let msaa = target(COLOR, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
-        let resolved = target(COLOR, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        let resolved = target(COLOR, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING);
         let depth = target(DEPTH, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
         // what's drawn over what's behind it, farthest first
         let mut later: Vec<(f32, usize, usize, usize)> = Vec::new();
@@ -833,6 +851,49 @@ impl Renderer {
                 pass.draw_indexed(dr.range.clone(), dr.base_vertex, 0..1);
             }
         }
+        // its exposure: as asked, or from what's been drawn
+        let debug = std::env::var("RENDER_DEBUG").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0) != 0.0;
+        let exposure = match view.exposure {
+            Exposure::Fixed(e) => e,
+            Exposure::Auto { min, max, compensation } => {
+                let row = (width * 8).div_ceil(256) * 256;
+                let readback = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * height) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+                encoder.copy_texture_to_buffer(resolved.as_image_copy(), wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(height) } }, wgpu::Extent3d { width, height, depth_or_array_layers: 1 });
+                self.queue.submit([std::mem::replace(&mut encoder, d.create_command_encoder(&Default::default())).finish()]);
+                let slice = readback.slice(..);
+                slice.map_async(wgpu::MapMode::Read, |_| {});
+                let _ = d.poll(wgpu::PollType::Wait);
+                let data = slice.get_mapped_range();
+                let h = |at: usize| crate::assets::mesh::half(u16::from_le_bytes([data[at], data[at + 1]]));
+                // every other pixel that's drawn on (not the clear of a model's frame)
+                let mut lum: Vec<f32> = (0..height as usize).step_by(2).flat_map(|y| (0..width as usize).step_by(2).map(move |x| y * row as usize + x * 8))
+                    .filter(|&at| h(at + 6) > 0.0)
+                    .map(|at| 0.2126 * h(at) + 0.7152 * h(at + 2) + 0.0722 * h(at + 4))
+                    .filter(|l| l.is_finite())
+                    .collect();
+                auto_exposure(&mut lum, min, max, compensation)
+            }
+        };
+        let shown = target(SHOWN, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        {
+            let curve = match view.tonemap { Tonemap::Linear => 0.0, Tonemap::Hable => 1.0, Tonemap::Aces => 2.0, Tonemap::ReinhardJodie => 3.0, Tonemap::Agx => 4.0 };
+            let u = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("tonemap"), contents: bytemuck::cast_slice(&[exposure, curve, debug as i32 as f32, 0.0]), usage: wgpu::BufferUsages::UNIFORM });
+            let group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("tonemap"), layout: &self.tonemap_layout, entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: u.as_entire_binding() },
+                at(1, &resolved_view),
+            ] });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("tonemap"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &shown.create_view(&Default::default()), resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.tonemap_pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        let resolved = shown;
         // read it back, a row at a time as copies align them
         let row = (width * 4).div_ceil(256) * 256;
         let readback = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * height) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
@@ -885,6 +946,9 @@ pub struct View {
     pub lightmaps: Option<Arc<Lightmaps>>,
     /// its light probe volumes, for everything else
     pub probes: Vec<Arc<ProbeVolume>>,
+    /// how it's brought into what a screen shows
+    pub tonemap: Tonemap,
+    pub exposure: Exposure,
 }
 
 /// A light a map's lightmaps name by its bake index (managed's
@@ -1054,6 +1118,55 @@ impl ProbeVolume {
     }
 }
 
+/// How a frame's light is brought into what a screen shows: s&box's
+/// Tonemapping post-process's curves (Hable's filmic its default).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Tonemap {
+    Linear,
+    Hable,
+    Aces,
+    ReinhardJodie,
+    Agx,
+}
+
+impl Tonemap {
+    pub fn named(name: &str) -> Option<Tonemap> {
+        Some(match name.to_ascii_lowercase().as_str() {
+            "linear" => Tonemap::Linear,
+            "hable" | "hablefilmic" | "filmic" => Tonemap::Hable,
+            "aces" => Tonemap::Aces,
+            "reinhard" | "reinhardjodie" => Tonemap::ReinhardJodie,
+            "agx" => Tonemap::Agx,
+            _ => return None,
+        })
+    }
+}
+
+/// How bright a frame is shown: a scale, or chosen from the frame as
+/// s&box's auto exposure chooses it, within its range (1 to 3 by default),
+/// `compensation` stops more or less.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Exposure {
+    Fixed(f32),
+    Auto { min: f32, max: f32, compensation: f32 },
+}
+
+impl Default for Exposure {
+    fn default() -> Exposure { Exposure::Auto { min: 1.0, max: 3.0, compensation: 0.0 } }
+}
+
+/// The exposure Source's tonemapper settles on for a frame of these
+/// luminances (its defaults, mat_tonemap_percent_bright_pixels 2 and
+/// mat_tonemap_percent_target 60): what puts the pixel 2% of them are
+/// brighter than at 60% of white, within the range. None drawn: 1.
+fn auto_exposure(lum: &mut [f32], min: f32, max: f32, compensation: f32) -> f32 {
+    if lum.is_empty() { return 1.0; }
+    let k = ((lum.len() as f32) * 0.98) as usize;
+    let k = k.min(lum.len() - 1);
+    let (_, bright, _) = lum.select_nth_unstable_by(k, |a, b| a.total_cmp(b));
+    (0.6 / bright.max(1e-4)).clamp(min, max) * 2f32.powf(compensation)
+}
+
 /// A sky on the GPU (Renderer::sky).
 pub struct Sky {
     group: wgpu::BindGroup,
@@ -1076,6 +1189,8 @@ impl View {
             sky_rotation: glam::Quat::IDENTITY,
             lightmaps: None,
             probes: Vec::new(),
+            tonemap: Tonemap::Hable,
+            exposure: Exposure::default(),
         }
     }
 
@@ -1087,13 +1202,26 @@ impl View {
         let fov = 30f32.to_radians();
         let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
         let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new() }
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default() }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use glam::{Mat4, Vec3};
+
+    /// Source's auto exposure: the pixel 2% are brighter than goes to 60%
+    /// of white, within s&box's range (1 to 3).
+    #[test]
+    fn a_frame_is_exposed_as_source_exposes_it() {
+        // 98 of 100 pixels at 0.1, two at 1: the 98th is 0.4 (0.6 / 0.4)
+        let mut lum: Vec<f32> = (0..100).map(|i| if i < 97 { 0.1 } else { 0.4 }).collect();
+        assert!((super::auto_exposure(&mut lum, 1.0, 3.0, 0.0) - 1.5).abs() < 1e-5);
+        assert_eq!(super::auto_exposure(&mut vec![0.05; 100], 1.0, 3.0, 0.0), 3.0, "a dark frame: as bright as it may be");
+        assert_eq!(super::auto_exposure(&mut vec![5.0; 100], 1.0, 3.0, 0.0), 1.0, "a bright one: never below 1");
+        assert_eq!(super::auto_exposure(&mut vec![5.0; 100], 1.0, 3.0, 1.0), 2.0, "a stop more");
+        assert_eq!(super::auto_exposure(&mut [], 1.0, 3.0, 0.0), 1.0, "nothing drawn");
+    }
 
     /// As s&box's own test of it (BakedLightTests.LightProbeVolumeIsChosenAsNativeChoosesIt).
     #[test]
@@ -1126,6 +1254,8 @@ mod tests {
         let mut view = super::View::camera(Vec3::new(-560.0, 560.0, 400.0), [89.9, 0.0, 0.0], 60.0, 4.0, 40000.0, 1.0);
         view.sun = Some((sun.towards, sun.color));
         view.lightmaps = r.lightmaps(&content, "maps/flatgrass", &lights).unwrap().map(std::sync::Arc::new);
+        // one exposure for both frames
+        view.exposure = super::Exposure::Fixed(1.0);
         let world: Vec<(super::Model, Mat4)> = crate::assets::worldnode::scene_objects("maps/flatgrass", |p| content.read(p)).into_iter().filter_map(|(name, rows, _)| {
             let m = r.model(&content, &name).ok()?;
             Some((m, Mat4::from_cols_array_2d(&[[rows[0][0], rows[1][0], rows[2][0], 0.0], [rows[0][1], rows[1][1], rows[2][1], 0.0], [rows[0][2], rows[1][2], rows[2][2], 0.0], [rows[0][3], rows[1][3], rows[2][3], 1.0]])))
@@ -1146,7 +1276,7 @@ mod tests {
         let with = r.draw(&objects, &view, size as u32, size as u32);
         let (b0, f0, b1, f1) = (luma(&bare, behind), luma(&bare, before), luma(&with, behind), luma(&with, before));
         eprintln!("without the drum: far side {b0:.0}, near side {f0:.0}; with it: {b1:.0}, {f1:.0}");
-        assert!(b0 > 120.0 && f0 > 120.0, "sunlit pavement either side");
+        assert!(b0 > f0 * 0.6, "sunlit pavement either side");
         assert!(b1 < b0 * 0.6, "its shadow behind it");
         assert!((f1 - f0).abs() < 10.0, "none before it");
     }

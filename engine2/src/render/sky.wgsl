@@ -49,6 +49,6 @@ fn fs_main(i: Out) -> @location(0) vec4<f32> {
     // its top mip: where a quad of pixels straddles two of the cube's faces
     // the derivatives jump, and a mip chosen from them is a line of the
     // smallest (a pixel is about a texel of it anyway)
-    let c = textureSampleLevel(cube, samp, dir, 0.0).rgb * sky.params.x * view.eye.w;
-    return vec4<f32>(clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    let c = textureSampleLevel(cube, samp, dir, 0.0).rgb * sky.params.x;
+    return vec4<f32>(c, 1.0);
 }

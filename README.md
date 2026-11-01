@@ -555,9 +555,16 @@ material (`sky.shader`) names a cube texture, HDR in BC6H, kept in
 Source 2's own axes (z up) and turned as the sky object is (a map's
 `env_sky` turns it). Materials are one object per name, which answers
 its name and its shader (`GetString("shader")`, read from the file: a
-sky material is only taken as one if its shader is a sky's). Exposure
-is 1, the least s&box's default auto exposure gives; a filmic curve
-(ACES) brings the light down.
+sky material is only taken as one if its shader is a sky's). The frame
+is drawn in linear HDR, then exposed and tonemapped as s&box's
+Tonemapping post-process does (`tonemapping.shader`, public): Hable's
+filmic curve, its default, after Source's auto exposure (what puts the
+pixel 2% of them are brighter than at 60% of white, within s&box's
+default range, 1 to 3). A headless player has no tonemap system of its
+own (managed makes none without graphics), so these are s&box's defaults;
+`render` takes `RENDER_TONEMAP` (hable, aces, agx, reinhard, linear) and
+`RENDER_EXPOSURE` (a scale). With them flatgrass's grass is the olive of
+Facepunch's screenshots, where the fixed ACES curve before made it pale.
 
 Measured: the headless player of Sandbox on flatgrass (with the map
 package's materials beside its pak, `ENGINE2_CONTENT`), its watcher
@@ -569,9 +576,10 @@ glow in it where the light comes from; the roof of the spawn building,
 its scaffolding, the grass to the horizon, and the physgun in the
 player's hand, posed by its animation graph. What isn't drawn yet:
 local lights' shadows from what moves (the sun's are drawn, below),
-particles, decals and the UI. A headless player has no tonemapper
-(`Graphics.IsAvailable` is false with the empty render device), so the
-watcher turns auto exposure off for its frames.
+particles, decals and the UI. A headless player has no tonemapper of
+managed's (`Graphics.IsAvailable` is false with the empty render device):
+the watcher's turning auto exposure off reaches nothing, and frames are
+exposed as s&box's defaults would expose them (above).
 
 **A map is lit as it was baked.** A map compiled with baked lighting
 (flatgrass is: `m_worldLightingInfo` in its `world.vwrld_c`) is lit from
@@ -606,8 +614,9 @@ sbox-public's `game/core/shaders`):
 Measured (`cargo test`, through the slots, as managed calls them, with
 `ENGINE2_SAMPLE_MAP` naming flatgrass's pak and `ENGINE2_CONTENT` its
 materials): looking straight down at the hall's north wall, the ground in
-its shadow reads 54 and the sunlit grass beside it 166; with no light
-given the sun's index, 54 and 65 (only the light that bounced). All 27
+its shadow reads 35 and the sunlit grass beside it 88; with no light
+given the sun's index, 63 and 71 (only the light that bounced; each frame
+exposed on its own, so the darker one is brightened). All 27
 of its probe volumes are built from what managed sets on them, and a
 point in the hall is lit by the hall's own volume rather than the
 map-wide one. Inside the hall, props are lit by its lamps and the light
@@ -629,8 +638,8 @@ what moves and on the map, its baked sun too. Only what isn't the map's
 casts into it: a map's own objects were there when it was baked, so
 their shadows are in its lightmaps (as s&box's cascades leave a baked
 sun's static casters out). Measured (`cargo test`, flatgrass and the oil
-drum): the pavement on the far side of a drum from the sun goes from 157
-to 58, the near side stays 191.
+drum, at a fixed exposure): the pavement on the far side of a drum from
+the sun goes from 82 to 37, the near side stays 103.
 
 **Glass, translucency and glow**, as `glass.shader` and
 `vr_shared_standard_ps_code.fxc` (both public) draw them. What's opaque is

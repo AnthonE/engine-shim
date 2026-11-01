@@ -369,7 +369,8 @@ mod tests {
     /// managed's map loader does, a camera looking straight down at the
     /// edge of a building's shadow (flatgrass's, north of its hall). The
     /// shadow is in the lightmaps alone: the ground in it is dark, beside
-    /// it sunlit; and dark everywhere when no light has the sun's index.
+    /// it sunlit; and hardly darker than beside it when no light has the
+    /// sun's index (each frame exposed on its own, as s&box would).
     #[test]
     fn a_map_is_lit_by_its_lightmaps() {
         let Ok(path) = std::env::var("ENGINE2_SAMPLE_MAP") else { return };
@@ -405,12 +406,12 @@ mod tests {
         };
         let (dark, lit) = frame();
         eprintln!("unindexed: shadow {dark:.0}, grass {lit:.0}");
-        assert!(lit < 120.0, "no light has the sun's index: no sun on the grass ({lit:.0})");
+        // (each frame exposed as s&box would expose it: compare within one)
+        assert!(dark > lit * 0.75, "no light has the sun's index: no sun on the grass, so hardly a shadow ({dark:.0} against {lit:.0})");
         unsafe { crate::impls::CScnLghtbjct_SetBakeLightIndex(sun, lights.iter().find(|l| l.sun).map(|l| l.index as i32).unwrap()) };
         let (dark, lit) = frame();
         eprintln!("the sun baked: shadow {dark:.0}, grass {lit:.0}");
-        assert!(lit > 140.0, "the sun on the grass ({lit:.0})");
-        assert!(dark < lit * 0.5, "the hall's shadow on the ground ({dark:.0} against {lit:.0})");
+        assert!(dark < lit * 0.5, "the sun on the grass, and the hall's shadow on the ground ({dark:.0} against {lit:.0})");
 
         // its light probe volumes, made as managed's map loader makes them
         // (SceneLightProbe): the one in the hall lights what's in the hall

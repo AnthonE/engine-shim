@@ -63,7 +63,8 @@ fn half_at(b: &[u8], at: usize) -> f32 {
     b.get(at..at + 2).map(|x| half(u16::from_le_bytes(x.try_into().unwrap()))).unwrap_or(0.0)
 }
 
-fn half(h: u16) -> f32 {
+/// A half-precision float.
+pub fn half(h: u16) -> f32 {
     let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
     let exp = ((h >> 10) & 0x1f) as i32;
     let frac = (h & 0x3ff) as f32;

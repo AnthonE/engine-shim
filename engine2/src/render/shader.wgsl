@@ -211,7 +211,8 @@ fn sky(d: vec3<f32>, rough: f32) -> vec3<f32> {
     return mix(view.ground.rgb, view.sky.rgb, up);
 }
 
-// a filmic curve (ACES, as Narkowicz fits it), so the sun's highlights roll off
+// what RENDER_DEBUG shows of a light, brought into range (the frame's own
+// tonemap passes debug views through as they are)
 fn tonemap(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
 }
@@ -505,7 +506,7 @@ fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32>
     let l = light(i, n, s);
     let d = debug_view(s, n, l);
     if (d.a > 0.0) { return d; }
-    return vec4<f32>(tonemap((l.color + glow) * view.eye.w), alpha);
+    return vec4<f32>(l.color + glow, alpha);
 }
 
 @fragment
@@ -530,7 +531,7 @@ fn fs_glass(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32
         // cheap glass: lit as it is, over what's behind it
         s.base = albedo;
         let l = light(i, n, s);
-        return vec4<f32>(tonemap(l.color * view.eye.w), color.a);
+        return vec4<f32>(l.color, color.a);
     }
     // what's behind, less what it reflects, through its colour; its own
     // colour only as much as it absorbs (glass.shader's AlbedoAbsorption)
@@ -558,5 +559,5 @@ fn fs_glass(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32
     let l = light(i, n, s);
     let d = debug_view(s, n, l);
     if (d.a > 0.0) { return d; }
-    return vec4<f32>(through + tonemap(l.color * view.eye.w), 1.0);
+    return vec4<f32>(through + l.color, 1.0);
 }

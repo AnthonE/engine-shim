@@ -11,11 +11,18 @@ fn main() {
     let content = Content::of(std::env::var("ENGINE2_CONTENT").unwrap_or_default().split(':').filter(|d| !d.is_empty()).map(Into::into));
     let num = |i: usize, d: f32| args.get(i).and_then(|a| a.parse().ok()).unwrap_or(d);
     let r = Renderer::new().unwrap_or_else(|e| fail(&e));
+    // RENDER_TONEMAP: hable (s&box's default), aces, agx, reinhard, linear;
+    // RENDER_EXPOSURE: a scale, or auto (s&box's default: 1 to 3)
+    let tone = |v: &mut View| {
+        if let Some(t) = std::env::var("RENDER_TONEMAP").ok().and_then(|t| engine2::render::Tonemap::named(&t)) { v.tonemap = t; }
+        if let Some(e) = std::env::var("RENDER_EXPOSURE").ok().and_then(|e| e.parse::<f32>().ok()) { v.exposure = engine2::render::Exposure::Fixed(e); }
+    };
     let t = std::time::Instant::now();
     if args.get(1).map(String::as_str) == Some("map") {
         let (Some(folder), Some(out)) = (args.get(2), args.get(3)) else { usage() };
         let (w, h) = (num(9, 960.0) as u32, num(10, 540.0) as u32);
         let mut view = View::camera(Vec3::new(num(4, 0.0), num(5, 0.0), num(6, 64.0)), [num(7, 0.0), num(8, 0.0), 0.0], 75.0, 4.0, 40000.0, w as f32 / h as f32);
+        tone(&mut view);
         // the map's sun and sky, as its entities name them
         for e in lump(&content, folder) {
             let get = |k: &str| e.get(engine2::string_token(k)).map(str::to_string);
@@ -99,7 +106,7 @@ fn main() {
     let m = r.model(&content, model).unwrap_or_else(|e| fail(&e));
     let loaded = t.elapsed();
     let size = num(5, 768.0) as u32;
-    let image = r.draw(&[Instance { model: &m, transform: Default::default(), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None }], &View::framing(&m, num(3, 35.0), num(4, 20.0)), size, size);
+    let image = r.draw(&[Instance { model: &m, transform: Default::default(), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None }], &{ let mut v = View::framing(&m, num(3, 35.0), num(4, 20.0)); tone(&mut v); v }, size, size);
     png(std::path::Path::new(out), size, size, &image).unwrap_or_else(|e| fail(&e));
     eprintln!("{model} on {}: bounds {:?}..{:?}, loaded in {loaded:.2?}, drawn in {:.2?}", r.adapter, m.min, m.max, t.elapsed() - loaded);
     for n in &m.notes { eprintln!("  {n}"); }
