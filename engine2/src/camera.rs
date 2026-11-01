@@ -180,6 +180,20 @@ mod draw {
         g
     }
 
+    /// A model built at runtime on the GPU (its meshes: rendermesh.rs), made
+    /// again whenever managed has written to their buffers since.
+    fn gpu_runtime_model(r: &Renderer, model: usize, meshes: &[usize]) -> Option<Arc<Model>> {
+        static M: OnceLock<Mutex<HashMap<usize, (u64, Option<Arc<Model>>)>>> = OnceLock::new();
+        let m = M.get_or_init(Default::default);
+        let version = crate::rendermesh::version(meshes);
+        if let Some((v, g)) = m.lock().unwrap().get(&model) { if *v == version { return g.clone(); } }
+        let drawn = crate::rendermesh::for_drawing(meshes, |mat| super::material_name(mat).unwrap_or_default());
+        let g = r.model_of(&EngineFiles, &format!("a model built at runtime ({model:#x})"), &drawn).map_err(|e| crate::trace::note(&format!("render: {e}"))).ok().map(Arc::new);
+        if let Some(g) = &g { for n in &g.notes { crate::trace::note(&format!("render: {n}")); } }
+        m.lock().unwrap().insert(model, (version, g.clone()));
+        g
+    }
+
     fn mat(x: &crate::animation::Xf) -> Mat4 {
         Mat4::from_scale_rotation_translation(
             Vec3::new(x.scale.x, x.scale.y, x.scale.z),
@@ -268,8 +282,12 @@ mod draw {
             for obj in crate::handles::made_with("SceneObject", world) {
                 if !super::shown(obj) { continue; }
                 let model = crate::animation::model_of(obj);
-                let Some(name) = crate::models::name_of(model) else { continue };
-                let Some(g) = gpu_model(r, &name) else { continue };
+                let g = match (crate::models::name_of(model), crate::models::meshes_of(model)) {
+                    (Some(name), _) => gpu_model(r, &name),
+                    (None, Some(meshes)) => gpu_runtime_model(r, model, &meshes),
+                    _ => None,
+                };
+                let Some(g) = g else { continue };
                 let m = mat(&crate::animation::Xf::from_managed(&crate::state::get::<S_Transform>(obj, PROP_Transform)));
                 let tint = crate::state::get::<S_Vector4>(obj, PROP_TintRGBA).f__vec;
                 let tint = if tint.f_X + tint.f_Y + tint.f_Z + tint.f_W == 0.0 { [1.0; 4] } else { [tint.f_X, tint.f_Y, tint.f_Z, tint.f_W] };

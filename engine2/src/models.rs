@@ -249,7 +249,166 @@ pub fn build(builder: usize) -> usize {
     let copy = m.bodies(physics).cloned();
     drop(m);
     let physics = copy.map(|b| make(Obj::Bodies(b))).unwrap_or(0);
-    make(Obj::Model { physics, file: None })
+    let draft = drafts().remove(&builder);
+    let Some(draft) = draft.filter(|d| !d.is_empty()) else { return make(Obj::Model { physics, file: None }) };
+    let meshes: Vec<usize> = draft.meshes.iter().map(|m| m.0).collect();
+    let model = from_file(physics, Some(draft.file()));
+    if !meshes.is_empty() { runtime_meshes().insert(model, meshes); }
+    model
+}
+
+// ---- what a builder is given besides collision: render meshes, bones,
+// attachments, mesh groups, hitboxes (rendermesh.rs holds the meshes)
+
+/// A hitbox as managed describes it to a builder (CBuilderHitBox).
+#[derive(Clone, Default)]
+pub struct HitBoxDraft {
+    pub set: String,
+    pub name: String,
+    pub bone: String,
+    pub surface: String,
+    pub tags: Vec<String>,
+    /// 0 box, 1 sphere, 2 capsule: as a model file's
+    pub shape: u8,
+    pub min: Vector,
+    pub max: Vector,
+    pub radius: f32,
+}
+
+#[derive(Default)]
+pub struct Draft {
+    /// each mesh, its mesh group mask and its LOD mask
+    pub meshes: Vec<(usize, u64, i32)>,
+    /// name, parent's name, place and turn in the parent's space
+    pub bones: Vec<(String, String, Vector, rapier3d::math::Rotation)>,
+    pub attachments: Vec<(String, String, Vector, rapier3d::math::Rotation)>,
+    pub groups: Vec<String>,
+    pub default_mask: Option<u64>,
+    /// the hitboxes, by the objects managed fills in
+    pub hitboxes: Vec<usize>,
+    pub lod_switch: Vec<(i32, f32)>,
+}
+
+impl Draft {
+    fn is_empty(&self) -> bool {
+        self.meshes.is_empty() && self.bones.is_empty() && self.attachments.is_empty() && self.groups.is_empty() && self.hitboxes.is_empty()
+    }
+
+    /// What a model made of this holds, as a compiled model's file would.
+    fn file(&self) -> ModelFile {
+        use crate::assets::model::{Bone, DrawCall, RenderMesh, SceneObject};
+        use rapier3d::math::Rotation;
+        let cs = |s: &str| std::ffi::CString::new(s.replace('\0', "")).unwrap_or_default();
+        // bones, each placed in the model by its parent (named, whichever order they came in)
+        let index = |name: &str| self.bones.iter().position(|b| b.0.eq_ignore_ascii_case(name)).map(|i| i as i32).unwrap_or(-1);
+        let parents: Vec<i32> = self.bones.iter().map(|b| if b.1.is_empty() { -1 } else { index(&b.1) }).collect();
+        let mut model: Vec<Option<Pose>> = vec![None; self.bones.len()];
+        fn place(i: usize, bones: &[(String, String, Vector, Rotation)], parents: &[i32], model: &mut Vec<Option<Pose>>, depth: usize) -> Pose {
+            if let Some(p) = model[i] { return p; }
+            let local = Pose::from_parts(bones[i].2, bones[i].3);
+            let p = match parents[i] {
+                j if j >= 0 && j as usize != i && depth < bones.len() => place(j as usize, bones, parents, model, depth + 1) * local,
+                _ => local,
+            };
+            model[i] = Some(p);
+            p
+        }
+        let bones = (0..self.bones.len()).map(|i| {
+            let pose = place(i, &self.bones, &parents, &mut model, 0);
+            Bone { name: cs(&self.bones[i].0), parent: parents[i], pos: self.bones[i].2, rot: self.bones[i].3, flags: 0, model: pose }
+        }).collect();
+
+        let mut meshes: Vec<RenderMesh> = self.meshes.iter().map(|&(m, _, _)| {
+            let s = crate::rendermesh::summary(m);
+            let objects = s.map(|s| vec![SceneObject {
+                min: Vector::new(s.min[0], s.min[1], s.min[2]),
+                max: Vector::new(s.max[0], s.max[1], s.max[2]),
+                draws: s.draws.iter().map(|d| DrawCall { primitive: d.primitive, base_vertex: d.start_vertex, vertices: d.vertex_count, start_index: d.start_index, indices: d.index_count, instances: 1, uv_density: s.uv_density }).collect(),
+            }]).unwrap_or_default();
+            RenderMesh { name: cs(""), objects, hitbox_sets: Vec::new(), attachments: Vec::new() }
+        }).collect();
+        // a model's hitboxes and attachments ride on its first mesh, as a file's do
+        let hitbox_sets = self.hitbox_sets();
+        if (!hitbox_sets.is_empty() || !self.attachments.is_empty()) && meshes.is_empty() {
+            meshes.push(RenderMesh { name: cs(""), objects: Vec::new(), hitbox_sets: Vec::new(), attachments: Vec::new() });
+        }
+        if let Some(first) = meshes.first_mut() {
+            first.hitbox_sets = hitbox_sets;
+            first.attachments = self.attachments.iter().map(|a| Attachment { name: cs(&a.0), influences: vec![(cs(&a.1), a.2, a.3)], ignore_rotation: false }).collect();
+        }
+        let mesh_groups: Vec<std::ffi::CString> = self.groups.iter().map(|g| cs(g)).collect();
+        let mut lod_switch = Vec::new();
+        for &(lod, d) in &self.lod_switch {
+            if (0..8).contains(&lod) { if lod_switch.len() <= lod as usize { lod_switch.resize(lod as usize + 1, 0.0); } lod_switch[lod as usize] = d; }
+        }
+        ModelFile {
+            bones,
+            mesh_group_masks: self.meshes.iter().map(|m| m.1).chain(std::iter::repeat(u64::MAX)).take(meshes.len()).collect(),
+            lod_masks: self.meshes.iter().map(|m| m.2 as u32 as u64).chain(std::iter::repeat(0xff)).take(meshes.len()).collect(),
+            meshes,
+            body_parts: crate::assets::model::body_parts(&mesh_groups),
+            default_mask: self.default_mask.unwrap_or(u64::MAX),
+            mesh_groups,
+            lod_switch,
+            ..Default::default()
+        }
+    }
+
+    fn hitbox_sets(&self) -> Vec<HitBoxSet> {
+        let cs = |s: &str| std::ffi::CString::new(s.replace('\0', "")).unwrap_or_default();
+        let mut sets: Vec<HitBoxSet> = Vec::new();
+        let drafts = hitbox_drafts();
+        for h in self.hitboxes.iter().filter_map(|h| drafts.get(h)) {
+            let i = match sets.iter().position(|s| s.name.to_bytes() == h.set.as_bytes()) {
+                Some(i) => i,
+                None => { sets.push(HitBoxSet { name: cs(&h.set), source: cs(""), boxes: Vec::new() }); sets.len() - 1 }
+            };
+            let index = sets[i].boxes.len() as u16;
+            sets[i].boxes.push(HitBox {
+                name: cs(&h.name), surface: cs(&h.surface), bone: cs(&h.bone), min: h.min, max: h.max, radius: h.radius, shape: h.shape,
+                bone_hash: 0, color: [255, 255, 255, 255], index, translation_only: false, visible: true, tags: h.tags.iter().map(|t| cs(t)).collect(),
+            });
+        }
+        sets
+    }
+}
+
+/// Each builder's draft, until its model is made.
+pub fn drafts() -> MutexGuard<'static, HashMap<usize, Draft>> {
+    static D: OnceLock<Mutex<HashMap<usize, Draft>>> = OnceLock::new();
+    D.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A change to a builder's draft.
+pub fn draft(builder: usize, f: impl FnOnce(&mut Draft)) {
+    f(drafts().entry(builder).or_default())
+}
+
+pub fn hitbox_drafts() -> MutexGuard<'static, HashMap<usize, HitBoxDraft>> {
+    static H: OnceLock<Mutex<HashMap<usize, HitBoxDraft>>> = OnceLock::new();
+    H.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A hitbox added to a builder: the object managed fills in.
+pub fn add_hitbox(builder: usize, set: &str, name: &str) -> usize {
+    let p = crate::handles::object();
+    hitbox_drafts().insert(p, HitBoxDraft { set: set.to_string(), name: name.to_string(), ..Default::default() });
+    draft(builder, |d| d.hitboxes.push(p));
+    p
+}
+
+pub fn hitbox(p: usize, f: impl FnOnce(&mut HitBoxDraft)) {
+    if let Some(h) = hitbox_drafts().get_mut(&p) { f(h) }
+}
+
+/// The render meshes (rendermesh.rs) a model built at runtime draws.
+pub fn runtime_meshes() -> MutexGuard<'static, HashMap<usize, Vec<usize>>> {
+    static R: OnceLock<Mutex<HashMap<usize, Vec<usize>>>> = OnceLock::new();
+    R.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub fn meshes_of(model: usize) -> Option<Vec<usize>> {
+    runtime_meshes().get(&model).cloned()
 }
 
 // ---- models from files: a compiled model (`.vmdl_c`) as the same objects

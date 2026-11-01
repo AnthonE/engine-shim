@@ -1450,12 +1450,12 @@ unsafe extern "C" fn s67(_a0: usize) -> usize { hit(67); crate::trace::object(67
 unsafe extern "C" fn s68() -> usize { hit(68); crate::trace::object(68) }
 unsafe extern "C" fn s69(_a0: usize) { hit(69);  }
 unsafe extern "C" fn s70(_a0: usize, _a1: usize, _a2: f32, _a3: i32, _a4: usize, _a5: usize) { hit(70);  }
-unsafe extern "C" fn s71(_a0: usize, _a1: usize) { hit(71);  }
-unsafe extern "C" fn s72(_a0: usize, _a1: usize) { hit(72);  }
-unsafe extern "C" fn s73(_a0: usize, _a1: usize) { hit(73);  }
-unsafe extern "C" fn s74(_a0: usize, _a1: usize, _a2: usize) { hit(74);  }
-unsafe extern "C" fn s75(_a0: usize, _a1: usize, _a2: f32) { hit(75);  }
-unsafe extern "C" fn s76(_a0: usize, _a1: usize, _a2: usize, _a3: f32) { hit(76);  }
+unsafe extern "C" fn s71(_a0: usize, _a1: usize) { hit(71); unsafe { crate::impls::CBuilderHitBox_SetBoneName(_a0, _a1) } }
+unsafe extern "C" fn s72(_a0: usize, _a1: usize) { hit(72); unsafe { crate::impls::CBuilderHitBox_SetSurface(_a0, _a1) } }
+unsafe extern "C" fn s73(_a0: usize, _a1: usize) { hit(73); unsafe { crate::impls::CBuilderHitBox_AddTag(_a0, _a1) } }
+unsafe extern "C" fn s74(_a0: usize, _a1: usize, _a2: usize) { hit(74); unsafe { crate::impls::CBuilderHitBox_SetBox(_a0, _a1, _a2) } }
+unsafe extern "C" fn s75(_a0: usize, _a1: usize, _a2: f32) { hit(75); unsafe { crate::impls::CBuilderHitBox_SetSphere(_a0, _a1, _a2) } }
+unsafe extern "C" fn s76(_a0: usize, _a1: usize, _a2: usize, _a3: f32) { hit(76); unsafe { crate::impls::CBuilderHitBox_SetCapsule(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s77(_a0: usize, _a1: usize) { hit(77);  }
 unsafe extern "C" fn s78(_a0: usize, _a1: usize) { hit(78);  }
 unsafe extern "C" fn s79(_a0: usize) { hit(79);  }
@@ -2038,14 +2038,14 @@ unsafe extern "C" fn s655(_a0: usize, _a1: usize, _a2: usize) { hit(655);  }
 unsafe extern "C" fn s656(_a0: usize, _a1: usize) { hit(656);  }
 unsafe extern "C" fn s657(_a0: usize, _a1: f32) { hit(657);  }
 unsafe extern "C" fn s658(_a0: usize, _a1: usize) -> i32 { hit(658); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s659(_a0: usize, _a1: i32, _a2: f32) { hit(659);  }
-unsafe extern "C" fn s660(_a0: usize, _a1: usize, _a2: u64, _a3: i32) { hit(660);  }
-unsafe extern "C" fn s661(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize, _a5: usize) { hit(661);  }
-unsafe extern "C" fn s662(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) { hit(662);  }
-unsafe extern "C" fn s663(_a0: usize, _a1: usize) -> i32 { hit(663); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s659(_a0: usize, _a1: i32, _a2: f32) { hit(659); unsafe { crate::impls::CModelBuilder_SetLODSwitchDistance(_a0, _a1, _a2) } }
+unsafe extern "C" fn s660(_a0: usize, _a1: usize, _a2: u64, _a3: i32) { hit(660); unsafe { crate::impls::CModelBuilder_AddRunTimeMesh(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s661(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize, _a5: usize) { hit(661); unsafe { crate::impls::CModelBuilder_AddRunTimeBone(_a0, _a1, _a2, _a3, _a4, _a5) } }
+unsafe extern "C" fn s662(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) { hit(662); unsafe { crate::impls::CModelBuilder_AddRunTimeAttachment(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s663(_a0: usize, _a1: usize) -> i32 { hit(663); unsafe { crate::impls::CModelBuilder_AddMeshGroup(_a0, _a1) } }
 unsafe extern "C" fn s664(_a0: usize) -> usize { hit(664); crate::trace::object(664) }
-unsafe extern "C" fn s665(_a0: usize, _a1: usize, _a2: usize) -> usize { hit(665); crate::trace::object(665) }
-unsafe extern "C" fn s666(_a0: usize, _a1: u64) { hit(666); crate::state::set(_a0, 87, _a1) }
+unsafe extern "C" fn s665(_a0: usize, _a1: usize, _a2: usize) -> usize { hit(665); unsafe { crate::impls::CModelBuilder_AddHitBox(_a0, _a1, _a2) } }
+unsafe extern "C" fn s666(_a0: usize, _a1: u64) { hit(666); unsafe { crate::impls::CModelBuilder_SetDefaultMeshGroupMask(_a0, _a1) } }
 unsafe extern "C" fn s667(_a0: usize, _a1: usize) { hit(667); unsafe { crate::impls::CModelBuilder_SetPhysics_Runtime(_a0, _a1) } }
 unsafe extern "C" fn s668(_a0: usize, _a1: i32) { hit(668);  }
 unsafe extern "C" fn s669(_a0: usize, _a1: usize) { hit(669);  }
@@ -3691,7 +3691,7 @@ unsafe extern "C" fn s2308(_a0: i32) -> i32 { hit(2308); unsafe { crate::impls::
 unsafe extern "C" fn s2309(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) -> i32 { hit(2309); unsafe { crate::impls::LZ4Glue_CompressFrame(_a0, _a1, _a2, _a3, _a4) } }
 unsafe extern "C" fn s2310(_a0: usize, _a1: i32) -> i64 { hit(2310); unsafe { crate::impls::LZ4Glue_GetFrameContentSize(_a0, _a1) } }
 unsafe extern "C" fn s2311(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2311); unsafe { crate::impls::LZ4Glue_DecompressFrame(_a0, _a1, _a2, _a3) } }
-unsafe extern "C" fn s2312(_a0: usize, _a1: i32, _a2: usize) -> usize { hit(2312); crate::trace::object(2312) }
+unsafe extern "C" fn s2312(_a0: usize, _a1: i32, _a2: usize) -> usize { hit(2312); unsafe { crate::impls::MeshGlue_CreateRenderMesh(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2313(_a0: usize) -> i32 { hit(2313); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2314(_a0: usize, _a1: usize, _a2: u32) { hit(2314);  }
 unsafe extern "C" fn s2315(_a0: usize) -> i32 { hit(2315); unsafe { core::mem::zeroed() } }
@@ -3704,26 +3704,26 @@ unsafe extern "C" fn s2321(_a0: usize, _a1: i32) -> i32 { hit(2321); unsafe { co
 unsafe extern "C" fn s2322(_a0: usize, _a1: i32) -> i32 { hit(2322); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2323(_a0: usize, _a1: i32) -> i32 { hit(2323); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2324(_a0: usize, _a1: i32) -> i32 { hit(2324); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2325(_a0: usize, _a1: usize) { hit(2325);  }
-unsafe extern "C" fn s2326(_a0: usize, _a1: i32) { hit(2326);  }
-unsafe extern "C" fn s2327(_a0: usize, _a1: usize, _a2: usize) { hit(2327);  }
-unsafe extern "C" fn s2328(_a0: usize, _a1: f32) { hit(2328);  }
-unsafe extern "C" fn s2329(_a0: usize, _a1: i32, _a2: i32) { hit(2329);  }
-unsafe extern "C" fn s2330(_a0: usize, _a1: i32, _a2: i32) { hit(2330);  }
-unsafe extern "C" fn s2331(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32, _a5: i32, _a6: i32) -> i32 { hit(2331); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2332(_a0: usize, _a1: usize, _a2: usize, _a3: i32) { hit(2332);  }
-unsafe extern "C" fn s2333(_a0: usize, _a1: usize, _a2: usize, _a3: i32) { hit(2333);  }
-unsafe extern "C" fn s2334(_a0: i32, _a1: i32, _a2: usize, _a3: usize, _a4: i32, _a5: usize, _a6: i32) -> usize { hit(2334); crate::trace::object(2334) }
-unsafe extern "C" fn s2335(_a0: i32, _a1: usize, _a2: usize) -> usize { hit(2335); crate::trace::object(2335) }
-unsafe extern "C" fn s2336(_a0: i32, _a1: i32, _a2: usize, _a3: i32) -> usize { hit(2336); crate::trace::object(2336) }
-unsafe extern "C" fn s2337(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(2337); crate::trace::object(2337) }
-unsafe extern "C" fn s2338(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2338);  }
-unsafe extern "C" fn s2339(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(2339); crate::trace::object(2339) }
-unsafe extern "C" fn s2340(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2340);  }
-unsafe extern "C" fn s2341(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2341);  }
-unsafe extern "C" fn s2342(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2342);  }
-unsafe extern "C" fn s2343(_a0: usize, _a1: i32) -> usize { hit(2343); crate::trace::object(2343) }
-unsafe extern "C" fn s2344(_a0: usize, _a1: i32) -> usize { hit(2344); crate::trace::object(2344) }
+unsafe extern "C" fn s2325(_a0: usize, _a1: usize) { hit(2325); unsafe { crate::impls::MeshGlue_SetMeshMaterial(_a0, _a1) } }
+unsafe extern "C" fn s2326(_a0: usize, _a1: i32) { hit(2326); unsafe { crate::impls::MeshGlue_SetMeshPrimType(_a0, _a1) } }
+unsafe extern "C" fn s2327(_a0: usize, _a1: usize, _a2: usize) { hit(2327); unsafe { crate::impls::MeshGlue_SetMeshBounds(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2328(_a0: usize, _a1: f32) { hit(2328); unsafe { crate::impls::MeshGlue_SetMeshUvDensity(_a0, _a1) } }
+unsafe extern "C" fn s2329(_a0: usize, _a1: i32, _a2: i32) { hit(2329); unsafe { crate::impls::MeshGlue_SetMeshVertexRange(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2330(_a0: usize, _a1: i32, _a2: i32) { hit(2330); unsafe { crate::impls::MeshGlue_SetMeshIndexRange(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2331(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32, _a5: i32, _a6: i32) -> i32 { hit(2331); unsafe { crate::impls::MeshGlue_AddMeshDrawCall(_a0, _a1, _a2, _a3, _a4, _a5, _a6) } }
+unsafe extern "C" fn s2332(_a0: usize, _a1: usize, _a2: usize, _a3: i32) { hit(2332); unsafe { crate::impls::MeshGlue_SetMeshVertexBuffer(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2333(_a0: usize, _a1: usize, _a2: usize, _a3: i32) { hit(2333); unsafe { crate::impls::MeshGlue_SetMeshIndexBuffer(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2334(_a0: i32, _a1: i32, _a2: usize, _a3: usize, _a4: i32, _a5: usize, _a6: i32) -> usize { hit(2334); unsafe { crate::impls::MeshGlue_CreateVertexBuffer(_a0, _a1, _a2, _a3, _a4, _a5, _a6) } }
+unsafe extern "C" fn s2335(_a0: i32, _a1: usize, _a2: usize) -> usize { hit(2335); unsafe { crate::impls::MeshGlue_CreateVertexBuffer_1(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2336(_a0: i32, _a1: i32, _a2: usize, _a3: i32) -> usize { hit(2336); unsafe { crate::impls::MeshGlue_CreateIndexBuffer(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2337(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(2337); unsafe { crate::impls::MeshGlue_LockVertexBuffer(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2338(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2338); unsafe { crate::impls::MeshGlue_UnlockVertexBuffer(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2339(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(2339); unsafe { crate::impls::MeshGlue_LockIndexBuffer(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2340(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2340); unsafe { crate::impls::MeshGlue_UnlockIndexBuffer(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2341(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2341); unsafe { crate::impls::MeshGlue_SetVertexBufferData(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2342(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2342); unsafe { crate::impls::MeshGlue_SetIndexBufferData(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2343(_a0: usize, _a1: i32) -> usize { hit(2343); unsafe { crate::impls::MeshGlue_SetVertexBufferSize(_a0, _a1) } }
+unsafe extern "C" fn s2344(_a0: usize, _a1: i32) -> usize { hit(2344); unsafe { crate::impls::MeshGlue_SetIndexBufferSize(_a0, _a1) } }
 unsafe extern "C" fn s2345(_a0: usize, _a1: i32, _a2: usize, _a3: i32) -> i32 { hit(2345); unsafe { crate::impls::MeshGlue_TriangulatePolygon(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s2346(_a0: usize, _a1: i32, _a2: usize, _a3: usize, _a4: usize) { hit(2346);  }
 unsafe extern "C" fn s2347(_a0: i32, _a1: usize, _a2: i32, _a3: usize, _a4: usize, _a5: i64, _a6: i64, _a7: i32, _a8: i32, _a9: usize) { hit(2347);  }
@@ -4185,11 +4185,11 @@ unsafe extern "C" fn s2802(_a0: usize) -> i32 { hit(2802); unsafe { core::mem::z
 unsafe extern "C" fn s2803(_a0: usize) -> i32 { hit(2803); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2804(_a0: usize) -> i32 { hit(2804); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2805(_a0: usize) -> f32 { hit(2805); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2806(_a0: usize, _a1: i32) -> usize { hit(2806); crate::trace::object(2806) }
-unsafe extern "C" fn s2807(_a0: usize) { hit(2807);  }
-unsafe extern "C" fn s2808(_a0: usize) { hit(2808);  }
-unsafe extern "C" fn s2809(_a0: usize, _a1: usize, _a2: i32, _a3: u32, _a4: i32) { hit(2809);  }
-unsafe extern "C" fn s2810(_a0: usize) { hit(2810);  }
+unsafe extern "C" fn s2806(_a0: usize, _a1: i32) -> usize { hit(2806); unsafe { crate::impls::VertexLayout_Create(_a0, _a1) } }
+unsafe extern "C" fn s2807(_a0: usize) { hit(2807); unsafe { crate::impls::VertexLayout_Destroy(_a0) } }
+unsafe extern "C" fn s2808(_a0: usize) { hit(2808); unsafe { crate::impls::VertexLayout_Free(_a0) } }
+unsafe extern "C" fn s2809(_a0: usize, _a1: usize, _a2: i32, _a3: u32, _a4: i32) { hit(2809); unsafe { crate::impls::VertexLayout_Add(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s2810(_a0: usize) { hit(2810); unsafe { crate::impls::VertexLayout_Build(_a0) } }
 unsafe extern "C" fn s2811(_a0: usize) -> i32 { hit(2811); crate::state::get::<i32>(_a0, 338) }
 unsafe extern "C" fn s2812(_a0: usize, _a1: i32) { hit(2812); crate::state::set(_a0, 338, _a1) }
 unsafe extern "C" fn s2813(_a0: usize) { hit(2813);  }

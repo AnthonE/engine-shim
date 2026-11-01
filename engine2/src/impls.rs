@@ -1219,6 +1219,99 @@ pub unsafe fn CModelBuilder_SetPhysics_Runtime(builder: usize, bodies: usize) {
 }
 pub unsafe fn CModelBuilder_CreateRuntimeModel(builder: usize, _name: usize, _strong: i32) -> usize { models::build(builder) }
 
+// what a model built at runtime draws and is posed by: its render meshes
+// (rendermesh.rs), bones, attachments, mesh groups and hitboxes (models.rs)
+pub unsafe fn CModelBuilder_AddRunTimeMesh(builder: usize, mesh: usize, groups: u64, lods: i32) {
+    if mesh != 0 { models::draft(builder, |d| d.meshes.push((mesh, groups, lods))) }
+}
+pub unsafe fn CModelBuilder_AddRunTimeBone(builder: usize, name: usize, parent: usize, pos: usize, rot: usize, _bounds: usize) {
+    let (name, parent) = unsafe { (read(name), read(parent)) };
+    let (pos, rot) = unsafe { (phys::vec(*(pos as *const S_Vector3)), phys::quat(*(rot as *const S_Rotation))) };
+    models::draft(builder, |d| d.bones.push((name, parent, pos, rot)))
+}
+pub unsafe fn CModelBuilder_AddRunTimeAttachment(builder: usize, name: usize, parent: usize, pos: usize, rot: usize) {
+    let (name, parent) = unsafe { (read(name), read(parent)) };
+    let (pos, rot) = unsafe { (phys::vec(*(pos as *const S_Vector3)), phys::quat(*(rot as *const S_Rotation))) };
+    models::draft(builder, |d| d.attachments.push((name, parent, pos, rot)))
+}
+pub unsafe fn CModelBuilder_AddMeshGroup(builder: usize, name: usize) -> i32 {
+    let name = unsafe { read(name) };
+    let mut i = 0;
+    models::draft(builder, |d| { d.groups.push(name); i = d.groups.len() as i32 - 1 });
+    i
+}
+pub unsafe fn CModelBuilder_SetDefaultMeshGroupMask(builder: usize, mask: u64) { models::draft(builder, |d| d.default_mask = Some(mask)) }
+pub unsafe fn CModelBuilder_SetLODSwitchDistance(builder: usize, lod: i32, distance: f32) { models::draft(builder, |d| d.lod_switch.push((lod, distance))) }
+pub unsafe fn CModelBuilder_AddHitBox(builder: usize, set: usize, name: usize) -> usize {
+    models::add_hitbox(builder, &unsafe { read(set) }, &unsafe { read(name) })
+}
+pub unsafe fn CBuilderHitBox_SetBoneName(h: usize, name: usize) { let n = unsafe { read(name) }; models::hitbox(h, |x| x.bone = n) }
+pub unsafe fn CBuilderHitBox_SetSurface(h: usize, name: usize) { let n = unsafe { read(name) }; models::hitbox(h, |x| x.surface = n) }
+pub unsafe fn CBuilderHitBox_AddTag(h: usize, tag: usize) { let t = unsafe { read(tag) }; models::hitbox(h, |x| x.tags.push(t)) }
+pub unsafe fn CBuilderHitBox_SetBox(h: usize, mins: usize, maxs: usize) {
+    let (a, b) = unsafe { (phys::vec(*(mins as *const S_Vector3)), phys::vec(*(maxs as *const S_Vector3))) };
+    models::hitbox(h, |x| { x.shape = 0; x.min = a; x.max = b; x.radius = 0.0 })
+}
+pub unsafe fn CBuilderHitBox_SetSphere(h: usize, center: usize, radius: f32) {
+    let c = unsafe { phys::vec(*(center as *const S_Vector3)) };
+    models::hitbox(h, |x| { x.shape = 1; x.min = c; x.max = c; x.radius = radius })
+}
+pub unsafe fn CBuilderHitBox_SetCapsule(h: usize, a: usize, b: usize, radius: f32) {
+    let (a, b) = unsafe { (phys::vec(*(a as *const S_Vector3)), phys::vec(*(b as *const S_Vector3))) };
+    models::hitbox(h, |x| { x.shape = 2; x.min = a; x.max = b; x.radius = radius })
+}
+
+// MeshGlue's render meshes and their buffers, VertexLayout: rendermesh.rs
+
+use crate::rendermesh as rmesh;
+
+pub unsafe fn VertexLayout_Create(_name: usize, size: i32) -> usize { rmesh::new_layout(size) }
+pub unsafe fn VertexLayout_Add(layout: usize, semantic: usize, index: i32, format: u32, offset: i32) {
+    rmesh::add_field(layout, &unsafe { read(semantic) }, index, format, offset)
+}
+pub unsafe fn VertexLayout_Build(_layout: usize) {}
+pub unsafe fn VertexLayout_Free(_layout: usize) {}
+pub unsafe fn VertexLayout_Destroy(layout: usize) { rmesh::free(layout) }
+
+pub unsafe fn MeshGlue_CreateRenderMesh(material: usize, primitive: i32, name: usize) -> usize {
+    rmesh::new_mesh(material, primitive, &unsafe { read(name) })
+}
+pub unsafe fn MeshGlue_SetMeshMaterial(mesh: usize, material: usize) { rmesh::with_mesh(mesh, |m| m.material = material) }
+pub unsafe fn MeshGlue_SetMeshPrimType(mesh: usize, primitive: i32) { rmesh::with_mesh(mesh, |m| m.primitive = primitive) }
+pub unsafe fn MeshGlue_SetMeshBounds(mesh: usize, mins: usize, maxs: usize) {
+    let (a, b) = unsafe { (phys::vec(*(mins as *const S_Vector3)), phys::vec(*(maxs as *const S_Vector3))) };
+    rmesh::with_mesh(mesh, |m| m.bounds = Some(([a.x, a.y, a.z], [b.x, b.y, b.z])))
+}
+pub unsafe fn MeshGlue_SetMeshUvDensity(mesh: usize, density: f32) { rmesh::with_mesh(mesh, |m| m.uv_density = density) }
+pub unsafe fn MeshGlue_SetMeshVertexRange(mesh: usize, start: i32, count: i32) { rmesh::with_mesh(mesh, |m| m.vertex_range = (start, count)) }
+pub unsafe fn MeshGlue_SetMeshIndexRange(mesh: usize, start: i32, count: i32) { rmesh::with_mesh(mesh, |m| m.index_range = (start, count)) }
+pub unsafe fn MeshGlue_AddMeshDrawCall(mesh: usize, material: usize, primitive: i32, start_index: i32, index_count: i32, start_vertex: i32, vertex_count: i32) -> i32 {
+    let mut n = 0;
+    rmesh::with_mesh(mesh, |m| {
+        m.draws.push(rmesh::DrawCall { material, primitive, start_index, index_count, start_vertex, vertex_count });
+        n = m.draws.len() as i32 - 1;
+    });
+    n
+}
+pub unsafe fn MeshGlue_SetMeshVertexBuffer(mesh: usize, vb: usize, data: usize, count: i32) { unsafe { rmesh::give(mesh, vb, data, count) } }
+pub unsafe fn MeshGlue_SetMeshIndexBuffer(mesh: usize, ib: usize, data: usize, count: i32) { unsafe { rmesh::give(mesh, ib, data, count) } }
+pub unsafe fn MeshGlue_CreateVertexBuffer(stride: i32, count: i32, names: usize, fields: usize, n: i32, data: usize, given: i32) -> usize {
+    unsafe { rmesh::new_vertices_of(stride, count, &read(names), fields, n, data, given) }
+}
+pub unsafe fn MeshGlue_CreateVertexBuffer_1(count: i32, layout: usize, data: usize) -> usize {
+    let Some(l) = rmesh::layout_of(layout) else { return 0 };
+    unsafe { rmesh::new_vertices(count, &l, data) }
+}
+pub unsafe fn MeshGlue_CreateIndexBuffer(count: i32, wide: i32, data: usize, given: i32) -> usize { unsafe { rmesh::new_indices(count, wide != 0, data, given) } }
+pub unsafe fn MeshGlue_LockVertexBuffer(vb: usize, size: i32, offset: i32) -> usize { rmesh::lock(vb, size, offset) }
+pub unsafe fn MeshGlue_UnlockVertexBuffer(vb: usize, _data: usize, _size: i32, _offset: i32) { rmesh::unlock(vb) }
+pub unsafe fn MeshGlue_LockIndexBuffer(ib: usize, size: i32, offset: i32) -> usize { rmesh::lock(ib, size, offset) }
+pub unsafe fn MeshGlue_UnlockIndexBuffer(ib: usize, _data: usize, _size: i32, _offset: i32) { rmesh::unlock(ib) }
+pub unsafe fn MeshGlue_SetVertexBufferData(vb: usize, data: usize, size: i32, offset: i32) { unsafe { rmesh::set_data(vb, data, size, offset) } }
+pub unsafe fn MeshGlue_SetIndexBufferData(ib: usize, data: usize, size: i32, offset: i32) { unsafe { rmesh::set_data(ib, data, size, offset) } }
+pub unsafe fn MeshGlue_SetVertexBufferSize(vb: usize, count: i32) -> usize { rmesh::resize(vb, count) }
+pub unsafe fn MeshGlue_SetIndexBufferSize(ib: usize, count: i32) -> usize { rmesh::resize(ib, count) }
+
 /// A model by name, from its compiled file (models.rs).
 pub unsafe fn Glue_Resources_GetModel(name: usize, _guid: S_System_Guid) -> usize { models::load(&unsafe { read(name) }) }
 pub unsafe fn Glue_Resources_GetModelResourceName(model: usize) -> usize { cstr(&models::name_of(model).unwrap_or_default()) }
@@ -2899,5 +2992,102 @@ pub unsafe fn CEntityKeyValues_GetValueString_1(e: usize, key: u32, default: usi
     match world::entity(e).and_then(|e| e.get(key)) {
         Some(v) => returned(v.to_string()),
         None => default,
+    }
+}
+
+#[cfg(test)]
+mod built_models {
+    //! A model made at runtime as managed's ModelBuilder makes one (an
+    //! editor mesh, a procedural prop): its render mesh, bones, attachment,
+    //! body groups and hitboxes, read back as a game reads any model.
+    use super::*;
+    use std::ffi::CString;
+
+    fn cs(s: &str) -> CString { CString::new(s).unwrap() }
+    fn v(x: f32, y: f32, z: f32) -> S_Vector3 { phys::v3(rapier3d::math::Vector::new(x, y, z)) }
+    fn text(p: usize) -> String { unsafe { read(p) } }
+
+    #[test]
+    fn a_built_model_has_what_it_was_given() {
+        unsafe {
+            // PolygonMesh's MeshVertex: position, normal, tangent, texcoord, two colours
+            let layout = VertexLayout_Create(cs("MeshVertex").as_ptr() as usize, 64);
+            for (s, i, f, o) in [("position", 0, 6, 0), ("normal", 0, 6, 12), ("tangent", 0, 2, 24), ("texcoord", 0, 16, 40), ("texcoord", 4, 28, 48), ("texcoord", 5, 28, 52)] {
+                VertexLayout_Add(layout, cs(s).as_ptr() as usize, i, f, o);
+            }
+            VertexLayout_Build(layout);
+            let mut quad = vec![0f32; 4 * 16];
+            for (i, p) in [[0.0, 0.0, 0.0], [32.0, 0.0, 0.0], [32.0, 32.0, 0.0], [0.0, 32.0, 0.0]].iter().enumerate() {
+                quad[i * 16..i * 16 + 3].copy_from_slice(p);
+                quad[i * 16 + 5] = 1.0;
+            }
+            let material = crate::camera::material("materials/dev/reflectivity_30.vmat");
+            let mesh = MeshGlue_CreateRenderMesh(material, crate::rendermesh::TRIANGLES, cs("quad").as_ptr() as usize);
+            let vb = MeshGlue_CreateVertexBuffer_1(4, layout, quad.as_ptr() as usize);
+            MeshGlue_SetMeshVertexBuffer(mesh, vb, quad.as_ptr() as usize, 4);
+            MeshGlue_SetMeshVertexRange(mesh, 0, 4);
+            let idx: [i32; 6] = [0, 1, 2, 0, 2, 3];
+            let ib = MeshGlue_CreateIndexBuffer(6, 1, idx.as_ptr() as usize, 6);
+            MeshGlue_SetMeshIndexBuffer(mesh, ib, idx.as_ptr() as usize, 6);
+            let (lo, hi) = (v(0.0, 0.0, 0.0), v(32.0, 32.0, 0.0));
+            MeshGlue_SetMeshBounds(mesh, &lo as *const _ as usize, &hi as *const _ as usize);
+
+            // ModelBuilder.Create: its meshes, a body group of two choices, bones, an attachment, a hitbox
+            let b = CModelBuilder_Create();
+            assert_eq!(CModelBuilder_AddMeshGroup(b, cs("door_@0").as_ptr() as usize), 0);
+            assert_eq!(CModelBuilder_AddMeshGroup(b, cs("door_@1").as_ptr() as usize), 1);
+            CModelBuilder_AddRunTimeMesh(b, mesh, 1, 255);
+            CModelBuilder_SetDefaultMeshGroupMask(b, 1);
+            let id = phys::rot(rapier3d::math::Rotation::IDENTITY);
+            let (root, arm) = (v(0.0, 0.0, 0.0), v(0.0, 0.0, 10.0));
+            // the child first: its parent is found by name, wherever it comes
+            CModelBuilder_AddRunTimeBone(b, cs("arm").as_ptr() as usize, cs("root").as_ptr() as usize, &arm as *const _ as usize, &id as *const _ as usize, 0);
+            CModelBuilder_AddRunTimeBone(b, cs("root").as_ptr() as usize, cs("").as_ptr() as usize, &root as *const _ as usize, &id as *const _ as usize, 0);
+            let tip = v(0.0, 0.0, 5.0);
+            CModelBuilder_AddRunTimeAttachment(b, cs("hand").as_ptr() as usize, cs("arm").as_ptr() as usize, &tip as *const _ as usize, &id as *const _ as usize);
+            let h = CModelBuilder_AddHitBox(b, cs("default").as_ptr() as usize, cs("arm").as_ptr() as usize);
+            CBuilderHitBox_SetBoneName(h, cs("arm").as_ptr() as usize);
+            CBuilderHitBox_AddTag(h, cs("head").as_ptr() as usize);
+            let (c0, c1) = (v(0.0, 0.0, 0.0), v(0.0, 0.0, 8.0));
+            CBuilderHitBox_SetCapsule(h, &c0 as *const _ as usize, &c1 as *const _ as usize, 2.0);
+            let model = CModelBuilder_CreateRuntimeModel(b, cs("").as_ptr() as usize, 0);
+
+            // as a game reads it
+            assert_eq!(CModel_GetNumMeshes(model), 1);
+            let (mut nv, mut nt, mut nd, mut lod, mut tr) = (0i32, 0i32, 0i32, 0i32, 0i32);
+            let (mut mn, mut mx) = (v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0));
+            CModel_GetMeshInfo(model, 0, &mut nv as *mut _ as usize, &mut nt as *mut _ as usize, &mut nd as *mut _ as usize, &mut lod as *mut _ as usize, &mut tr as *mut _ as usize, &mut mn as *mut _ as usize, &mut mx as *mut _ as usize);
+            assert_eq!((nv, nt, nd, lod), (4, 2, 1, 255));
+            assert_eq!(phys::vec(mx), rapier3d::math::Vector::new(32.0, 32.0, 0.0));
+            assert_eq!(CModel_NumBones(model), 2);
+            assert_eq!(text(CModel_boneName(model, 0)), "arm");
+            assert_eq!(CModel_boneParent(model, 0), 1);
+            assert_eq!(phys::vec(CModel_GetBoneTransform(model, 0).f_Position), rapier3d::math::Vector::new(0.0, 0.0, 10.0));
+            assert_eq!(CModel_HasSkinnedMeshes(model), 1);
+            assert_eq!(CModel_GetNumAttachments(model), 1);
+            assert_eq!(text(CModel_GetAttachmentNameFromIndex(model, 0)), "hand");
+            assert_eq!(CModel_GetNumBodyParts(model), 1);
+            assert_eq!(text(CModel_GetBodyPartName(model, 0)), "door");
+            assert_eq!(CModel_GetNumBodyPartMeshes(model, 0), 2);
+            assert_eq!(CModel_GetDefaultMeshGroupMask(model), 1);
+            assert_eq!(CModel_GetHitboxSetCount(model, 0), 1);
+            let set = CModel_FindHitboxSetByName(model, cs("default").as_ptr() as usize, 0);
+            assert_eq!(CHitBoxSet_numhitboxes(set), 1);
+            let hb = CHitBoxSet_pHitbox(set, 0);
+            assert_eq!(text(Get__CHitBox_m_name(hb)), "arm");
+            assert_eq!(text(CHitBox_GetTag(hb, 0)), "head");
+            assert_eq!(phys::vec(Get__CHitBox_m_vMaxBounds(hb)), rapier3d::math::Vector::new(0.0, 0.0, 8.0));
+
+            // and it draws: its mesh, its material by name
+            let drawn = crate::rendermesh::for_drawing(&models::meshes_of(model).unwrap(), |m| crate::camera::material_name(m).unwrap_or_default());
+            assert_eq!(drawn.len(), 1);
+            assert_eq!(drawn[0].draws[0].material, "materials/dev/reflectivity_30.vmat");
+            assert_eq!(drawn[0].buffers.indices[0].indices(), [0, 1, 2, 0, 2, 3]);
+
+            // a builder given only collision makes a model as before: no file of its own
+            let bare = CModelBuilder_Create();
+            let m2 = CModelBuilder_CreateRuntimeModel(bare, cs("").as_ptr() as usize, 0);
+            assert!(models::file(m2).is_none() && models::meshes_of(m2).is_none());
+        }
     }
 }

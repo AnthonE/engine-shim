@@ -276,7 +276,7 @@ const PRIMITIVES: [&str; 10] = [
 
 /// Body groups from the mesh groups' names: a choice is `<group>_@<n>`; a
 /// mesh group named otherwise is a group of one choice.
-fn body_parts(groups: &[CString]) -> Vec<BodyPart> {
+pub(crate) fn body_parts(groups: &[CString]) -> Vec<BodyPart> {
     let mut parts: Vec<BodyPart> = Vec::new();
     for (i, g) in groups.iter().enumerate() {
         let g = g.to_string_lossy();

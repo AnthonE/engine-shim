@@ -604,11 +604,17 @@ impl Renderer {
     pub fn model(&self, content: &dyn Files, name: &str) -> Result<Model, String> {
         let r = content.compiled(name).ok_or_else(|| format!("{name}: not found"))?;
         let meshes = mesh::model(&r, |n| content.read(&if n.ends_with("_c") { n.to_string() } else { format!("{n}_c") }))?;
+        self.model_of(content, name, &meshes)
+    }
+
+    /// A model of these meshes (a file's, or ones built at runtime:
+    /// rendermesh.rs), its materials found in `content`; `name` says whose.
+    pub fn model_of(&self, content: &dyn Files, name: &str, meshes: &[mesh::Mesh]) -> Result<Model, String> {
         let mut notes = Vec::new();
         let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         let mut out = Vec::new();
         let mut lightmap_uv = true;
-        for m in &meshes {
+        for m in meshes {
             let mut vertices = Vec::new();
             for vb in &m.buffers.vertices {
                 let positions = vb.floats("POSITION", 0).ok_or("no POSITION")?;
@@ -1209,6 +1215,45 @@ impl View {
 #[cfg(test)]
 mod tests {
     use glam::{Mat4, Vec3};
+
+    /// A mesh made at runtime (rendermesh.rs, as managed's Mesh makes an
+    /// editor mesh's faces) is drawn as a file's is: a floor 64 square,
+    /// looked down on, fills the middle of the frame and not its corners.
+    /// With `ENGINE2_CONTENT` naming flatgrass's materials it's drawn in
+    /// one of them, found and read.
+    #[test]
+    fn a_mesh_built_at_runtime_is_drawn() {
+        let Ok(r) = super::Renderer::new() else { eprintln!("no adapter: skipped"); return };
+        use crate::rendermesh as rm;
+        let l = rm::new_layout(32);
+        for (s, f, o) in [("position", 6, 0), ("normal", 6, 12), ("texcoord", 16, 24)] { rm::add_field(l, s, 0, f, o); }
+        let floor: Vec<f32> = [[-32.0, -32.0], [32.0, -32.0], [32.0, 32.0], [-32.0, 32.0]].iter().flat_map(|p| [p[0], p[1], 0.0, 0.0, 0.0, 1.0, p[0] / 64.0, p[1] / 64.0]).collect();
+        let vb = unsafe { rm::new_vertices(4, &rm::layout_of(l).unwrap(), floor.as_ptr() as usize) };
+        let idx: [i32; 6] = [0, 1, 2, 0, 2, 3];
+        let ib = unsafe { rm::new_indices(6, true, idx.as_ptr() as usize, 6) };
+        let mesh = rm::new_mesh(0, rm::TRIANGLES, "floor");
+        unsafe { rm::give(mesh, vb, 0, 0); rm::give(mesh, ib, 0, 0); }
+
+        let dirs: Vec<std::path::PathBuf> = std::env::var("ENGINE2_CONTENT").map(|d| std::env::split_paths(&d).collect()).unwrap_or_default();
+        let content = super::Content(dirs, Vec::new());
+        use super::Files;
+        let material = if content.read("materials/dev/reflectivity_30.vmat_c").is_some() { "materials/dev/reflectivity_30.vmat" } else { "" };
+        let meshes = rm::for_drawing(&[mesh], |_| material.to_string());
+        let m = r.model_of(&content, "a floor", &meshes).unwrap();
+        if !material.is_empty() { assert!(m.notes.is_empty(), "{:?}", m.notes); }
+        assert_eq!((m.min, m.max), (Vec3::new(-32.0, -32.0, 0.0), Vec3::new(32.0, 32.0, 0.0)));
+        let view = super::View::camera(Vec3::new(0.0, 0.0, 100.0), [90.0, 0.0, 0.0], 60.0, 1.0, 1000.0, 1.0);
+        let image = r.draw(&[super::Instance { model: &m, transform: Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None }], &view, 64, 64);
+        // against the same view with nothing in it (the background is opaque)
+        let empty = r.draw(&[], &view, 64, 64);
+        let differs = |i: usize| image[i * 4..i * 4 + 3].iter().zip(&empty[i * 4..i * 4 + 3]).any(|(a, b)| a.abs_diff(*b) > 2);
+        let covered = (0..64 * 64).filter(|&i| differs(i)).count();
+        eprintln!("{covered} of {} pixels covered; middle {:?}, corner {:?}", 64 * 64, &image[(32 * 64 + 32) * 4..][..4], &image[(64 + 1) * 4..][..4]);
+        // the floor spans 64 of the 115 the view sees at 100 away: the middle third or so
+        assert!(differs(32 * 64 + 32), "the middle is the floor");
+        assert!(!differs(64 + 1), "a corner isn't");
+        assert!(covered > 64 * 64 / 5 && covered < 64 * 64 / 2, "{covered}");
+    }
 
     /// Source's auto exposure: the pixel 2% are brighter than goes to 60%
     /// of white, within s&box's range (1 to 3).

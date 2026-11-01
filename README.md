@@ -553,8 +553,6 @@ What the game's components still can't do:
   has compared a pose with Facepunch's engine: a graph runs as its nodes
   are read here. Footsteps, the events a player's walk would fire, are
   Citizen's, which comes only with Facepunch's closed download.
-- **Runtime models' rest.** A model built at runtime (`ModelBuilder`)
-  keeps its collision, not its bones, hitboxes and meshes.
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
   has none.
 - **Workshop maps.** A map that's only on Steam's workshop needs Steam
@@ -617,6 +615,30 @@ particles, decals and the UI. A headless player has no tonemapper of
 managed's (`Graphics.IsAvailable` is false with the empty render device):
 the watcher's turning auto exposure off reaches nothing, and frames are
 exposed as s&box's defaults would expose them (above).
+
+**What's built at runtime is drawn** (`engine2/src/rendermesh.rs`). A
+model made by managed's `ModelBuilder` (an editor mesh's faces, a
+terrain's, a procedural prop) has what it was given, not only its
+collision: its render meshes, bones (each given in its parent's space,
+found by name whichever order they come in), attachments, mesh groups and
+the body groups they make, LOD masks and hitboxes. It is the same kind of
+model a file makes, so a game reads it through the same slots
+(`Model.Bones`, `HitboxSet`, `Attachments`, body groups) and a scene
+object poses it. The meshes are MeshGlue's: a vertex buffer kept as
+managed wrote it, its fields described by managed's `VertexLayout`
+(a semantic, an index, a format: s&box's ColorFormat is DXGI's numbering),
+an index buffer, draw calls and their materials. The renderer reads them
+as it reads a compiled mesh's buffers, and draws them again once managed
+writes to a buffer (a lock hands it the buffer's own bytes).
+
+Measured: a floor 64 square made through the slots, looked down on from
+100 away with a 60° view, covers 36 pixels square of 64 (35.5 predicted),
+in `materials/dev/reflectivity_30.vmat` from flatgrass's package
+(`cargo test`, `ENGINE2_CONTENT`). Under the real server, a headless
+player of Sandbox's zoo draws the level's 11 editor meshes, which it
+didn't before: the floor and walls in their dev grid material and the
+painted stripe across the floor, around the physgun in the player's hand
+(31 objects a frame where there were 20).
 
 **A map is lit as it was baked.** A map compiled with baked lighting
 (flatgrass is: `m_worldLightingInfo` in its `world.vwrld_c`) is lit from
@@ -850,7 +872,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/surfaces.rs` | surfaces: what shapes are made of, by index and by name, and what each does to them |
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
-| `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
+| `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation; what a builder is given (bones, attachments, mesh groups, hitboxes) as a file's model |
+| `engine2/src/rendermesh.rs` | meshes made at runtime: MeshGlue's render meshes, their vertex and index buffers, managed's vertex layouts |
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
 | `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
 | `engine2/src/camera.rs` | cameras managed asks for pixels: their worlds, what's shown, the view drawn into managed's bitmap |
