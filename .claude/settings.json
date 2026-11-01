@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sh tools/fullgame.sh)",
+      "Bash(sh tools/fullgame.sh:*)",
+      "Bash(git clone https://github.com/Facepunch/sandbox ../sandbox)",
+      "Bash(sh tools/sandbox.sh ../sandbox:*)",
+      "Bash(sh tools/compile.sh:*)",
+      "Bash(sh tools/map.sh:*)"
+    ]
+  }
+}
