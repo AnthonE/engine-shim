@@ -141,8 +141,10 @@ pub struct Renderer {
     sky_layout: wgpu::BindGroupLayout,
     skies: Mutex<HashMap<String, Arc<Sky>>>,
     lighting_layout: wgpu::BindGroupLayout,
-    /// the lighting group of a view with no lightmaps
+    /// the lighting group of a view with no lightmaps, and a light probe
+    /// volume's textures where there's none
     unlit: Lightmaps,
+    none: wgpu::TextureView,
     clamp: wgpu::Sampler,
     sampler: wgpu::Sampler,
     /// whether the GPU takes BC1 to BC7 as they are (most desktop GPUs,
@@ -179,11 +181,12 @@ impl Renderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("complex"), source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()) });
         let uniform = |binding, visibility| wgpu::BindGroupLayoutEntry { binding, visibility, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None };
         let tex = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None };
+        let array = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None };
         let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)] });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("material"), entries: &[
             uniform(0, wgpu::ShaderStages::FRAGMENT), tex(1), tex(2),
             wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
-            tex(4), tex(5), tex(6), tex(7), tex(8), tex(9), tex(10), tex(11),
+            tex(4), tex(5), tex(6), tex(7), tex(9), tex(10), tex(11),
         ] });
         let object_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("object"), entries: &[
             uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
@@ -198,6 +201,7 @@ impl Renderer {
             tex(4),
             wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
             wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            array(7), array(8), array(9),
         ] });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &material_layout, &object_layout, &lighting_layout], push_constant_ranges: &[] });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -251,8 +255,12 @@ impl Renderer {
         let clamp = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::FilterMode::Linear, ..Default::default()
         });
-        let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, [0.0; 4], [&white, &white, &white, &white], &[BakedLight::default()]);
-        Ok(Renderer { bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, adapter: format!("{} ({:?})", info.name, info.backend) })
+        let none = device.create_texture_with_data(&queue, &wgpu::TextureDescriptor {
+            label: None, size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
+        }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
+        let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&white, &white, &white, &white], [&none, &none, &none], &[BakedLight::default()]);
+        Ok(Renderer { none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, adapter: format!("{} ({:?})", info.name, info.backend) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -368,8 +376,52 @@ impl Renderer {
             return Err(views.into_iter().filter_map(Result::err).collect::<Vec<_>>().join("; "));
         };
         let size = content.compiled(maps[0]).and_then(|r| texture::read(r).ok()).map(|t| (t.width as f32, t.height as f32)).unwrap_or((1.0, 1.0));
-        let uniform = [scale.first().copied().unwrap_or(1.0), scale.get(1).copied().unwrap_or(1.0), size.0, size.1];
-        Ok(Some(Lightmaps::group(&self.device, &self.lighting_layout, &self.clamp, uniform, [&a, &b, &c, &e], lights)))
+        let uniform = LightingUniform { lightmap: [scale.first().copied().unwrap_or(1.0), scale.get(1).copied().unwrap_or(1.0), size.0, size.1], ..Default::default() };
+        Ok(Some(Lightmaps::group(&self.device, &self.lighting_layout, &self.clamp, uniform, [&a, &b, &c, &e], [&self.none, &self.none, &self.none], lights)))
+    }
+
+    /// A texture of slices (a light probe volume's), each slice a layer,
+    /// with its size: its blocks as they are where the GPU takes them.
+    fn slices(&self, content: &dyn Files, name: &str) -> Result<(wgpu::TextureView, [u32; 3]), String> {
+        let t = texture::read(content.compiled(name).ok_or_else(|| format!("{name}: not found"))?)?;
+        use texture::format as f;
+        let (w, h, d) = (t.width as u32, t.height as u32, t.depth as u32);
+        let (format, row, rows) = match t.format {
+            f::BC6H if self.bc && w % 4 == 0 && h % 4 == 0 => (wgpu::TextureFormat::Bc6hRgbUfloat, w / 4 * 16, h / 4),
+            f::BC7 if self.bc && w % 4 == 0 && h % 4 == 0 => (wgpu::TextureFormat::Bc7RgbaUnorm, w / 4 * 16, h / 4),
+            f::RGBA8888 => (wgpu::TextureFormat::Rgba8Unorm, w * 4, h),
+            f => return Err(format!("{name}: a volume of format {f} not drawn yet")),
+        };
+        let data = t.raw(0)?;
+        if data.len() < (row * rows * d) as usize { return Err(format!("{name}: short")); }
+        let gpu = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(name), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: d }, mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2, format, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &gpu, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &data[..(row * rows * d) as usize],
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(rows) },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: d },
+        );
+        Ok((gpu.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() }), [w, h, d]))
+    }
+
+    /// A light probe volume (a map's `env_light_probe_volume`, or managed's
+    /// SceneLightProbe): a box of probes, `transform` placing it, each
+    /// probe the light from each of six ways (its `texture`, the six
+    /// stacked in depth) and the lights it names and how much of each
+    /// reaches it (`indices`, `strengths`: as a lightmap's), lit by `lights`.
+    pub fn probe_volume(&self, content: &dyn Files, texture: &str, indices: &str, strengths: &str, place: ProbePlace, lights: &[BakedLight]) -> Result<ProbeVolume, String> {
+        let (cube, [w, h, d]) = self.slices(content, texture)?;
+        let (dli, _) = self.slices(content, indices)?;
+        let (dls, _) = self.slices(content, strengths)?;
+        // world to the box's own space, then to 0..1 across it
+        let size = (place.maxs - place.mins).max(Vec3::splat(1e-3));
+        let to_local = Mat4::from_scale(1.0 / size) * Mat4::from_translation(-place.mins) * place.transform.inverse();
+        let uniform = LightingUniform { to_local: to_local.to_cols_array_2d(), probes: [w as f32, h as f32, (d / 6).max(1) as f32, 0.0], ..Default::default() };
+        let lightmaps = Lightmaps::group(&self.device, &self.lighting_layout, &self.clamp, uniform, [&self.white, &self.white, &self.white, &self.white], [&cube, &dls, &dli], lights);
+        Ok(ProbeVolume { place, lighting: lightmaps })
     }
 
     /// A material's bind group, and whether it's drawn at all.
@@ -397,11 +449,12 @@ impl Renderer {
         let views = if blendable {
             let rma = &self.rma[version];
             [tex("g_tColorA", true, &self.white), tex("g_tRmaA", false, rma), tex("g_tNormalA", false, &self.flat),
-             tex("g_tColorB", true, &self.white), tex("g_tNormalB", false, &self.flat), tex("g_tRmaB", false, rma), self.white.clone(),
+             tex("g_tColorB", true, &self.white), tex("g_tNormalB", false, &self.flat), tex("g_tRmaB", false, rma),
              tex("g_tColorC", true, &self.white), tex("g_tNormalC", false, &self.flat), tex("g_tRmaC", false, rma)]
         } else {
+            // its tint mask where blendable has layer B's colour
             [tex("g_tColor", true, &self.white), tex("g_tAmbientOcclusion", false, &self.white), tex("g_tNormal", false, &self.flat),
-             self.white.clone(), self.flat.clone(), self.white.clone(), tex("g_tTintMask", false, &self.white),
+             tex("g_tTintMask", false, &self.white), self.flat.clone(), self.white.clone(),
              self.white.clone(), self.flat.clone(), self.white.clone()]
         };
         let has_normal = m.textures.keys().any(|t| t.starts_with("g_tNormal"));
@@ -426,8 +479,8 @@ impl Renderer {
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(name), layout: &self.material_layout, entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-            at(1, &views[0]), at(2, &views[1]), at(4, &views[2]), at(5, &views[3]), at(6, &views[4]), at(7, &views[5]), at(8, &views[6]),
-            at(9, &views[7]), at(10, &views[8]), at(11, &views[9]),
+            at(1, &views[0]), at(2, &views[1]), at(4, &views[2]), at(5, &views[3]), at(6, &views[4]), at(7, &views[5]),
+            at(9, &views[6]), at(10, &views[7]), at(11, &views[8]),
         ] });
         // translucent and decal materials wait for their own pass
         let drawn = !(m.int("F_TRANSLUCENT") != 0 || m.int("F_DECAL") != 0 || m.shader.contains("glass"));
@@ -504,9 +557,20 @@ impl Renderer {
         let d = &self.device;
         let view_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("view"), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
         let view_group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("view"), layout: &self.view_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() }] });
+        // how each object is lit: by the view's lightmaps (1), the probe
+        // volume that's chosen for it (2), or neither
+        let places: Vec<ProbePlace> = view.probes.iter().map(|v| v.place).collect();
+        let lit = |o: &Instance| -> (f32, &Lightmaps) {
+            if o.lightmapped && o.model.lightmap_uv { if let Some(l) = &view.lightmaps { return (1.0, l); } }
+            let center = o.transform.transform_point3((o.model.min + o.model.max) * 0.5);
+            let extents = o.transform.transform_vector3((o.model.max - o.model.min) * 0.5).abs();
+            match ProbePlace::choose(&places, o.origin.unwrap_or(center), center, extents) {
+                Some(i) => (2.0, &view.probes[i].lighting),
+                None => (0.0, &self.unlit),
+            }
+        };
         let object_groups: Vec<wgpu::BindGroup> = objects.iter().map(|o| {
-            let lit = o.lightmapped && o.model.lightmap_uv && view.lightmaps.is_some();
-            let u = ObjectUniform { model: o.transform.to_cols_array_2d(), tint: o.tint, flags: [(!o.bones.is_empty()) as i32 as f32, lit as i32 as f32, 0.0, 0.0] };
+            let u = ObjectUniform { model: o.transform.to_cols_array_2d(), tint: o.tint, flags: [(!o.bones.is_empty()) as i32 as f32, lit(o).0, 0.0, 0.0] };
             let b = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("object"), contents: bytemuck::bytes_of(&u), usage: wgpu::BufferUsages::UNIFORM });
             let palette: Vec<[[f32; 4]; 4]> = if o.bones.is_empty() { vec![Mat4::IDENTITY.to_cols_array_2d()] } else { o.bones.iter().map(|m| m.to_cols_array_2d()).collect() };
             let p = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("bones"), contents: bytemuck::cast_slice(&palette), usage: wgpu::BufferUsages::STORAGE });
@@ -544,9 +608,9 @@ impl Renderer {
             }
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &view_group, &[]);
-            pass.set_bind_group(3, &view.lightmaps.as_deref().unwrap_or(&self.unlit).group, &[]);
             for (o, group) in objects.iter().zip(&object_groups) {
                 pass.set_bind_group(2, group, &[]);
+                pass.set_bind_group(3, &lit(o).1.group, &[]);
                 for m in &o.model.meshes {
                     for d in &m.draws {
                         pass.set_vertex_buffer(0, m.vertices[d.vertex_buffer].slice(..));
@@ -587,8 +651,10 @@ pub struct Instance<'a> {
     pub tint: [f32; 4],
     pub bones: Vec<Mat4>,
     /// lit by the view's lightmaps, if its model has a place in them (a
-    /// map's own geometry)
+    /// map's own geometry); else by the probe volume chosen for it
     pub lightmapped: bool,
+    /// where it's lit from, choosing a probe volume (none: its centre)
+    pub origin: Option<Vec3>,
 }
 
 /// Where a view is from: the eye, its view and projection, what's behind
@@ -605,6 +671,8 @@ pub struct View {
     pub sky_rotation: glam::Quat,
     /// the map's baked lighting, for the objects it lights
     pub lightmaps: Option<Arc<Lightmaps>>,
+    /// its light probe volumes, for everything else
+    pub probes: Vec<Arc<ProbeVolume>>,
 }
 
 /// A light a map's lightmaps name by its bake index (managed's
@@ -668,7 +736,7 @@ pub struct Lightmaps {
 }
 
 impl Lightmaps {
-    fn group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, uniform: [f32; 4], maps: [&wgpu::TextureView; 4], lights: &[BakedLight]) -> Lightmaps {
+    fn group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, uniform: LightingUniform, maps: [&wgpu::TextureView; 4], probes: [&wgpu::TextureView; 3], lights: &[BakedLight]) -> Lightmaps {
         // every index has a light: black, if none was baked with it
         let mut table = vec![[[0f32; 4]; 3]; 256];
         for l in lights {
@@ -678,14 +746,98 @@ impl Lightmaps {
                 l.color.extend(0.0).into(),
             ];
         }
-        let u = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("lightmaps"), contents: bytemuck::cast_slice(&uniform), usage: wgpu::BufferUsages::UNIFORM });
+        let u = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("lightmaps"), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
         let l = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("baked lights"), contents: bytemuck::cast_slice(&table), usage: wgpu::BufferUsages::STORAGE });
         Lightmaps { group: device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("lightmaps"), layout, entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: u.as_entire_binding() },
             at(1, maps[0]), at(2, maps[1]), at(3, maps[2]), at(4, maps[3]),
             wgpu::BindGroupEntry { binding: 5, resource: l.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(sampler) },
+            at(7, probes[0]), at(8, probes[1]), at(9, probes[2]),
         ] }) }
+    }
+}
+
+/// What a lighting group's shader is told: the lightmaps' UV scale and
+/// size; a probe volume's world to its box (0..1), and its probes' count
+/// each way.
+#[repr(C)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+struct LightingUniform {
+    lightmap: [f32; 4],
+    to_local: [[f32; 4]; 4],
+    probes: [f32; 4],
+}
+
+/// Where a light probe volume is: its box (in its own space), what places
+/// it in the world (rotation and translation), and its priority among the
+/// volumes that hold an object.
+#[derive(Clone, Copy, Debug)]
+pub struct ProbePlace {
+    pub transform: Mat4,
+    pub mins: Vec3,
+    pub maxs: Vec3,
+    pub priority: i32,
+}
+
+/// A light probe volume on the GPU (Renderer::probe_volume).
+pub struct ProbeVolume {
+    pub place: ProbePlace,
+    lighting: Lightmaps,
+}
+
+impl ProbePlace {
+    /// The volume that lights an object, as s&box chooses it
+    /// (CLightBinner2::ChooseLightProbeVolume, as Sandbox.SceneRenderer's
+    /// LightProbeVolume.Choose has it): one holding its origin over one
+    /// that doesn't, then the higher priority, then the nearest; one that
+    /// doesn't hold it must touch its bounds.
+    pub fn choose(volumes: &[ProbePlace], origin: Vec3, center: Vec3, extents: Vec3) -> Option<usize> {
+        let to_box = |mins: Vec3, maxs: Vec3, p: Vec3| ((mins - p).max(Vec3::ZERO) + (p - maxs).max(Vec3::ZERO)).length_squared();
+        let local = |v: &ProbePlace, p: Vec3| v.transform.inverse().transform_point3(p);
+        let (mut best, mut best_priority, mut best_dist, mut best_contains) = (None, i32::MIN, f32::MAX, false);
+        for (i, v) in volumes.iter().enumerate() {
+            let at = local(v, origin);
+            let outside = to_box(v.mins, v.maxs, at);
+            let contains = outside == 0.0;
+            let dist = if contains { at.length_squared() } else { outside };
+            if contains == best_contains {
+                if contains && v.priority != best_priority {
+                    if v.priority < best_priority { continue; }
+                } else if dist > best_dist {
+                    continue;
+                }
+                if !contains && extents.length_squared() < to_box(v.mins, v.maxs, local(v, center)) { continue; }
+            } else if !contains {
+                continue;
+            }
+            (best, best_priority, best_dist, best_contains) = (Some(i), v.priority, dist, contains);
+        }
+        best
+    }
+}
+
+impl ProbeVolume {
+    /// A map's probe volumes, from its entities (`env_light_probe_volume`,
+    /// `env_combined_light_probe_volume`, as managed's map loader reads
+    /// them): each one's place and textures.
+    pub fn from_entities(entities: &[crate::assets::entities::Entity]) -> Vec<(ProbePlace, [String; 3])> {
+        let mut out = Vec::new();
+        for e in entities {
+            let get = |k: &str| e.get(crate::string_token(k));
+            if !matches!(get("classname"), Some("env_light_probe_volume" | "env_combined_light_probe_volume")) { continue; }
+            let floats = |k: &str, d: [f32; 3]| { let f: Vec<f32> = get(k).map(|v| v.split_whitespace().filter_map(|x| x.parse().ok()).collect()).unwrap_or_default(); Vec3::from(core::array::from_fn::<f32, 3, _>(|i| f.get(i).copied().unwrap_or(d[i]))) };
+            let (Some(t), Some(i), Some(s)) = (get("lightprobetexture"), get("lightprobetexture_dli"), get("lightprobetexture_dls")) else { continue };
+            let a = floats("angles", [0.0; 3]);
+            let rot = glam::Quat::from_rotation_z(a.y.to_radians()) * glam::Quat::from_rotation_y(a.x.to_radians()) * glam::Quat::from_rotation_x(a.z.to_radians());
+            out.push((ProbePlace {
+                transform: Mat4::from_rotation_translation(rot, floats("origin", [0.0; 3])),
+                mins: floats("box_mins", [-72.0; 3]),
+                maxs: floats("box_maxs", [72.0; 3]),
+                priority: get("indoor_outdoor_level").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0) as i32,
+            }, [t.to_string(), i.to_string(), s.to_string()]));
+        }
+        out
     }
 }
 
@@ -710,6 +862,7 @@ impl View {
             sky: None,
             sky_rotation: glam::Quat::IDENTITY,
             lightmaps: None,
+            probes: Vec::new(),
         }
     }
 
@@ -721,12 +874,27 @@ impl View {
         let fov = 30f32.to_radians();
         let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
         let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None }
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new() }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use glam::{Mat4, Vec3};
+
+    /// As s&box's own test of it (BakedLightTests.LightProbeVolumeIsChosenAsNativeChoosesIt).
+    #[test]
+    fn a_probe_volume_is_chosen_as_native_chooses_it() {
+        let volume = |x: f32, size: f32, priority: i32| super::ProbePlace { transform: Mat4::from_translation(Vec3::new(x, 0.0, 0.0)), mins: Vec3::splat(-size), maxs: Vec3::splat(size), priority };
+        let volumes = [volume(0.0, 100.0, 0), volume(50.0, 20.0, 1), volume(300.0, 50.0, 0)];
+        let at = |x: f32| Vec3::new(x, 0.0, 0.0);
+        let choose = |x: f32, extents: f32| super::ProbePlace::choose(&volumes, at(x), at(x), Vec3::splat(extents));
+        assert_eq!(choose(0.0, 1.0), Some(0), "inside only the outdoor one");
+        assert_eq!(choose(50.0, 1.0), Some(1), "inside both: the higher priority");
+        assert_eq!(choose(245.0, 10.0), Some(2), "inside none: the nearest it touches");
+        assert_eq!(choose(200.0, 1.0), None, "inside none, touching none");
+    }
+
     /// The TV from sbox.game (tools/package.sh facepunch.tv), if this
     /// machine has it and a GPU (or lavapipe): drawn, it's there, and dark.
     #[test]
@@ -738,7 +906,7 @@ mod tests {
         let Ok(r) = super::Renderer::new() else { eprintln!("no adapter: skipped"); return };
         let m = r.model(&content, "models/sbox_props/tv/tv.vmdl").unwrap();
         assert!(m.notes.is_empty(), "{:?}", m.notes);
-        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false }], &super::View::framing(&m, 35.0, 15.0), 128, 128);
+        let image = r.draw(&[super::Instance { model: &m, transform: glam::Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None }], &super::View::framing(&m, 35.0, 15.0), 128, 128);
         let covered: Vec<&[u8]> = image.chunks_exact(4).filter(|p| p[3] > 0).collect();
         let mean = covered.iter().map(|p| p[0] as f32 + p[1] as f32 + p[2] as f32).sum::<f32>() / (3 * covered.len()) as f32;
         eprintln!("{} of {} pixels covered, mean {mean:.0}", covered.len(), 128 * 128);

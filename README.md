@@ -568,18 +568,70 @@ yaw 101; colour 3.5 times 255 245 234) and its sunrise sky, the sun's
 glow in it where the light comes from; the roof of the spawn building,
 its scaffolding, the grass to the horizon, and the physgun in the
 player's hand, posed by its animation graph. What isn't drawn yet:
-glass and other translucent materials, shadows, the baked lightmaps,
-particles, decals and the UI; the sky shows faint lines where its cube's
-faces meet. A headless player has no tonemapper (`Graphics.IsAvailable`
-is false with the empty render device), so the watcher turns auto
-exposure off for its frames.
+glass and other translucent materials, dynamic shadows (what moves casts
+none), particles, decals and the UI; the sky shows faint lines where its
+cube's faces meet. A headless player has no tonemapper
+(`Graphics.IsAvailable` is false with the empty render device), so the
+watcher turns auto exposure off for its frames.
+
+**A map is lit as it was baked.** A map compiled with baked lighting
+(flatgrass is: `m_worldLightingInfo` in its `world.vwrld_c`) is lit from
+it, as s&box's own shaders read it (`vr_lighting.fxc`, public in
+sbox-public's `game/core/shaders`):
+
+- **Its geometry, from its lightmaps.** Each texel names up to four
+  lights (`direct_light_indices`) and how much of each reaches it
+  (`direct_light_strengths`, stored as its square root), the shadows
+  baked in; each is shaded as a dynamic light is, so the sun moves across
+  a normal map. The light that bounced is the `irradiance`, with the
+  "AHD" lightmap (`directional_irradiance`: how much of it comes from one
+  way, and which) turning it by the normal map. The sun reaches the map's
+  geometry only through them, as in s&box. Its place in them is each
+  vertex's TEXCOORD3 (named in lower case), times the world's
+  `m_vLightmapUvScale`.
+- **Everything else, from its light probe volumes** (`env_light_probe_volume`
+  and `env_combined_light_probe_volume`, managed's `SceneLightProbe`):
+  each probe the light from six ways, stacked in the volume texture's
+  depth (+x, -x, +y, -y, +z, -z: measured, the +z face the sky's and -z
+  the ground's), and four lights with their strengths, as a texel of the
+  lightmaps; read per pixel between the probes around it. Each object is
+  lit from one volume, chosen as `CLightBinner2::ChooseLightProbeVolume`
+  chooses it (Sandbox.SceneRenderer's port of it): one holding it over
+  one that doesn't, then priority, then the nearest that touches it.
+- **The lights they name** are found by bake index: managed's map loader
+  gives each light the `bakelightindex` its entity has
+  (`SetBakeLightIndex`, and a `bakelightindexscale` its colour is scaled
+  by), and the camera lights the lightmaps and probes with the ones in
+  its worlds.
+
+Measured (`cargo test`, through the slots, as managed calls them, with
+`ENGINE2_SAMPLE_MAP` naming flatgrass's pak and `ENGINE2_CONTENT` its
+materials): looking straight down at the hall's north wall, the ground in
+its shadow reads 54 and the sunlit grass beside it 166; with no light
+given the sun's index, 54 and 65 (only the light that bounced). All 27
+of its probe volumes are built from what managed sets on them, and a
+point in the hall is lit by the hall's own volume rather than the
+map-wide one. Inside the hall, props are lit by its lamps and the light
+from its doors, and not by the sun outside.
+
+And materials as s&box packs them (`blendable.shader` is public too):
+`complex`'s normal maps are hemi-octahedral, and blendable's textures
+are packed by the material's `m_shaderVersion` (version 0: a plain
+normal, `g_tRma` roughness, metalness, occlusion and reveal mask;
+version 1: complex's normal, `g_tRma` metalness, occlusion and mask).
+Read the other way, flatgrass's walls and floors were black. Now its
+corrugated metal, brick, concrete and roofs look as in Facepunch's own
+screenshots of it on sbox.game (their newer revision has another sky).
 
 `render map` draws a map from its pak alone, its sun and sky as its
-entities name them, from any camera: the same renderer without a game.
+entities name them, lit by its lightmaps and probes (`RENDER_LIGHTMAPS=0`:
+without), from any camera: the same renderer without a game.
+`RENDER_PROPS` places models in it (`models/x.vmdl@x,y,z;...`), lit by
+its probes.
 
 ```sh
 ENGINE2_CONTENT=../sandbox/Assets/maps/flatgrass.vpk:../content-flatgrass \
-  cargo run --release -p render -- map maps/flatgrass flatgrass.png 128 -48 449 5 250
+  cargo run --release -p render -- map maps/flatgrass flatgrass.png -1200 900 300 8 -40
 ```
 
 - **Meshes** (`engine2/src/assets/mesh.rs`): the vertex and index
@@ -596,13 +648,16 @@ ENGINE2_CONTENT=../sandbox/Assets/maps/flatgrass.vpk:../content-flatgrass \
   Of the 173 materials in a Sandbox server's cache, 158 are
   `complex.shader`, 8 `blendable`, 6 glass, 1 skin: no custom shaders.
 - **Shaders** (`engine2/src/render/shader.wgsl`): our own `complex` and
-  `blendable`, written from what their compiled textures hold:
-  `complex`'s colour (its alpha the alpha test's mask, or metalness),
-  normal (x and y, roughness in blue), occlusion and tint mask;
-  `blendable`'s two layers (each a colour, a normal and a map of
-  metalness, occlusion and roughness), blended by the vertices' paint
-  (TEXCOORD4) and tinted by it (TEXCOORD5). Lit by a sun and a sky;
-  tangents from the surface's derivatives, as s&box's meshes carry none.
+  `blendable`, written from what their compiled textures hold and what
+  s&box's public shader sources say of them: `complex`'s colour (its
+  alpha the alpha test's mask, or metalness), normal (hemi-octahedral,
+  roughness in blue), occlusion and tint mask; `blendable`'s layers (up to
+  three here, each a colour, a normal and `g_tRma`, as its shader version
+  packs them), each revealed by the vertices' paint (TEXCOORD4) against
+  its mask as softly as the material says, and tinted where its colour's
+  alpha says (by TEXCOORD5 too, with `F_USE_TINT_MASKS_IN_VERTEX_PAINT`).
+  Lit by a sun and a sky, or a map's baked lighting (above); tangents
+  from the surface's derivatives, as s&box's meshes carry none.
 
 Measured against the thumbnails Facepunch's own engine rendered for
 sbox.game, on seven of Sandbox's props (the TV, oil drum, office chair,
@@ -622,7 +677,7 @@ ENGINE2_CONTENT=../content cargo run --release -p render -- models/sbox_props/tv
 `tools/package.sh facepunch.flatgrass <folder> '\.(vmat_c|vtex_c|vmdl_c|vmesh_c)$'`
 fetches a map's materials and textures (outside the project: a project's
 files are sent to its players). `RENDER_DEBUG` shows what the shader read (1 base colour, 2 normal, 3
-occlusion, 4 roughness).
+occlusion, 4 roughness, 5 the light that bounced, 6 the direct light).
 
 ## Reproduce
 
