@@ -79,6 +79,10 @@ struct ViewUniform {
     sky: [f32; 4],
     ground: [f32; 4],
     sky_rotation: [[f32; 4]; 4],
+    /// world to the sun's shadow map (x, y -1..1, depth 0..1)
+    shadow: [[f32; 4]; 4],
+    /// x: shadows (1), y: a texel of the map in uv, z: in the world
+    shadow_params: [f32; 4],
 }
 
 #[repr(C)]
@@ -149,6 +153,11 @@ pub struct Renderer {
     /// translucent, glass and cheap glass, and what glass's view and
     /// material groups hold (what's been drawn; its three textures)
     blend_pipeline: wgpu::RenderPipeline,
+    /// the sun's shadow map: what's drawn into it, from what, read how
+    shadow_pipeline: wgpu::RenderPipeline,
+    uniform_layout: wgpu::BindGroupLayout,
+    compare_sampler: wgpu::Sampler,
+    empty: wgpu::BindGroup,
     glass_pipeline: wgpu::RenderPipeline,
     cheap_glass_pipeline: wgpu::RenderPipeline,
     glass_view_layout: wgpu::BindGroupLayout,
@@ -187,6 +196,9 @@ pub struct Renderer {
 const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SAMPLES: u32 = 4;
+/// the sun's shadow map's size, and how far from the eye what casts into it may be
+const SHADOW_SIZE: u32 = 2048;
+const SHADOW_REACH: f32 = 4000.0;
 
 impl Renderer {
     pub fn new() -> Result<Renderer, String> {
@@ -203,7 +215,13 @@ impl Renderer {
         let uniform = |binding, visibility| wgpu::BindGroupLayoutEntry { binding, visibility, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None };
         let tex = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None };
         let array = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None };
-        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)] });
+        // the view, and the sun's shadow map, compared with
+        let shadow_map = wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None };
+        let compare = wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None };
+        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), shadow_map, compare] });
+        // the shadow map's own pass: the view alone
+        let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("shadow view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)] });
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &[] });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("material"), entries: &[
             uniform(0, wgpu::ShaderStages::FRAGMENT), tex(1), tex(2),
             wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
@@ -215,17 +233,16 @@ impl Renderer {
         ] });
         // a map's baked lighting (as s&box's vr_lighting.fxc reads it): its
         // lightmaps (direct lights' indices and strengths, irradiance, and
-        // the directional part of it) and the lights the indices name
+        // the directional part of it) or a probe volume's (indices,
+        // strengths, ambient cubes: an object reads one or the other, so
+        // they share their places), and the lights the indices name
         let lighting_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("lighting"), entries: &[
-            uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), tex(1), tex(2),
-            wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
-            tex(4),
+            uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), array(1), array(2), array(3), array(4),
             wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
             wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
-            array(7), array(8), array(9),
         ] });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &material_layout, &object_layout, &lighting_layout], push_constant_ranges: &[] });
-        let glass_view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), tex(1)] });
+        let glass_view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), tex(1), shadow_map, compare] });
         let glass_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass"), entries: &[
             uniform(0, wgpu::ShaderStages::FRAGMENT), tex(1), tex(2),
             wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
@@ -250,6 +267,21 @@ impl Renderer {
             cache: None,
         });
         let pipeline = make("complex", &layout, "fs_main", None, true);
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("shadow"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&uniform_layout, &empty_layout, &object_layout], push_constant_ranges: &[] })),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_shadow"), compilation_options: Default::default(), buffers: &vertex_layout },
+            fragment: None,
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: true, depth_compare: wgpu::CompareFunction::Less, stencil: Default::default(), bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 } }),
+            multisample: Default::default(),
+            multiview: None,
+            cache: None,
+        });
+        let empty = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &empty_layout, entries: &[] });
+        let compare_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, compare: Some(wgpu::CompareFunction::LessEqual), ..Default::default()
+        });
         let blend_pipeline = make("translucent", &layout, "fs_main", Some(wgpu::BlendState::ALPHA_BLENDING), false);
         let glass_pipeline = make("glass", &glass_pipeline_layout, "fs_glass", None, false);
         let cheap_glass_pipeline = make("cheap glass", &glass_pipeline_layout, "fs_glass", Some(wgpu::BlendState::ALPHA_BLENDING), false);
@@ -288,8 +320,8 @@ impl Renderer {
             label: None, size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
-        let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&white, &white, &white, &white], [&none, &none, &none], &[BakedLight::default()]);
-        Ok(Renderer { blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
+        let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&none, &none, &none, &none], &[BakedLight::default()]);
+        Ok(Renderer { empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -400,13 +432,13 @@ impl Renderer {
         if version != 1 { return Err(format!("{folder}: lightmaps of game version {version} not read yet")); }
         let scale = info.get("m_vLightmapUvScale").map(|v| v.floats()).unwrap_or_default();
         // in the order the world lists them: indices, strengths, irradiance, directional
-        let views = [0, 1, 2, 3].map(|i| self.texture(content, maps[i], false));
-        let [Ok(a), Ok(b), Ok(c), Ok(e)] = views else {
+        let views = [0, 1, 2, 3].map(|i| self.slices(content, maps[i]));
+        let [Ok((a, size)), Ok((b, _)), Ok((c, _)), Ok((e, _))] = views else {
             return Err(views.into_iter().filter_map(Result::err).collect::<Vec<_>>().join("; "));
         };
-        let size = content.compiled(maps[0]).and_then(|r| texture::read(r).ok()).map(|t| (t.width as f32, t.height as f32)).unwrap_or((1.0, 1.0));
+        let size = (size[0] as f32, size[1] as f32);
         let uniform = LightingUniform { lightmap: [scale.first().copied().unwrap_or(1.0), scale.get(1).copied().unwrap_or(1.0), size.0, size.1], ..Default::default() };
-        Ok(Some(Lightmaps::group(&self.device, &self.lighting_layout, &self.clamp, uniform, [&a, &b, &c, &e], [&self.none, &self.none, &self.none], lights)))
+        Ok(Some(Lightmaps::group(&self.device, &self.lighting_layout, &self.clamp, uniform, [&a, &b, &c, &e], lights)))
     }
 
     /// A texture of slices (a light probe volume's), each slice a layer,
@@ -449,7 +481,7 @@ impl Renderer {
         let size = (place.maxs - place.mins).max(Vec3::splat(1e-3));
         let to_local = Mat4::from_scale(1.0 / size) * Mat4::from_translation(-place.mins) * place.transform.inverse();
         let uniform = LightingUniform { to_local: to_local.to_cols_array_2d(), probes: [w as f32, h as f32, (d / 6).max(1) as f32, 0.0], ..Default::default() };
-        let lightmaps = Lightmaps::group(&self.device, &self.lighting_layout, &self.clamp, uniform, [&self.white, &self.white, &self.white, &self.white], [&cube, &dls, &dli], lights);
+        let lightmaps = Lightmaps::group(&self.device, &self.lighting_layout, &self.clamp, uniform, [&dli, &dls, &cube, &self.none], lights);
         Ok(ProbeVolume { place, lighting: lightmaps })
     }
 
@@ -606,7 +638,37 @@ impl Renderer {
         let exposure = 1.0;
         let ambient = 1.0;
         let view_proj = view.proj * view.view;
+        // what casts the sun's shadow: what isn't in the lightmaps (their
+        // shadows are baked in, as s&box's cascades leave a baked sun's
+        // static casters out), near enough to be seen
+        // (a map's own objects, lightmapped or lit by its probes, were all
+        // there when it was baked)
+        let casts = |o: &Instance| !(o.lightmapped && view.lightmaps.is_some());
+        let towards = sun.normalize();
+        let light_view = Mat4::look_at_rh(Vec3::ZERO, -towards, if towards.z.abs() > 0.99 { Vec3::X } else { Vec3::Z });
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        let mut casters = 0;
+        for o in objects.iter().filter(|o| casts(o)) {
+            let (a, b) = (o.model.min, o.model.max);
+            if o.transform.transform_point3((a + b) * 0.5).distance(view.eye) > SHADOW_REACH { continue; }
+            casters += 1;
+            for k in 0..8 {
+                let c = Vec3::new(if k & 1 == 0 { a.x } else { b.x }, if k & 2 == 0 { a.y } else { b.y }, if k & 4 == 0 { a.z } else { b.z });
+                let p = light_view.transform_point3(o.transform.transform_point3(c));
+                lo = lo.min(p);
+                hi = hi.max(p);
+            }
+        }
+        // the casters' box as the sun sees it (looking down -z), and far
+        // enough beyond for what they fall on
+        let shadow = if casters > 0 {
+            let pad = 4.0;
+            Some(Mat4::orthographic_rh(lo.x - pad, hi.x + pad, lo.y - pad, hi.y + pad, -hi.z - 100.0, -lo.z + SHADOW_REACH) * light_view)
+        } else { None };
+        let texel = if casters > 0 { ((hi.x - lo.x).max(hi.y - lo.y) + 8.0) / SHADOW_SIZE as f32 } else { 0.0 };
         let uniform = ViewUniform {
+            shadow: shadow.unwrap_or(Mat4::IDENTITY).to_cols_array_2d(),
+            shadow_params: [shadow.is_some() as i32 as f32, 1.0 / SHADOW_SIZE as f32, texel, 0.0],
             view_proj: view_proj.to_cols_array_2d(),
             inv_view_proj: view_proj.inverse().to_cols_array_2d(),
             eye: view.eye.extend(exposure).into(),
@@ -619,7 +681,16 @@ impl Renderer {
         };
         let d = &self.device;
         let view_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("view"), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
-        let view_group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("view"), layout: &self.view_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() }] });
+        let shadow_size = if shadow.is_some() { SHADOW_SIZE } else { 1 };
+        let shadow_map = d.create_texture(&wgpu::TextureDescriptor {
+            label: Some("shadow"), size: wgpu::Extent3d { width: shadow_size, height: shadow_size, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2, format: DEPTH, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
+        }).create_view(&Default::default());
+        let view_group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("view"), layout: &self.view_layout, entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() },
+            at(2, &shadow_map),
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.compare_sampler) },
+        ] });
         // how each object is lit: by the view's lightmaps (1), the probe
         // volume that's chosen for it (2), or neither
         let places: Vec<ProbePlace> = view.probes.iter().map(|v| v.place).collect();
@@ -664,6 +735,32 @@ impl Renderer {
         let resolved_view = resolved.create_view(&Default::default());
         let mut encoder = d.create_command_encoder(&Default::default());
         {
+            // the sun's shadow map (cleared to nothing in the way when there's nothing to cast)
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &shadow_map, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }), stencil_ops: None }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            if shadow.is_some() {
+                let shadow_view = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("shadow view"), layout: &self.uniform_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() }] });
+                pass.set_pipeline(&self.shadow_pipeline);
+                pass.set_bind_group(0, &shadow_view, &[]);
+                pass.set_bind_group(1, &self.empty, &[]);
+                for (o, group) in objects.iter().zip(&object_groups).filter(|(o, _)| casts(o)) {
+                    pass.set_bind_group(2, group, &[]);
+                    for m in &o.model.meshes {
+                        for dr in m.draws.iter().filter(|dr| dr.kind == Kind::Opaque) {
+                            pass.set_vertex_buffer(0, m.vertices[dr.vertex_buffer].slice(..));
+                            pass.set_index_buffer(m.indices[dr.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
+                            pass.draw_indexed(dr.range.clone(), dr.base_vertex, 0..1);
+                        }
+                    }
+                }
+            }
+        }
+        {
             let [r, g, b, a] = view.clear;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -704,6 +801,8 @@ impl Renderer {
             let glass_view = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("glass view"), layout: &self.glass_view_layout, entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() },
                 at(1, &behind.create_view(&Default::default())),
+                at(2, &shadow_map),
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.compare_sampler) },
             ] });
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -849,7 +948,9 @@ pub struct Lightmaps {
 }
 
 impl Lightmaps {
-    fn group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, uniform: LightingUniform, maps: [&wgpu::TextureView; 4], probes: [&wgpu::TextureView; 3], lights: &[BakedLight]) -> Lightmaps {
+    /// `maps`: the light indices, their strengths, the irradiance (a
+    /// volume's ambient cubes) and its direction (none for a volume).
+    fn group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, uniform: LightingUniform, maps: [&wgpu::TextureView; 4], lights: &[BakedLight]) -> Lightmaps {
         // every index has a light: black, if none was baked with it
         let mut table = vec![[[0f32; 4]; 3]; 256];
         for l in lights {
@@ -866,7 +967,6 @@ impl Lightmaps {
             at(1, maps[0]), at(2, maps[1]), at(3, maps[2]), at(4, maps[3]),
             wgpu::BindGroupEntry { binding: 5, resource: l.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(sampler) },
-            at(7, probes[0]), at(8, probes[1]), at(9, probes[2]),
         ] }) }
     }
 }
@@ -1006,6 +1106,49 @@ mod tests {
         assert_eq!(choose(50.0, 1.0), Some(1), "inside both: the higher priority");
         assert_eq!(choose(245.0, 10.0), Some(2), "inside none: the nearest it touches");
         assert_eq!(choose(200.0, 1.0), None, "inside none, touching none");
+    }
+
+    /// Flatgrass (ENGINE2_SAMPLE_MAP its pak; ENGINE2_CONTENT its
+    /// materials and the oil drum from sbox.game), if this machine has it:
+    /// a drum stood on its sunlit pavement shadows the ground on the far
+    /// side of it from the sun, and not the near side; the map's own
+    /// objects cast nothing (their shadows are baked).
+    #[test]
+    fn what_moves_casts_the_suns_shadow() {
+        use super::Files;
+        let (Ok(map), Ok(dirs)) = (std::env::var("ENGINE2_SAMPLE_MAP"), std::env::var("ENGINE2_CONTENT")) else { return };
+        let content = super::Content::of(std::iter::once(map.into()).chain(dirs.split(':').map(Into::into)));
+        if content.read("models/sbox_props/oil_drum/oil_drum_a.vmdl_c").is_none() || content.read("maps/flatgrass/world.vwrld_c").is_none() { return; }
+        let Ok(r) = super::Renderer::new() else { eprintln!("no adapter: skipped"); return };
+        let lump = content.compiled("maps/flatgrass/entities/default_ents.vents").and_then(|r| r.kv3("DATA")?.ok()).map(|d| crate::assets::entities::read_lump(&d)).unwrap();
+        let lights = super::BakedLight::from_entities(&lump);
+        let sun = lights.iter().find(|l| l.sun).unwrap();
+        let mut view = super::View::camera(Vec3::new(-560.0, 560.0, 400.0), [89.9, 0.0, 0.0], 60.0, 4.0, 40000.0, 1.0);
+        view.sun = Some((sun.towards, sun.color));
+        view.lightmaps = r.lightmaps(&content, "maps/flatgrass", &lights).unwrap().map(std::sync::Arc::new);
+        let world: Vec<(super::Model, Mat4)> = crate::assets::worldnode::scene_objects("maps/flatgrass", |p| content.read(p)).into_iter().filter_map(|(name, rows, _)| {
+            let m = r.model(&content, &name).ok()?;
+            Some((m, Mat4::from_cols_array_2d(&[[rows[0][0], rows[1][0], rows[2][0], 0.0], [rows[0][1], rows[1][1], rows[2][1], 0.0], [rows[0][2], rows[1][2], rows[2][2], 0.0], [rows[0][3], rows[1][3], rows[2][3], 1.0]])))
+        }).collect();
+        let drum = r.model(&content, "models/sbox_props/oil_drum/oil_drum_a.vmdl").unwrap();
+        let mut objects: Vec<super::Instance> = world.iter().map(|(m, t)| super::Instance { model: m, transform: *t, tint: [1.0; 4], bones: Vec::new(), lightmapped: true, origin: None }).collect();
+        let size = 256;
+        let luma = |image: &[u8], p: Vec3| {
+            let c = (view.proj * view.view).project_point3(p);
+            let (x, y) = (((c.x * 0.5 + 0.5) * size as f32) as usize, ((0.5 - c.y * 0.5) * size as f32) as usize);
+            image[(y * size + x) * 4..][..3].iter().map(|&v| v as f32).sum::<f32>() / 3.0
+        };
+        // the far side from the sun (its shadow falls along -towards) and the near side
+        let away = Vec3::new(-sun.towards.x, -sun.towards.y, 0.0).normalize();
+        let (behind, before) = (Vec3::new(-560.0, 560.0, 4.0) + away * 30.0, Vec3::new(-560.0, 560.0, 4.0) - away * 30.0);
+        let bare = r.draw(&objects, &view, size as u32, size as u32);
+        objects.push(super::Instance { model: &drum, transform: Mat4::from_translation(Vec3::new(-560.0, 560.0, 4.0)), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None });
+        let with = r.draw(&objects, &view, size as u32, size as u32);
+        let (b0, f0, b1, f1) = (luma(&bare, behind), luma(&bare, before), luma(&with, behind), luma(&with, before));
+        eprintln!("without the drum: far side {b0:.0}, near side {f0:.0}; with it: {b1:.0}, {f1:.0}");
+        assert!(b0 > 120.0 && f0 > 120.0, "sunlit pavement either side");
+        assert!(b1 < b0 * 0.6, "its shadow behind it");
+        assert!((f1 - f0).abs() < 10.0, "none before it");
     }
 
     /// The microwave from sbox.game (tools/package.sh facepunch.microwave),

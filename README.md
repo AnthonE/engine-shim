@@ -568,7 +568,8 @@ yaw 101; colour 3.5 times 255 245 234) and its sunrise sky, the sun's
 glow in it where the light comes from; the roof of the spawn building,
 its scaffolding, the grass to the horizon, and the physgun in the
 player's hand, posed by its animation graph. What isn't drawn yet:
-dynamic shadows (what moves casts none), particles, decals and the UI. A headless player has no tonemapper
+local lights' shadows from what moves (the sun's are drawn, below),
+particles, decals and the UI. A headless player has no tonemapper
 (`Graphics.IsAvailable` is false with the empty render device), so the
 watcher turns auto exposure off for its frames.
 
@@ -620,6 +621,16 @@ version 1: complex's normal, `g_tRma` metalness, occlusion and mask).
 Read the other way, flatgrass's walls and floors were black. Now its
 corrugated metal, brick, concrete and roofs look as in Facepunch's own
 screenshots of it on sbox.game (their newer revision has another sky).
+
+**What moves casts the sun's shadow.** A shadow map from the sun (2048
+square, fitted to what casts within 4,000 of the eye), read nine taps at
+a time a little off each surface, darkens the sun wherever it lands: on
+what moves and on the map, its baked sun too. Only what isn't the map's
+casts into it: a map's own objects were there when it was baked, so
+their shadows are in its lightmaps (as s&box's cascades leave a baked
+sun's static casters out). Measured (`cargo test`, flatgrass and the oil
+drum): the pavement on the far side of a drum from the sun goes from 157
+to 58, the near side stays 191.
 
 **Glass, translucency and glow**, as `glass.shader` and
 `vr_shared_standard_ps_code.fxc` (both public) draw them. What's opaque is

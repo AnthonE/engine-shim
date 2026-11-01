@@ -50,6 +50,10 @@ struct View {
     sky: vec4<f32>,
     ground: vec4<f32>,
     sky_rotation: mat4x4<f32>,
+    // world to the sun's shadow map; x: shadows (1), y: a texel of it in
+    // uv, z: in the world
+    shadow: mat4x4<f32>,
+    shadow_params: vec4<f32>,
 };
 
 struct Material {
@@ -74,6 +78,8 @@ struct Material {
 @group(0) @binding(0) var<uniform> view: View;
 // what's been drawn so far, for glass to show through it
 @group(0) @binding(1) var scene: texture_2d<f32>;
+@group(0) @binding(2) var shadow_map: texture_depth_2d;
+@group(0) @binding(3) var shadow_compare: sampler_comparison;
 @group(1) @binding(0) var<uniform> material: Material;
 @group(1) @binding(1) var color_a: texture_2d<f32>;
 @group(1) @binding(2) var occlusion_a: texture_2d<f32>;
@@ -106,10 +112,13 @@ struct Lighting {
     probes: vec4<f32>,
 };
 @group(3) @binding(0) var<uniform> lighting: Lighting;
-@group(3) @binding(1) var light_indices: texture_2d<f32>;
-@group(3) @binding(2) var light_strengths: texture_2d<f32>;
-@group(3) @binding(3) var irradiance: texture_2d<f32>;
-@group(3) @binding(4) var directional_irradiance: texture_2d<f32>;
+// (a probe volume's indices, strengths and ambient cubes in the same
+// places: an object reads one or the other; each a layer, or a layer of
+// probes)
+@group(3) @binding(1) var light_indices: texture_2d_array<f32>;
+@group(3) @binding(2) var light_strengths: texture_2d_array<f32>;
+@group(3) @binding(3) var irradiance: texture_2d_array<f32>;
+@group(3) @binding(4) var directional_irradiance: texture_2d_array<f32>;
 struct BakedLight {
     // xyz where it is; w: 0 none, 1 a light, 2 a sun
     position: vec4<f32>,
@@ -119,9 +128,6 @@ struct BakedLight {
 };
 @group(3) @binding(5) var<storage, read> baked_lights: array<BakedLight>;
 @group(3) @binding(6) var lightmap_sampler: sampler;
-@group(3) @binding(7) var probe_cube: texture_2d_array<f32>;
-@group(3) @binding(8) var probe_strengths: texture_2d_array<f32>;
-@group(3) @binding(9) var probe_indices: texture_2d_array<f32>;
 
 struct In {
     @location(0) position: vec3<f32>,
@@ -165,6 +171,36 @@ fn vs_main(v: In) -> Out {
     o.paint = v.paint;
     o.lightmap = v.lightmap * lighting.lightmap.xy;
     return o;
+}
+
+// The shadow map: only what moves casts into it (a map's own shadows are
+// in its lightmaps), seen from the sun.
+@vertex
+fn vs_shadow(v: In) -> @builtin(position) vec4<f32> {
+    var position = vec4<f32>(v.position, 1.0);
+    if (object.flags.x > 0.5 && dot(v.weight, vec4<f32>(1.0)) > 0.0) {
+        let last = arrayLength(&bones) - 1u;
+        let skin = bones[min(v.bone.x, last)] * v.weight.x + bones[min(v.bone.y, last)] * v.weight.y
+            + bones[min(v.bone.z, last)] * v.weight.z + bones[min(v.bone.w, last)] * v.weight.w;
+        position = skin * position;
+    }
+    return view.shadow * object.model * position;
+}
+
+// How much of the sun reaches a point (1: all): its shadow map, read a
+// little off the surface along its normal, nine taps around it.
+fn sun_shadow(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (view.shadow_params.x < 0.5) { return 1.0; }
+    let p = view.shadow * vec4<f32>(world + n * view.shadow_params.z * 1.5, 1.0);
+    let uv = vec2<f32>(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || p.z > 1.0 || p.z < 0.0) { return 1.0; }
+    var lit = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            lit += textureSampleCompareLevel(shadow_map, shadow_compare, uv + vec2<f32>(f32(x), f32(y)) * view.shadow_params.y, p.z);
+        }
+    }
+    return lit / 9.0;
 }
 
 const PI: f32 = 3.14159265;
@@ -300,8 +336,9 @@ fn light(i: Out, n: vec3<f32>, s: Surface) -> Lit {
     let diffuse = base * (1.0 - metal);
     var ambient = sky(n, 1.0);
     var reflected = sky(reflect(-v, n), rough);
-    var direct = view.sun_color.rgb * ndl;
-    var direct_spec = view.sun_color.rgb * spec_sun;
+    let shade = sun_shadow(i.world, n);
+    var direct = view.sun_color.rgb * ndl * shade;
+    var direct_spec = view.sun_color.rgb * spec_sun * shade;
     let lit_by = object.flags.y;
     if (lit_by > 0.5) {
         var indices: vec4<u32>;
@@ -311,11 +348,11 @@ fn light(i: Out, n: vec3<f32>, s: Surface) -> Lit {
             // a texel of the lightmaps
             let uv = i.lightmap;
             let texel = vec2<i32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.99999)) * lighting.lightmap.zw);
-            indices = vec4<u32>(textureLoad(light_indices, texel, 0) * 255.0 + 0.5);
-            strengths = textureSampleLevel(light_strengths, lightmap_sampler, uv, 0.0);
+            indices = vec4<u32>(textureLoad(light_indices, texel, 0, 0) * 255.0 + 0.5);
+            strengths = textureSampleLevel(light_strengths, lightmap_sampler, uv, 0, 0.0);
             // the light that bounced: some from everywhere, the rest from one way
-            let irr = textureSampleLevel(irradiance, lightmap_sampler, uv, 0.0).rgb;
-            let ahd = textureSampleLevel(directional_irradiance, lightmap_sampler, uv, 0.0);
+            let irr = textureSampleLevel(irradiance, lightmap_sampler, uv, 0, 0.0).rgb;
+            let ahd = textureSampleLevel(directional_irradiance, lightmap_sampler, uv, 0, 0.0);
             let hxy = ahd.xy * 2.0 - 1.0;
             let highlight = vec3<f32>(hxy, 1.0 - sqrt(dot(hxy, hxy)));
             let even = clamp(ahd.z, 0.0, 1.0) * irr;
@@ -333,17 +370,17 @@ fn light(i: Out, n: vec3<f32>, s: Surface) -> Lit {
             let nz = i32(dims.z);
             var cube: array<vec3<f32>, 6>;
             for (var f = 0; f < 6; f++) {
-                let a = textureSampleLevel(probe_cube, lightmap_sampler, at.xy, f * nz + i32(z0), 0.0).rgb;
-                let b = textureSampleLevel(probe_cube, lightmap_sampler, at.xy, f * nz + i32(z1), 0.0).rgb;
+                let a = textureSampleLevel(irradiance, lightmap_sampler, at.xy, f * nz + i32(z0), 0.0).rgb;
+                let b = textureSampleLevel(irradiance, lightmap_sampler, at.xy, f * nz + i32(z1), 0.0).rgb;
                 cube[f] = mix(a, b, t);
             }
             // each way the normal faces, as much as it faces it
             let n2 = n * n;
             bounced = n2.x * select(cube[0], cube[1], n.x < 0.0) + n2.y * select(cube[2], cube[3], n.y < 0.0) + n2.z * select(cube[4], cube[5], n.z < 0.0);
             let near = vec2<i32>(at.xy * dims.xy);
-            indices = vec4<u32>(textureLoad(probe_indices, near, i32(round(z)), 0) * 255.0 + 0.5);
-            strengths = mix(textureSampleLevel(probe_strengths, lightmap_sampler, at.xy, i32(z0), 0.0),
-                textureSampleLevel(probe_strengths, lightmap_sampler, at.xy, i32(z1), 0.0), t);
+            indices = vec4<u32>(textureLoad(light_indices, near, i32(round(z)), 0) * 255.0 + 0.5);
+            strengths = mix(textureSampleLevel(light_strengths, lightmap_sampler, at.xy, i32(z0), 0.0),
+                textureSampleLevel(light_strengths, lightmap_sampler, at.xy, i32(z1), 0.0), t);
         }
         // the lights it names, as much of each as reaches it (stored as its root)
         strengths = strengths * strengths;
@@ -356,7 +393,9 @@ fn light(i: Out, n: vec3<f32>, s: Surface) -> Lit {
             if (light.position.w > 1.5) { lj = normalize(light.towards.xyz); }
             let hj = normalize(lj + v);
             let ndlj = max(dot(n, lj), 0.0);
-            let c = light.color.rgb * strengths[j];
+            var c = light.color.rgb * strengths[j];
+            // the sun: what moves shadows it too
+            if (light.position.w > 1.5) { c = c * shade; }
             direct += c * ndlj;
             let visj = 1.0 / ((ndlj * (1.0 - k) + k) * (ndv * (1.0 - k) + k) * 4.0);
             direct_spec += c * ggx(n, hj, rough) * visj * ndlj;

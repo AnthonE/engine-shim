@@ -351,6 +351,7 @@ mod draw {
 #[cfg(feature = "render")]
 pub use draw::to_bitmap;
 #[cfg(feature = "render")]
+#[allow(unused_imports)]
 pub use draw::probe_volumes;
 
 #[cfg(not(feature = "render"))]
