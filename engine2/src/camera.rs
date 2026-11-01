@@ -13,6 +13,22 @@ static MATERIALS: Mutex<Option<(HashMap<String, usize>, HashMap<usize, std::ffi:
 /// light's direction (towards it) as made or set.
 static SKIES: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
 static SUNS: Mutex<Option<HashMap<usize, crate::slots::S_Vector3>>> = Mutex::new(None);
+/// Each light's bake index and scale (managed's map loader gives a map's
+/// lights the ones its lightmaps name them by).
+static BAKED: Mutex<Option<HashMap<usize, (i32, f32)>>> = Mutex::new(None);
+
+pub fn set_bake_index(light: usize, index: i32) {
+    BAKED.lock().unwrap().get_or_insert_with(Default::default).entry(light).or_insert((-1, 1.0)).0 = index;
+}
+
+pub fn set_bake_scale(light: usize, scale: f32) {
+    BAKED.lock().unwrap().get_or_insert_with(Default::default).entry(light).or_insert((-1, 1.0)).1 = scale;
+}
+
+/// A light's bake index and scale, if it was given one.
+pub fn baked(light: usize) -> Option<(i32, f32)> {
+    BAKED.lock().unwrap().as_ref()?.get(&light).copied().filter(|b| b.0 >= 0)
+}
 
 pub fn material(name: &str) -> usize {
     let key = crate::fs::normal(name);
@@ -23,6 +39,35 @@ pub fn material(name: &str) -> usize {
         names.insert(p, std::ffi::CString::new(name.replace('\0', "")).unwrap_or_default());
         p
     })
+}
+
+/// Textures by name, each one object (as materials are).
+static TEXTURES: Mutex<Option<(HashMap<String, usize>, HashMap<usize, String>)>> = Mutex::new(None);
+
+pub fn texture(name: &str) -> usize {
+    let mut t = TEXTURES.lock().unwrap();
+    let (by_name, names) = t.get_or_insert_with(Default::default);
+    *by_name.entry(crate::fs::normal(name)).or_insert_with(|| {
+        let p = crate::handles::object();
+        names.insert(p, name.to_string());
+        p
+    })
+}
+
+pub fn texture_name(t: usize) -> Option<String> {
+    TEXTURES.lock().unwrap().as_ref()?.1.get(&t).cloned()
+}
+
+/// Each light probe volume's textures: its probes, their lights' indices
+/// and strengths.
+static PROBE_TEXTURES: Mutex<Option<HashMap<usize, [usize; 3]>>> = Mutex::new(None);
+
+pub fn set_probe_texture(volume: usize, which: usize, t: usize) {
+    PROBE_TEXTURES.lock().unwrap().get_or_insert_with(Default::default).entry(volume).or_default()[which] = t;
+}
+
+pub fn probe_texture(volume: usize, which: usize) -> usize {
+    PROBE_TEXTURES.lock().unwrap().as_ref().and_then(|p| p.get(&volume)).map(|t| t[which]).unwrap_or(0)
 }
 
 pub fn material_name(m: usize) -> Option<String> {
@@ -72,6 +117,8 @@ pub fn forget(obj: usize) {
     set_shown(obj, true);
     if let Some(s) = SUNS.lock().unwrap().as_mut() { s.remove(&obj); }
     if let Some(s) = SKIES.lock().unwrap().as_mut() { s.remove(&obj); }
+    if let Some(s) = BAKED.lock().unwrap().as_mut() { s.remove(&obj); }
+    if let Some(s) = PROBE_TEXTURES.lock().unwrap().as_mut() { s.remove(&obj); }
 }
 
 /// The directional lights, with the direction each was made or set with.
@@ -112,7 +159,7 @@ mod draw {
 
     use glam::{Mat4, Quat, Vec3};
 
-    use crate::render::{EngineFiles, Instance, Model, Renderer, View};
+    use crate::render::{BakedLight, EngineFiles, Instance, Lightmaps, Model, ProbePlace, ProbeVolume, Renderer, View};
     use crate::slots::*;
 
     /// The renderer, made the first time a camera draws (None: no adapter).
@@ -154,6 +201,52 @@ mod draw {
 
     fn v3(v: S_Vector3) -> Vec3 { Vec3::new(v.f__vec.f_X, v.f__vec.f_Y, v.f__vec.f_Z) }
 
+    /// A map's baked lighting on the GPU, lit by these lights, read once
+    /// for each set of them.
+    fn lightmaps(r: &Renderer, folder: &str, lights: &[BakedLight]) -> Option<Arc<Lightmaps>> {
+        static L: OnceLock<Mutex<HashMap<String, Option<Arc<Lightmaps>>>>> = OnceLock::new();
+        let key = format!("{folder} {lights:?}");
+        let l = L.get_or_init(Default::default);
+        if let Some(g) = l.lock().unwrap().get(&key) { return g.clone(); }
+        let g = r.lightmaps(&EngineFiles, folder, lights).map_err(|e| crate::trace::note(&format!("render: {e}"))).ok().flatten().map(Arc::new);
+        let mut l = l.lock().unwrap();
+        // a light moved or recoloured: the lightmaps lit by the old ones go
+        l.retain(|k, _| !k.starts_with(&format!("{folder} ")));
+        l.insert(key, g.clone());
+        g
+    }
+
+    /// The light probe volumes managed made in these worlds (SceneLightProbe:
+    /// a map's), lit by these lights: each read once for each set of them.
+    pub fn probe_volumes(r: &Renderer, worlds: &[usize], lights: &[BakedLight]) -> Vec<Arc<ProbeVolume>> {
+        static V: OnceLock<Mutex<HashMap<String, Option<Arc<ProbeVolume>>>>> = OnceLock::new();
+        let cache = V.get_or_init(Default::default);
+        let mut out = Vec::new();
+        for world in worlds {
+            for v in crate::handles::made_with("SceneLightProbeVolumeObject", *world) {
+                let names = [0, 1, 2].map(|i| super::texture_name(super::probe_texture(v, i)));
+                let [Some(t), Some(i), Some(s)] = names else { continue };
+                let place = ProbePlace {
+                    transform: mat(&crate::animation::Xf::from_managed(&crate::state::get::<S_Transform>(v, PROP_Transform))),
+                    mins: v3(crate::state::get::<S_Vector3>(v, PROP__CScnLghtPrbVlmbj_m_vBoxMins)),
+                    maxs: v3(crate::state::get::<S_Vector3>(v, PROP__CScnLghtPrbVlmbj_m_vBoxMaxs)),
+                    priority: crate::state::get::<i32>(v, PROP__CScnLghtPrbVlmbj_m_nRenderPriority),
+                };
+                let key = format!("{v} {t} {place:?} {lights:?}");
+                let built = cache.lock().unwrap().get(&key).cloned();
+                let built = built.unwrap_or_else(|| {
+                    let b = r.probe_volume(&EngineFiles, &t, &i, &s, place, lights).map_err(|e| crate::trace::note(&format!("render: {e}"))).ok().map(Arc::new);
+                    let mut c = cache.lock().unwrap();
+                    c.retain(|k, _| !k.starts_with(&format!("{v} ")));
+                    c.insert(key, b.clone());
+                    b
+                });
+                out.extend(built);
+            }
+        }
+        out
+    }
+
     /// Camera `camera`'s view, `width` by `height`, into managed's pixels.
     pub fn to_bitmap(camera: usize, pixels: usize, width: i32, height: i32, bpp: i32) {
         if pixels == 0 || width <= 1 || height <= 1 || bpp != 4 { return; }
@@ -170,7 +263,7 @@ mod draw {
             width as f32 / height as f32,
         );
         // what's in its worlds and shown: each object's model, where, how tinted
-        let mut placed: Vec<(Arc<Model>, Mat4, [f32; 4], Vec<Mat4>)> = Vec::new();
+        let mut placed: Vec<(Arc<Model>, Mat4, [f32; 4], Vec<Mat4>, bool)> = Vec::new();
         for world in super::worlds(camera) {
             for obj in crate::handles::made_with("SceneObject", world) {
                 if !super::shown(obj) { continue; }
@@ -180,13 +273,35 @@ mod draw {
                 let m = mat(&crate::animation::Xf::from_managed(&crate::state::get::<S_Transform>(obj, PROP_Transform)));
                 let tint = crate::state::get::<S_Vector4>(obj, PROP_TintRGBA).f__vec;
                 let tint = if tint.f_X + tint.f_Y + tint.f_Z + tint.f_W == 0.0 { [1.0; 4] } else { [tint.f_X, tint.f_Y, tint.f_Z, tint.f_W] };
-                placed.push((g, m, tint, skin(obj, model)));
+                placed.push((g, m, tint, skin(obj, model), false));
             }
         }
-        // and the maps in them: their world nodes' objects
+        // the lights in its worlds that a map's lightmaps name, by their bake index
+        let worlds = super::worlds(camera);
+        let suns: HashMap<usize, S_Vector3> = super::suns().into_iter().collect();
+        let mut baked = Vec::new();
+        for world in &worlds {
+            for light in crate::handles::made_with("SceneLightObject", *world) {
+                let Some((index, scale)) = super::baked(light) else { continue };
+                if !super::shown(light) || index > 254 { continue; }
+                baked.push(BakedLight {
+                    index: index as u8,
+                    sun: suns.contains_key(&light),
+                    position: v3(crate::state::get::<S_Vector3>(light, PROP_WorldPosition)),
+                    towards: suns.get(&light).map(|&t| v3(t)).unwrap_or(Vec3::ZERO),
+                    color: v3(crate::state::get::<S_Vector3>(light, PROP_Color)) * scale,
+                });
+            }
+        }
+        baked.sort_by_key(|l| l.index);
+        // and the maps in them: their world nodes' objects, lit by their lightmaps
         let mut world_objects = 0;
+        let mut lit = None;
         for scene_world in super::worlds(camera) {
             for world in crate::world::in_scene_world(scene_world) {
+                if lit.is_none() {
+                    if let Some(folder) = crate::world::with(world, |w| w.folder.to_string_lossy().into_owned()) { lit = lightmaps(r, &folder, &baked); }
+                }
                 for (name, rows, tint) in crate::world::scene_objects(world) {
                     let Some(g) = gpu_model(r, &name) else { continue };
                     let m = Mat4::from_cols_array_2d(&[
@@ -195,15 +310,16 @@ mod draw {
                         [rows[0][2], rows[1][2], rows[2][2], 0.0],
                         [rows[0][3], rows[1][3], rows[2][3], 1.0],
                     ]);
-                    placed.push((g, m, tint, Vec::new()));
+                    placed.push((g, m, tint, Vec::new(), true));
                     world_objects += 1;
                 }
             }
         }
         // the sun and sky of its worlds: a directional light, a sky object
-        let worlds = super::worlds(camera);
         let in_worlds = |obj: usize| crate::handles::links(obj).iter().any(|l| worlds.contains(l));
         let mut view = view;
+        view.lightmaps = lit.clone();
+        view.probes = probe_volumes(r, &worlds, &baked);
         for (light, made) in super::suns() {
             let towards = v3(made);
             let c = v3(crate::state::get::<S_Vector3>(light, PROP_Color));
@@ -224,16 +340,104 @@ mod draw {
                 }
             }
         }
-        let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone() }).collect();
+        let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None }).collect();
         let image = r.draw(&instances, &view, width as u32, height as u32);
         let out = unsafe { std::slice::from_raw_parts_mut(pixels as *mut u8, (width * height * 4) as usize) };
         out.copy_from_slice(&image);
-        crate::trace::note(&format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}", view.eye, instances.len(), view.sun, view.sky.is_some()));
+        crate::trace::note(&format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes)", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len()));
     }
 }
 
 #[cfg(feature = "render")]
 pub use draw::to_bitmap;
+#[cfg(feature = "render")]
+#[allow(unused_imports)]
+pub use draw::probe_volumes;
 
 #[cfg(not(feature = "render"))]
 pub fn to_bitmap(_camera: usize, _pixels: usize, _width: i32, _height: i32, _bpp: i32) {}
+
+#[cfg(all(test, feature = "render"))]
+mod tests {
+    use crate::slots::*;
+
+    fn v3(x: f32, y: f32, z: f32) -> S_Vector3 { S_Vector3 { f__vec: S_System_Numerics_Vector3 { f_X: x, f_Y: y, f_Z: z } } }
+
+    /// A map from sbox.game (ENGINE2_SAMPLE_MAP its pak, ENGINE2_CONTENT
+    /// its materials), if this machine has one, drawn as managed asks a
+    /// camera for it: its world, its sun made and given its bake index as
+    /// managed's map loader does, a camera looking straight down at the
+    /// edge of a building's shadow (flatgrass's, north of its hall). The
+    /// shadow is in the lightmaps alone: the ground in it is dark, beside
+    /// it sunlit; and hardly darker than beside it when no light has the
+    /// sun's index (each frame exposed on its own, as s&box would).
+    #[test]
+    fn a_map_is_lit_by_its_lightmaps() {
+        let Ok(path) = std::env::var("ENGINE2_SAMPLE_MAP") else { return };
+        if std::env::var("ENGINE2_CONTENT").is_err() || !path.ends_with("flatgrass.vpk") { return; }
+        if crate::render::Renderer::new().is_err() { eprintln!("no adapter: skipped"); return; }
+        crate::fs::add_link("maps/flatgrass.vpk", &path);
+        let scene_world = crate::handles::object();
+        let world = crate::world::create("maps/flatgrass.vpk", scene_world).expect("mounted");
+        let ents = crate::world::lump(world, "default_ents");
+        let env = ents.iter().find(|e| e.get(crate::string_token("classname")) == Some("light_environment")).expect("a sun");
+        let lights = crate::render::BakedLight::from_entities(&[(*env).clone()]);
+        let (towards, color) = (lights[0].towards, lights[0].color);
+        unsafe { crate::impls::g_pSceneSystem_CreateDirectionalLight(scene_world, &v3(towards.x, towards.y, towards.z) as *const S_Vector3 as usize) };
+        let sun = crate::handles::made_with("SceneLightObject", scene_world)[0];
+        crate::state::set(sun, PROP_Color, v3(color.x, color.y, color.z));
+
+        let camera = crate::handles::object();
+        crate::state::set(camera, PROP__CCameraRenderer_CameraPosition, v3(100.0, 600.0, 2000.0));
+        crate::state::set(camera, PROP__CCameraRenderer_CameraRotation, S_Angles { f_pitch: 89.9, f_yaw: 0.0, f_roll: 0.0 });
+        crate::state::set(camera, PROP__CCameraRenderer_FieldOfView, 75f32);
+        crate::state::set(camera, PROP__CCameraRenderer_ZNear, 4f32);
+        crate::state::set(camera, PROP__CCameraRenderer_ZFar, 40000f32);
+        super::add_world(camera, scene_world);
+        let frame = || {
+            let mut pixels = vec![0u8; 240 * 240 * 4];
+            super::to_bitmap(camera, pixels.as_mut_ptr() as usize, 240, 240, 4);
+            let mean = |c: std::ops::Range<usize>| {
+                let v: Vec<f32> = c.flat_map(|x| (90..150).map(move |y| (x, y))).map(|(x, y)| pixels[(y * 240 + x) * 4..][..3].iter().map(|&p| p as f32).sum::<f32>() / 3.0).collect();
+                v.iter().sum::<f32>() / v.len() as f32
+            };
+            // the strip of shadow beside the hall, and the grass beyond it
+            (mean(86..94), mean(30..70))
+        };
+        let (dark, lit) = frame();
+        eprintln!("unindexed: shadow {dark:.0}, grass {lit:.0}");
+        // (each frame exposed as s&box would expose it: compare within one)
+        assert!(dark > lit * 0.75, "no light has the sun's index: no sun on the grass, so hardly a shadow ({dark:.0} against {lit:.0})");
+        unsafe { crate::impls::CScnLghtbjct_SetBakeLightIndex(sun, lights.iter().find(|l| l.sun).map(|l| l.index as i32).unwrap()) };
+        let (dark, lit) = frame();
+        eprintln!("the sun baked: shadow {dark:.0}, grass {lit:.0}");
+        assert!(dark < lit * 0.5, "the sun on the grass, and the hall's shadow on the ground ({dark:.0} against {lit:.0})");
+
+        // its light probe volumes, made as managed's map loader makes them
+        // (SceneLightProbe): the one in the hall lights what's in the hall
+        let volumes = crate::render::ProbeVolume::from_entities(&ents.iter().map(|e| (*e).clone()).collect::<Vec<_>>());
+        for (place, [t, i, s]) in &volumes {
+            let v = crate::handles::object();
+            crate::handles::register(v, "SceneLightProbeVolumeObject", &[scene_world]);
+            let (_, q, p) = place.transform.to_scale_rotation_translation();
+            crate::state::set(v, PROP_Transform, S_Transform { f_Position: v3(p.x, p.y, p.z), f_Scale: v3(1.0, 1.0, 1.0), f_Rotation: S_Rotation { f__quat: S_System_Numerics_Quaternion { f_X: q.x, f_Y: q.y, f_Z: q.z, f_W: q.w } } });
+            crate::state::set(v, PROP__CScnLghtPrbVlmbj_m_vBoxMins, v3(place.mins.x, place.mins.y, place.mins.z));
+            crate::state::set(v, PROP__CScnLghtPrbVlmbj_m_vBoxMaxs, v3(place.maxs.x, place.maxs.y, place.maxs.z));
+            crate::state::set(v, PROP__CScnLghtPrbVlmbj_m_nRenderPriority, place.priority);
+            let name = |n: &String| std::ffi::CString::new(n.as_str()).unwrap();
+            let (t, i, s) = (name(t), name(i), name(s));
+            unsafe {
+                crate::impls::Set__CScnLghtPrbVlmbj_m_hLightProbeTexture(v, crate::impls::Glue_Resources_GetTexture(t.as_ptr() as usize, core::mem::zeroed()));
+                crate::impls::Set__CScnLghtPrbVlmbj_m_hLightProbeDirectLightIndicesTexture(v, crate::impls::Glue_Resources_GetTexture(i.as_ptr() as usize, core::mem::zeroed()));
+                crate::impls::Set__CScnLghtPrbVlmbj_m_hLightProbeDirectLightScalarsTexture(v, crate::impls::Glue_Resources_GetTexture(s.as_ptr() as usize, core::mem::zeroed()));
+            }
+        }
+        let built = super::probe_volumes(&crate::render::Renderer::new().unwrap(), &[scene_world], &lights);
+        eprintln!("{} of {} probe volumes built", built.len(), volumes.len());
+        assert_eq!(built.len(), volumes.len());
+        let places: Vec<crate::render::ProbePlace> = built.iter().map(|v| v.place).collect();
+        let tv = glam::Vec3::new(170.0, 460.0, 42.0);
+        let chosen = crate::render::ProbePlace::choose(&places, tv, tv, glam::Vec3::splat(13.0)).expect("one lights the hall");
+        assert_eq!(places[chosen].transform.w_axis.truncate(), glam::Vec3::new(160.0, 496.0, 96.0), "the hall's own, over the map's");
+    }
+}

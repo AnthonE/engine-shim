@@ -63,7 +63,8 @@ fn half_at(b: &[u8], at: usize) -> f32 {
     b.get(at..at + 2).map(|x| half(u16::from_le_bytes(x.try_into().unwrap()))).unwrap_or(0.0)
 }
 
-fn half(h: u16) -> f32 {
+/// A half-precision float.
+pub fn half(h: u16) -> f32 {
     let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
     let exp = ((h >> 10) & 0x1f) as i32;
     let frac = (h & 0x3ff) as f32;
@@ -178,6 +179,9 @@ impl VertexBuffer {
                 R16G16B16A16_FLOAT => [half_at(d, at), half_at(d, at + 2), half_at(d, at + 4), half_at(d, at + 6)],
                 R16G16_FLOAT => [half_at(d, at), half_at(d, at + 2), 0.0, 0.0],
                 R8G8B8A8_UNORM => core::array::from_fn(|k| d.get(at + k).copied().unwrap_or(0) as f32 / 255.0),
+                R16G16_UNORM | R16G16B16A16_UNORM => core::array::from_fn(|k| if k < 2 || a.format == R16G16B16A16_UNORM {
+                    d.get(at + k * 2..at + k * 2 + 2).map(|x| u16::from_le_bytes(x.try_into().unwrap()) as f32 / 65535.0).unwrap_or(0.0)
+                } else { 0.0 }),
                 _ => [0.0; 4],
             }
         }).collect())

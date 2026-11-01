@@ -2445,8 +2445,8 @@ unsafe extern "C" fn s1062(_a0: usize) -> f32 { hit(1062); crate::state::get::<f
 unsafe extern "C" fn s1063(_a0: usize, _a1: f32) { hit(1063); crate::state::set(_a0, 61, _a1) }
 unsafe extern "C" fn s1064(_a0: usize) -> i32 { hit(1064); crate::state::get::<i32>(_a0, 62) }
 unsafe extern "C" fn s1065(_a0: usize, _a1: i32) { hit(1065); crate::state::set(_a0, 62, _a1) }
-unsafe extern "C" fn s1066(_a0: usize, _a1: i32) { hit(1066);  }
-unsafe extern "C" fn s1067(_a0: usize, _a1: f32) { hit(1067);  }
+unsafe extern "C" fn s1066(_a0: usize, _a1: i32) { hit(1066); unsafe { crate::impls::CScnLghtbjct_SetBakeLightIndex(_a0, _a1) } }
+unsafe extern "C" fn s1067(_a0: usize, _a1: f32) { hit(1067); unsafe { crate::impls::CScnLghtbjct_SetBakeLightIndexScale(_a0, _a1) } }
 unsafe extern "C" fn s1068(_a0: usize, _a1: i32) { hit(1068);  }
 unsafe extern "C" fn s1069(_a0: usize, _a1: i32) { hit(1069);  }
 unsafe extern "C" fn s1070(_a0: usize, _a1: i32) { hit(1070);  }
@@ -2599,12 +2599,12 @@ unsafe extern "C" fn s1216(_a0: usize) -> i32 { hit(1216); crate::state::get::<i
 unsafe extern "C" fn s1217(_a0: usize, _a1: i32) { hit(1217); crate::state::set(_a0, 138, _a1) }
 unsafe extern "C" fn s1218(_a0: usize) -> i32 { hit(1218); crate::state::get::<i32>(_a0, 139) }
 unsafe extern "C" fn s1219(_a0: usize, _a1: i32) { hit(1219); crate::state::set(_a0, 139, _a1) }
-unsafe extern "C" fn s1220(_a0: usize) -> usize { hit(1220); crate::trace::object(1220) }
-unsafe extern "C" fn s1221(_a0: usize, _a1: usize) { hit(1221);  }
-unsafe extern "C" fn s1222(_a0: usize) -> usize { hit(1222); crate::trace::object(1222) }
-unsafe extern "C" fn s1223(_a0: usize, _a1: usize) { hit(1223);  }
-unsafe extern "C" fn s1224(_a0: usize) -> usize { hit(1224); crate::trace::object(1224) }
-unsafe extern "C" fn s1225(_a0: usize, _a1: usize) { hit(1225);  }
+unsafe extern "C" fn s1220(_a0: usize) -> usize { hit(1220); unsafe { crate::impls::Get__CScnLghtPrbVlmbj_m_hLightProbeTexture(_a0) } }
+unsafe extern "C" fn s1221(_a0: usize, _a1: usize) { hit(1221); unsafe { crate::impls::Set__CScnLghtPrbVlmbj_m_hLightProbeTexture(_a0, _a1) } }
+unsafe extern "C" fn s1222(_a0: usize) -> usize { hit(1222); unsafe { crate::impls::Get__CScnLghtPrbVlmbj_m_hLightProbeDirectLightIndicesTexture(_a0) } }
+unsafe extern "C" fn s1223(_a0: usize, _a1: usize) { hit(1223); unsafe { crate::impls::Set__CScnLghtPrbVlmbj_m_hLightProbeDirectLightIndicesTexture(_a0, _a1) } }
+unsafe extern "C" fn s1224(_a0: usize) -> usize { hit(1224); unsafe { crate::impls::Get__CScnLghtPrbVlmbj_m_hLightProbeDirectLightScalarsTexture(_a0) } }
+unsafe extern "C" fn s1225(_a0: usize, _a1: usize) { hit(1225); unsafe { crate::impls::Set__CScnLghtPrbVlmbj_m_hLightProbeDirectLightScalarsTexture(_a0, _a1) } }
 unsafe extern "C" fn s1226(_a0: usize, _a1: i64, _a2: i64) { hit(1226);  }
 unsafe extern "C" fn s1227(_a0: usize, _a1: i64) { hit(1227); crate::state::set(_a0, 31, _a1) }
 unsafe extern "C" fn s1228(_a0: usize, _a1: i64) -> i32 { hit(1228); unsafe { core::mem::zeroed() } }
@@ -3026,7 +3026,7 @@ unsafe extern "C" fn s1643(_a0: i64) -> i64 { hit(1643); unsafe { core::mem::zer
 unsafe extern "C" fn s1644(_a0: i32) -> i32 { hit(1644); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1645() -> i32 { hit(1645); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1646(_a0: usize, _a1: S_System_Guid) -> usize { hit(1646); unsafe { crate::impls::Glue_Resources_GetMaterial(_a0, _a1) } }
-unsafe extern "C" fn s1647(_a0: usize, _a1: S_System_Guid) -> usize { hit(1647); crate::trace::object(1647) }
+unsafe extern "C" fn s1647(_a0: usize, _a1: S_System_Guid) -> usize { hit(1647); unsafe { crate::impls::Glue_Resources_GetTexture(_a0, _a1) } }
 unsafe extern "C" fn s1648() -> i32 { hit(1648); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1649() -> i32 { hit(1649); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1650(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(1650); unsafe { core::mem::zeroed() } }

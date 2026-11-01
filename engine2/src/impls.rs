@@ -2019,6 +2019,11 @@ pub unsafe fn Glue_Resources_GetMaterial(path: usize, _guid: crate::slots::S_Sys
     crate::camera::material(&unsafe { read(path) })
 }
 pub unsafe fn IMaterial2_GetName(m: usize) -> usize { crate::camera::material_name_ptr(m) }
+/// A texture: one object per name, which remembers it (a light probe
+/// volume's are read by it).
+pub unsafe fn Glue_Resources_GetTexture(path: usize, _guid: crate::slots::S_System_Guid) -> usize {
+    crate::camera::texture(&unsafe { read(path) })
+}
 /// A material's string by name: its shader (`shader`, as its file says:
 /// a sky is only a sky if it's a sky shader's), else the default.
 pub unsafe fn IMaterial2_GetString(m: usize, name: usize, default: usize) -> usize {
@@ -2047,6 +2052,21 @@ pub unsafe fn CScnLghtbjct_SetWorldDirection(light: usize, rotation: usize) {
     let back = rapier3d::math::Rotation::from_xyzw(r.f_X, r.f_Y, r.f_Z, r.f_W) * -rapier3d::math::Vector::X;
     crate::camera::turn_light(light, phys::v3(back))
 }
+
+/// Which of the lights a map's lightmaps name this one is, and how its
+/// colour scales there (managed's map loader gives a map's lights theirs).
+pub unsafe fn CScnLghtbjct_SetBakeLightIndex(light: usize, index: i32) { crate::camera::set_bake_index(light, index) }
+pub unsafe fn CScnLghtbjct_SetBakeLightIndexScale(light: usize, scale: f32) { crate::camera::set_bake_scale(light, scale) }
+
+/// A light probe volume's textures (managed's SceneLightProbe sets them
+/// from the map's entity): its probes, the lights they name and how much
+/// of each reaches them.
+pub unsafe fn Set__CScnLghtPrbVlmbj_m_hLightProbeTexture(v: usize, t: usize) { crate::camera::set_probe_texture(v, 0, t) }
+pub unsafe fn Get__CScnLghtPrbVlmbj_m_hLightProbeTexture(v: usize) -> usize { crate::camera::probe_texture(v, 0) }
+pub unsafe fn Set__CScnLghtPrbVlmbj_m_hLightProbeDirectLightIndicesTexture(v: usize, t: usize) { crate::camera::set_probe_texture(v, 1, t) }
+pub unsafe fn Get__CScnLghtPrbVlmbj_m_hLightProbeDirectLightIndicesTexture(v: usize) -> usize { crate::camera::probe_texture(v, 1) }
+pub unsafe fn Set__CScnLghtPrbVlmbj_m_hLightProbeDirectLightScalarsTexture(v: usize, t: usize) { crate::camera::set_probe_texture(v, 2, t) }
+pub unsafe fn Get__CScnLghtPrbVlmbj_m_hLightProbeDirectLightScalarsTexture(v: usize) -> usize { crate::camera::probe_texture(v, 2) }
 
 // ---- cameras: what managed asks to see (camera.rs)
 
