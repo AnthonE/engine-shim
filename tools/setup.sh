@@ -7,6 +7,8 @@
 set -e
 ROOT=$(pwd)
 SBOX=${1:-$ROOT/../sbox-public}
+# the SDK: ours in ~/.dotnet, else the system's (a distribution's dotnet-sdk-10.0)
+[ -z "$DOTNET_ROOT" ] && [ ! -x "$HOME/.dotnet/dotnet" ] && command -v dotnet >/dev/null && DOTNET_ROOT=$(dirname "$(readlink -f "$(command -v dotnet)")")
 export DOTNET_ROOT=${DOTNET_ROOT:-$HOME/.dotnet} PATH=$HOME/.dotnet:$PATH
 SKIA=3.116.0
 

@@ -2744,10 +2744,10 @@ unsafe extern "C" fn s1361(_a0: usize) -> u32 { hit(1361); unsafe { core::mem::z
 unsafe extern "C" fn s1362(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) -> i32 { hit(1362); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1363(_a0: usize) { hit(1363);  }
 unsafe extern "C" fn s1364(_a0: usize, _a1: i32, _a2: usize) { hit(1364);  }
-unsafe extern "C" fn s1365(_a0: u32) -> usize { hit(1365); crate::trace::object(1365) }
-unsafe extern "C" fn s1366(_a0: usize) { hit(1366);  }
-unsafe extern "C" fn s1367(_a0: usize) { hit(1367);  }
-unsafe extern "C" fn s1368(_a0: usize, _a1: usize, _a2: usize) { hit(1368);  }
+unsafe extern "C" fn s1365(_a0: u32) -> usize { hit(1365); unsafe { crate::impls::CServerList_Create(_a0) } }
+unsafe extern "C" fn s1366(_a0: usize) { hit(1366); unsafe { crate::impls::CServerList_Destroy(_a0) } }
+unsafe extern "C" fn s1367(_a0: usize) { hit(1367); unsafe { crate::impls::CServerList_StartQuery(_a0) } }
+unsafe extern "C" fn s1368(_a0: usize, _a1: usize, _a2: usize) { hit(1368); unsafe { crate::impls::CServerList_AddFilter(_a0, _a1, _a2) } }
 unsafe extern "C" fn s1369(_a0: usize) -> i32 { hit(1369); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1370(_a0: usize) -> i32 { hit(1370); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1371(_a0: usize, _a1: usize, _a2: u32) -> i32 { hit(1371); unsafe { core::mem::zeroed() } }
@@ -3545,15 +3545,15 @@ unsafe extern "C" fn s2162(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(2162
 unsafe extern "C" fn s2163(_a0: usize) { hit(2163);  }
 unsafe extern "C" fn s2164(_a0: usize, _a1: usize) { hit(2164); unsafe { crate::impls::ISteamGameServer_SetServerName(_a0, _a1) } }
 unsafe extern "C" fn s2165(_a0: usize, _a1: usize) { hit(2165); unsafe { crate::impls::ISteamGameServer_SetMapName(_a0, _a1) } }
-unsafe extern "C" fn s2166(_a0: usize, _a1: usize) { hit(2166);  }
+unsafe extern "C" fn s2166(_a0: usize, _a1: usize) { hit(2166); unsafe { crate::impls::ISteamGameServer_SetGameTags(_a0, _a1) } }
 unsafe extern "C" fn s2167(_a0: usize, _a1: i32) { hit(2167);  }
 unsafe extern "C" fn s2168(_a0: usize, _a1: i32) { hit(2168);  }
 unsafe extern "C" fn s2169(_a0: usize, _a1: i32) { hit(2169); unsafe { crate::impls::ISteamGameServer_SetMaxPlayerCount(_a0, _a1) } }
-unsafe extern "C" fn s2170(_a0: usize, _a1: i32) { hit(2170);  }
+unsafe extern "C" fn s2170(_a0: usize, _a1: i32) { hit(2170); unsafe { crate::impls::ISteamGameServer_SetPasswordProtected(_a0, _a1) } }
 unsafe extern "C" fn s2171(_a0: usize) { hit(2171); unsafe { crate::impls::ISteamGameServer_LogOnAnonymous(_a0) } }
 unsafe extern "C" fn s2172(_a0: usize, _a1: usize) { hit(2172); unsafe { crate::impls::ISteamGameServer_LogOn(_a0, _a1) } }
 unsafe extern "C" fn s2173(_a0: usize) { hit(2173); unsafe { crate::impls::ISteamGameServer_LogOff(_a0) } }
-unsafe extern "C" fn s2174(_a0: usize, _a1: usize) { hit(2174);  }
+unsafe extern "C" fn s2174(_a0: usize, _a1: usize) { hit(2174); unsafe { crate::impls::ISteamGameServer_SetGameDescription(_a0, _a1) } }
 unsafe extern "C" fn s2175(_a0: usize, _a1: usize) { hit(2175);  }
 unsafe extern "C" fn s2176(_a0: usize, _a1: usize) { hit(2176);  }
 unsafe extern "C" fn s2177(_a0: usize) -> i32 { hit(2177); unsafe { crate::impls::ISteamGameServer_BLoggedOn(_a0) } }

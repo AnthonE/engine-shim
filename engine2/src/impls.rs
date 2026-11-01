@@ -398,8 +398,13 @@ pub unsafe fn Glue_Networking_GetConnectionMessages(conn: Conn, out: usize, max:
     unsafe { hand_over(net().receive(conn.f_Id, max as usize), out) }
 }
 
-/// A peer by identity alone, through the relay at `ENGINE2_RELAY`.
+/// A peer by identity alone: straight to its address if a server list
+/// names it (serverlist.rs), else through the relay at `ENGINE2_RELAY`.
 pub unsafe fn Glue_Networking_ConnectToSteamId(id: u64, vport: i32) -> Conn {
+    if let Some(addr) = crate::serverlist::address_of(id) {
+        crate::trace::note(&format!("net: {id} is at {addr}, as its server list says"));
+        return Conn { f_Id: net().connect(&addr, vport) };
+    }
     match std::env::var("ENGINE2_RELAY").ok().filter(|r| !r.is_empty()) {
         Some(relay) => Conn { f_Id: net().connect_via(&relay, id, vport) },
         None => {
@@ -465,6 +470,28 @@ pub unsafe fn globalSteam_SteamGameServer_RunCallbacks() {
 pub unsafe fn globalSteam_SteamAPI_RunCallbacks() {
     dispatch(false);
     net().run_callbacks(&SteamNetwork);
+    if let Some(m) = server_list_managed() { crate::serverlist::pump(&m) }
+}
+
+// ---- the server browser: serverlist.rs
+
+/// Sandbox.Services.ServerList's callbacks, if managed gave them.
+fn server_list_managed() -> Option<crate::serverlist::Managed> {
+    use crate::slots::*;
+    let (a, b, c) = (crate::managed(M_SndbxSrvcs_ServerList_OnStarted), crate::managed(M_SndbxSrvcs_ServerList_OnServerResponded), crate::managed(M_SndbxSrvcs_ServerList_OnFinished));
+    if a == 0 || b == 0 || c == 0 { return None; }
+    unsafe { Some(crate::serverlist::Managed { started: std::mem::transmute(a), responded: std::mem::transmute(b), finished: std::mem::transmute(c) }) }
+}
+pub unsafe fn CServerList_Create(owner: u32) -> usize { crate::serverlist::create(owner) }
+pub unsafe fn CServerList_Destroy(list: usize) { crate::serverlist::destroy(list) }
+pub unsafe fn CServerList_AddFilter(list: usize, key: usize, value: usize) {
+    crate::serverlist::add_filter(list, &unsafe { read(key) }, &unsafe { read(value) })
+}
+pub unsafe fn CServerList_StartQuery(list: usize) {
+    match server_list_managed() {
+        Some(m) => crate::serverlist::start(list, &m),
+        None => crate::trace::note("serverlist: managed gave no ServerList callbacks"),
+    }
 }
 pub unsafe fn globalSteam_SteamGameServer_GetSteamID() -> u64 { crate::steam::identity() }
 
@@ -493,6 +520,15 @@ pub unsafe fn ISteamGameServer_SetMapName(_self: usize, map: usize) {
     crate::elo::describe(|s| s.map = map)
 }
 pub unsafe fn ISteamGameServer_SetMaxPlayerCount(_self: usize, max: i32) { crate::elo::describe(|s| s.max_players = max) }
+pub unsafe fn ISteamGameServer_SetGameDescription(_self: usize, game: usize) {
+    let game = unsafe { read(game) };
+    crate::elo::describe(|s| s.game = game)
+}
+pub unsafe fn ISteamGameServer_SetGameTags(_self: usize, tags: usize) {
+    let tags = unsafe { read(tags) };
+    crate::elo::describe(|s| s.tags = tags)
+}
+pub unsafe fn ISteamGameServer_SetPasswordProtected(_self: usize, on: i32) { crate::elo::describe(|s| s.password = on != 0) }
 pub unsafe fn ISteamGameServer_LogOff(_self: usize) { crate::steam::log_off() }
 pub unsafe fn ISteamGameServer_BLoggedOn(_self: usize) -> i32 { crate::steam::logged_on() as i32 }
 
@@ -2336,6 +2372,7 @@ mod tests {
 
     static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
     fn seen(s: String) { SEEN.lock().unwrap().push(s) }
+    pub(super) fn seen_lines() -> Vec<String> { SEEN.lock().unwrap().clone() }
 
     extern "C" fn should_accept(_s: Socket, _c: Conn) -> i32 { 1 }
     extern "C" fn on_socket_connection(s: Socket, c: Conn) {
@@ -2352,7 +2389,20 @@ mod tests {
         }
     }
 
-    fn managed() {
+    // Sandbox.Services.ServerList, reading gameserveritem_t as it does
+    extern "C" fn list_started(owner: u32) { seen(format!("list {owner} started")) }
+    extern "C" fn list_responded(owner: u32, item: *const crate::serverlist::Item, id: u64) {
+        let it = unsafe { &*item };
+        let text = |b: &[u8]| String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap()]).into_owned();
+        let ip = std::net::Ipv4Addr::from(it.ip);
+        seen(format!(
+            "list {owner} server {id} {ip}:{} {:?} map={} game={} players={}/{} ping>0={} pw={} tags={}",
+            it.conn_port, text(&it.server_name), text(&it.map), text(&it.game_description), it.players, it.max_players, it.ping > 0, it.password, text(&it.game_tags)
+        ))
+    }
+    extern "C" fn list_finished(owner: u32) { seen(format!("list {owner} finished")) }
+
+    pub(super) fn managed() {
         use crate::slots::*;
         let mut m = vec![0usize; crate::slots::MANAGED];
         m[M_SandboxNetwork_SteamNetwork_ShouldAcceptConnection] = should_accept as extern "C" fn(Socket, Conn) -> i32 as usize;
@@ -2363,6 +2413,9 @@ mod tests {
         m[M_Sandbox_HandleIndex_RegisterHandle] = register_handle as extern "C" fn(usize, u32) -> i32 as usize;
         m[M_Sandbox_HandleIndex_FreeHandle] = free_handle as extern "C" fn(i32) as usize;
         m[M_SandboxPhysics_PhysicsEngine_OnActive] = on_active as extern "C" fn(i32, S_Transform, S_Vector3, S_Vector3, i32, i32) as usize;
+        m[M_SndbxSrvcs_ServerList_OnStarted] = list_started as extern "C" fn(u32) as usize;
+        m[M_SndbxSrvcs_ServerList_OnServerResponded] = list_responded as extern "C" fn(u32, *const crate::serverlist::Item, u64) as usize;
+        m[M_SndbxSrvcs_ServerList_OnFinished] = list_finished as extern "C" fn(u32) as usize;
         let _ = crate::MANAGED.set(m);
     }
 
@@ -2578,6 +2631,96 @@ mod tests {
             ISteamGameServer_EndAuthSession(0, me);
             Glue_Networking_DestroyPollGroup(group);
             Glue_Networking_CloseSocket(socket);
+        }
+    }
+}
+
+#[cfg(test)]
+mod server_browser {
+    //! A player finds a server as managed's server browser does
+    //! (Sandbox.Services.ServerList, Networking.QueryServers), and joins it
+    //! by the identity the list gave.
+    use super::*;
+    use super::tests::{managed, seen_lines};
+    use std::io::{BufRead, BufReader, Write};
+
+    /// `status.json` answered once, as elo.rs's responder does.
+    fn status_once(body: &'static str) -> String {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let at = l.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for c in l.incoming().flatten() {
+                let mut line = String::new();
+                let _ = BufReader::new(&c).read_line(&mut line);
+                let _ = write!(&c, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        format!("http://{at}/status.json")
+    }
+
+    fn client_frames(done: impl Fn(&[String]) -> bool) {
+        let t = std::time::Instant::now();
+        loop {
+            unsafe { globalSteam_SteamAPI_RunCallbacks() };
+            if done(&seen_lines()) { return; }
+            assert!(t.elapsed().as_secs() < 10, "timed out: {:?}", seen_lines());
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn a_player_finds_a_server_and_joins_it_by_identity() {
+        managed();
+        unsafe {
+            // a server, listening, and the row it wrote (elo.rs), beside another game's
+            let socket = Glue_Networking_CreateIpBasedSocket(0, 0);
+            let port = read(Glue_Networking_GetSocketAddress(socket)).rsplit(':').next().unwrap().to_string();
+            let status = status_once(r#"{"players":3,"max_players":16,"tick":9}"#);
+            let s = crate::elo::Server { name: "EU one".into(), map: "Sweeper".into(), max_players: 16, game: "Sweeper".into(), tags: "protocol:3,gameident:local.sweeper,hdn:0".into(), password: false };
+            let row = crate::elo::shard_row(&s, &format!("127.0.0.1:{port}"), Some(&status), 0x0110_0001_0000_4242);
+            let dir = std::env::temp_dir().join(format!("engine2-serverlist-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let ours = dir.join("servers.json");
+            std::fs::write(&ours, row).unwrap();
+            let other = dir.join("other.json");
+            std::fs::write(&other, r#"{"servers":[{"id":"x","name":"another game","addr":"127.0.0.1:1","identity":"99","tags":"protocol:3,gameident:someone.else,hdn:0"}]}"#).unwrap();
+            std::env::set_var("ENGINE2_SERVER_LIST", format!("{},{}", ours.display(), other.display()));
+
+            // Networking.QueryServers: protocol, the game, not hidden
+            let list = CServerList_Create(7);
+            for (k, v) in [("gametagsand", "protocol:3"), ("gametagsand", "gameident:local.sweeper"), ("gametagsand", "hdn:0")] {
+                let (k, v) = (CString::new(k).unwrap(), CString::new(v).unwrap());
+                CServerList_AddFilter(list, k.as_ptr() as usize, v.as_ptr() as usize);
+            }
+            CServerList_StartQuery(list);
+            assert!(seen_lines().contains(&"list 7 started".to_string()), "managed hears it start at once (IsQuerying)");
+            client_frames(|s| s.contains(&"list 7 finished".to_string()));
+            let found: Vec<String> = seen_lines().into_iter().filter(|l| l.starts_with("list 7 server")).collect();
+            assert_eq!(found, [format!(
+                "list 7 server {} 127.0.0.1:{port} \"EU one\" map=Sweeper game=Sweeper players=3/16 ping>0=true pw=0 tags=protocol:3,gameident:local.sweeper,hdn:0",
+                0x0110_0001_0000_4242u64
+            )]);
+            CServerList_Destroy(list);
+
+            // a list destroyed before it's answered tells managed nothing more
+            let gone = CServerList_Create(8);
+            CServerList_StartQuery(gone);
+            CServerList_Destroy(gone);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            client_frames(|_| true);
+            assert!(!seen_lines().iter().any(|l| l.starts_with("list 8 server") || l == "list 8 finished"));
+
+            // `connect <identity>`: straight to the address its row gave, no relay
+            let player = Glue_Networking_ConnectToSteamId(0x0110_0001_0000_4242, 77);
+            assert_ne!(player.f_Id, 0);
+            let t = std::time::Instant::now();
+            while !seen_lines().iter().any(|l| l.starts_with(&format!("connected {} ", socket.f_Id))) {
+                globalSteam_SteamGameServer_RunCallbacks();
+                assert!(t.elapsed().as_secs() < 10, "the server never saw them: {:?}", seen_lines());
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            Glue_Networking_CloseSocket(socket);
+            let _ = std::fs::remove_dir_all(&dir);
         }
     }
 }

@@ -15,6 +15,8 @@ SBOX=$ROOT/../sbox-public
 SANDBOX=$ROOT/../sandbox
 CONTENT=$ROOT/../content-flatgrass
 secs=${1:-300}
+# the SDK: ours in ~/.dotnet, else the system's (a distribution's dotnet-sdk-10.0)
+[ -z "$DOTNET_ROOT" ] && [ ! -x "$HOME/.dotnet/dotnet" ] && command -v dotnet >/dev/null && DOTNET_ROOT=$(dirname "$(readlink -f "$(command -v dotnet)")")
 export DOTNET_ROOT=${DOTNET_ROOT:-$HOME/.dotnet} PATH=$HOME/.dotnet:$PATH
 
 [ -d "$SANDBOX/.git" ] || git clone -q https://github.com/Facepunch/sandbox "$SANDBOX"

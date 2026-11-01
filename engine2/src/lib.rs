@@ -23,6 +23,7 @@ mod models;
 mod net;
 mod physics;
 pub mod relay;
+mod serverlist;
 mod siwe;
 mod state;
 mod slots;

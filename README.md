@@ -175,6 +175,40 @@ ENGINE2_RELAY=127.0.0.1:27080 ENGINE2_HOST_KEY=$PWD/host.key \
 A sign-in through a relay names the relay's address, so a server behind
 one lists the relay's name in `ENGINE2_SIWE_DOMAINS`.
 
+**A player finds a server** (`engine2/src/serverlist.rs`). s&box's server
+browser, `CServerList` (what `Networking.QueryLobbies`, `JoinBestLobby` and
+the `servers` command ask), is answered from shard lists rather than
+Steam's master servers. A server's row carries, past the store's fields,
+what the browser shows and filters on: its `identity`, its `game`, the
+`tags` managed sets (`protocol`, `gameident`, `mapident`, `hdn`...) and
+`password` when it has one. A player reads the lists, keeps the rows
+that pass managed's filters (Steam's `gametagsand`, `gametagsnor`, `map`),
+asks each one's `status_url` for its players and takes the time that took as its
+ping, and hands each to managed as Steam's `gameserveritem_t`. A server's
+identity, once listed, is where `connect <identity>` goes: straight to its
+address, no relay between. With no Steam client, managed's lobby query
+comes back empty and the server list is the whole answer.
+
+| | |
+| --- | --- |
+| `ENGINE2_SERVER_LIST` | where a player looks for servers: files, or `http(s)://` URLs of `elo-shardlist-v1` documents (commas between) |
+
+Measured: the real server, hosting Sweeper, writes its row (`"tags":
+"revision:,protocol:1113,gameident:local.sweeper,..."`, its identity
+`76561201477069945`); a headless player reading that list runs `servers`
+and gets `127.0.0.1:27015 SteamId=76561201477069945 Game=Sweeper
+Map=Sweeper Players=0 MaxPlayers=64 Ping=1`, then `connect
+76561201477069945`, which dials the row's address. The server says `is
+connected` and the player loads the game.
+
+```sh
+ENGINE2_PUBLIC_ADDR=127.0.0.1:27015 ENGINE2_SHARDLIST=/tmp/servers.json \
+  ENGINE2_STATUS_ADDR=127.0.0.1:27016 ENGINE2_STATUS_URL=http://127.0.0.1:27016/status.json \
+  SBOX=../sbox-public sh spike.sh 240 +shimgame $PWD/../sbox-public/game/samples/sweeper/.sbproj +shimhost &
+# once "Server started! (SteamID: <identity>)":
+(cd ../sbox-public/game && ENGINE2_SERVER_LIST=/tmp/servers.json ./sbox-server +shimclient <identity> +shimrun servers +instanceid 2)
+```
+
 The rest is tested the way managed calls it (`cargo test`): a proof a
 stand-in launcher signed, a player without a copy refused at the door by a
 stand-in origin, a kicked one hearing why.
@@ -721,6 +755,9 @@ On a fresh Linux machine with Rust, `tools/setup.sh` does all of the
 first block below: the .NET SDK if there's none, the checkout beside this
 one (`../sbox-public`), patched, its interop generated, the server built,
 the natives and reference assemblies in place.
+Where Microsoft's download host is out of reach, a distribution's SDK does
+(`apt-get install dotnet-sdk-10.0` on Ubuntu 24.04): `setup.sh` takes the
+`dotnet` on the path.
 
 ```sh
 sh tools/setup.sh
@@ -771,6 +808,8 @@ first.
   opens the lobby, as a networked game's `NetworkHelper` does for itself.
 - `+shimclient <address>` boots the same launcher as a headless player (a
   game app, not a dedicated server) and runs `connect <address>`.
+- `+shimrun <command>` runs a console command on that player before it
+  connects (the server browser's `servers`, say).
 - A dedicated server running a local project counts as a developer host
   (`NetworkSystem.IsDeveloperHost`). It already sends such a game's code
   to its players (`GameInstanceDll`'s code archives), but told them it was
@@ -822,6 +861,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
 | `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
 | `engine2/src/elo.rs` | the store's side of a server: the shard-list row, `status.json`, copies checked at join and on a sweep |
+| `engine2/src/serverlist.rs` | the server browser: `CServerList` answered from shard lists, and identities to addresses |
 | `engine2/src/siwe.rs` | Sign-In With Ethereum, checked: the signer recovered, the message's fields read |
 | `engine2/src/elo_overlay.rs` | the Elo Pros launcher's client, vendored as its SDK asks (elo-pros-launcher `sdk/rust/elo_overlay.rs`) |
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
@@ -841,8 +881,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    and is joined (above), and models run their animation graphs. What's
    left is fidelity: IK, root motion, animation events.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
-   the shard list and the relay are ours now, and a player joins (above).
-   Next: lobbies. A relay run for others wants a price, as the stream relay's
+   the shard list, the server browser and the relay are ours now, and a
+   player finds a server and joins (above). Next: Steam's lobbies, the
+   player-hosted kind (`SteamLobbySocket`, through `steam_api64` itself). A relay run for others wants a price, as the stream relay's
    credits do (scry-forge `meter/relay.py`).
 3. **Assets.** Models (collision, bones, hitboxes, sequences, key
    values, animation graphs), surfaces and maps are read (above).
