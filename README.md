@@ -832,8 +832,21 @@ each frame the camera's view gets managed's UI hook (`AddUIHook`), whose
 layers run with a render context that records what they draw. Measured:
 Sandbox's HUD arrives as one instanced draw of `ui_cssbox_batched` a
 frame, 33 boxes (272 bytes each, as the shader declares them): a line of
-text, 16 green glyphs over 16 shadows, in its box. Next: the shader in
-WGSL, to draw them.
+text, 16 green glyphs over 16 shadows, in its box. A draw keeps each
+buffer's bytes as they were when it was made (managed refills its tables
+between draws, as a GPU would see them).
+
+And it's drawn (`render/ui.wgsl`, `render/ui.rs`): the shader ported to
+WGSL, its tables read as words as HLSL packs them. So far: rounded-rect
+boxes with their backgrounds and solid borders, and glyphs covered from
+their outlines (Lengyel's dual ray method, as s&box's `ui/text.hlsl`),
+blurred shadows too, each instance placed by its transform, blended in
+gamma space over the frame. Measured: Sandbox's join notice slides in
+from the left (its transform animating from -674 to 0) and reads "has
+joined the game", green over its shadow, at 640x360. Not yet: background
+images and gradients, scissors, paths and shapes, box shadows and
+outlines, border styles; and the device only answers with
+`ENGINE2_GRAPHICS=1` while the rest of what it wakes is filled in.
 
 ## What a player hears
 

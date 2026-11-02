@@ -546,6 +546,11 @@ pub fn draw_camera(camera: usize, sc: usize) {
     // the UI, while the device it needs is built out (ENGINE2_GRAPHICS=1): recorded, not yet drawn
     let graphics = std::env::var("ENGINE2_GRAPHICS").is_ok_and(|v| v == "1");
     let ui = if graphics { ui_draws(camera, width, height) } else { Vec::new() };
+    if !ui.is_empty() {
+        let batched = to_draw(&ui);
+        let linear = frame.texture.create_view(&wgpu::TextureViewDescriptor { format: Some(format.remove_srgb_suffix()), ..Default::default() });
+        r.ui.draw(&r.device, &r.queue, &linear, format.remove_srgb_suffix(), width as u32, height as u32, &batched);
+    }
     static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     if !ui.is_empty() && (SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 || n % 60 == 0) {
         let mut by: std::collections::BTreeMap<String, (usize, i32)> = Default::default();
@@ -560,25 +565,58 @@ pub fn draw_camera(camera: usize, sc: usize) {
     with(window, |_, s| s.frame = Some(frame));
 }
 
+/// The batched UI box's draws, their tables found by their attributes'
+/// names (the shader's): what render/ui.rs draws.
+fn to_draw(draws: &[crate::gpu::Draw]) -> Vec<crate::render::ui::UiDraw> {
+    use crate::gpu::Val;
+    // each table as it was when the draw was made
+    let bytes = |d: &crate::gpu::Draw, name: &str| match d.attrs.get(&crate::string_token(name)) {
+        Some(Val::Buffer(b)) => d.buffers.get(b).map(|x| x.as_ref().clone()).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    draws.iter().filter(|d| crate::camera::material_shader(d.material).is_some_and(|s| s.contains("ui_cssbox_batched"))).map(|d| {
+        let layer = match d.attrs.get(&crate::string_token("LayerMat")) { Some(Val::Matrix(m)) => *m, _ => [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] };
+        let instance_offset = match d.attrs.get(&crate::string_token("InstanceOffset")) { Some(Val::Int(o)) => *o, _ => 0 };
+        crate::render::ui::UiDraw {
+            boxes: bytes(d, "BoxInstances"),
+            texts: bytes(d, "PainterTextInstances"),
+            glyph_table: bytes(d, "GlyphTable"),
+            glyph_curves: bytes(d, "GlyphCurves"),
+            glyph_bands: bytes(d, "GlyphBands"),
+            transforms: bytes(d, "TransformBuffer"),
+            layer,
+            instance_offset,
+            instances: d.instances.max(0) as u32,
+        }
+    }).collect()
+}
+
 /// What a UI draw holds (ENGINE2_UI_DEBUG): its attributes by the shader's
 /// names, and its boxes.
 fn ui_dump(d: &crate::gpu::Draw) {
     let names = "BorderShapeBuffer BoxInstances BoxPosition BoxSize GlyphBands GlyphCurves GlyphTable GradientBuffer HasScissor InstanceOffset LayerMat PainterScreenViewport PainterTextInstances PathBuffer PathNodeBuffer PolygonPointBuffer ScissorBuffer ScissorCount TextHeight TextInstanceOffset TextInstances TextTileOffset TextTiles TextTilesX TextWidth TransformBuffer TransformMat UIFrameGrabEncoded UIGammaOutput UIInPanelLayer UIPanelOpacity WorldMat WorldPanelLighting D_BLENDMODE D_JOIN D_NO_ZTEST D_PAINTER_SCREENPIXELS D_PANEL_OPACITY D_POLYGON_POINTS D_WORLDPANEL";
-    let dev = crate::gpu::device();
     for n in names.split(' ') {
         if let Some(v) = d.attrs.get(&crate::string_token(n)) {
-            let extra = match v { crate::gpu::Val::Buffer(b) => dev.buffers.get(b).map(|b| format!(" ({} x {} bytes, {:?})", b.elements, b.element_size, b.name)).unwrap_or_default(), _ => String::new() };
-            crate::trace::note(&format!("ui attr {n} = {v:?}{extra}"));
+            let extra = match v { crate::gpu::Val::Buffer(b) => d.buffers.get(b).map(|x| format!(" ({} bytes)", x.len())).unwrap_or_default(), _ => String::new() };
+            eprintln!("{}", &format!("ui attr {n} = {v:?}{extra}"));
+        }
+    }
+    if let Some(crate::gpu::Val::Buffer(t)) = d.attrs.get(&crate::string_token("TransformBuffer")) {
+        if let Some(data) = d.buffers.get(t) {
+            let m: &[f32] = bytemuck::cast_slice(&data[..data.len() / 4 * 4]);
+            for k in 0..4 { if m.len() >= k * 16 + 16 { eprintln!("{}", &format!("ui transform {k}: translate {:?} diag {:?}", &m[k * 16 + 12..k * 16 + 15], [m[k * 16], m[k * 16 + 5]])); } }
         }
     }
     let Some(crate::gpu::Val::Buffer(b)) = d.attrs.get(&crate::string_token("BoxInstances")) else { return };
-    let Some(buf) = dev.buffers.get(b) else { return };
+    let Some(data) = d.buffers.get(b) else { return };
+    struct B<'a> { data: &'a [u8], element_size: usize, elements: usize }
+    let buf = B { data, element_size: 272, elements: data.len() / 272 };
     let f = |i: usize, at: usize| f32::from_le_bytes(buf.data[i * buf.element_size + at..][..4].try_into().unwrap());
     let u = |i: usize, at: usize| u32::from_le_bytes(buf.data[i * buf.element_size + at..][..4].try_into().unwrap());
     let offset = match d.attrs.get(&crate::string_token("InstanceOffset")) { Some(crate::gpu::Val::Int(o)) => *o as usize, _ => 0 };
     for i in offset..(offset + d.instances as usize).min(buf.elements).min(offset + 40) {
-        crate::trace::note(&format!("ui box {i}: rect {:.0} {:.0} {:.0} {:.0} color {:.2} {:.2} {:.2} {:.2} radius {:.0} border {:.0} tex {} flags {:#x} textmask {} shape {}",
-            f(i, 0), f(i, 4), f(i, 8), f(i, 12), f(i, 16), f(i, 20), f(i, 24), f(i, 28), f(i, 32), f(i, 64), u(i, 144) as i32, u(i, 228), u(i, 244) as i32, u(i, 268) as i32));
+        eprintln!("{}", &format!("ui box {i}: rect {:.0} {:.0} {:.0} {:.0} color {:.2} {:.2} {:.2} {:.2} radius {:.0} border {:.0} tex {} flags {:#x} transform {} shape {}",
+            f(i, 0), f(i, 4), f(i, 8), f(i, 12), f(i, 16), f(i, 20), f(i, 24), f(i, 28), f(i, 32), f(i, 64), u(i, 144) as i32, u(i, 228), u(i, 236) as i32, u(i, 268) as i32));
     }
 }
 

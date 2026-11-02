@@ -71,6 +71,9 @@ pub struct Draw {
     pub instances: i32,
     pub base_vertex: i32,
     pub scissor: Option<[i32; 4]>,
+    /// the bytes of each buffer its attributes name, as they were when it was
+    /// drawn (managed refills its tables between draws, as a GPU would see)
+    pub buffers: HashMap<usize, std::sync::Arc<Vec<u8>>>,
 }
 
 #[derive(Default)]
@@ -253,10 +256,15 @@ pub fn with_context(ctx: usize, f: impl FnOnce(&mut Context)) {
 }
 
 pub fn record(ctx: usize, primitive: i64, first: i32, count: i32, instances: i32, base_vertex: i32, indexed: bool) {
-    with_context(ctx, |c| {
-        let index_buffer = if indexed { c.index_buffer } else { None };
-        c.draws.push(Draw { material: c.material, attrs: c.attrs.clone(), primitive, index_buffer, first, count, instances, base_vertex, scissor: c.scissor });
-    })
+    let mut d = device();
+    let Some(c) = d.contexts.get(&ctx) else { return };
+    let attrs = c.attrs.clone();
+    let index_buffer = if indexed { c.index_buffer } else { None };
+    let (material, scissor) = (c.material, c.scissor);
+    let buffers = attrs.values().filter_map(|v| match v { Val::Buffer(b) => d.buffers.get(b).map(|x| (*b, std::sync::Arc::new(x.data.clone()))), _ => None }).collect();
+    if let Some(c) = d.contexts.get_mut(&ctx) {
+        c.draws.push(Draw { material, attrs, primitive, index_buffer, first, count, instances, base_vertex, scissor, buffers });
+    }
 }
 
 #[cfg(test)]
