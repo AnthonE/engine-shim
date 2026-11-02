@@ -821,6 +821,22 @@ renders to the surface's sRGB view), nothing read back but what auto
 exposure measures. On lavapipe that took a 1280x720 frame from 1.2 s to
 1.05 s; on a GPU the round trip it saves is most of a frame.
 
+**What a frame costs.** `RENDER_PROFILE` submits each stage of a frame and
+waits for it, and says every 30th frame how long each took. Measured in
+Sandbox's zoo at 960x540 on lavapipe (a CPU, its four cores shared with the
+server): the opaque pass was 950 of a frame's 1,050 ms (the sun's shadow
+map 37, what isn't opaque 30 to 45, exposure 5, the tonemap 4, the
+frame's setup 1; the UI 1 to 2 ms of the CPU's and 30 of the GPU's, as the
+census line says). Lavapipe multisamples on the CPU: a model drawn 960
+square takes the opaque pass 63 ms at 4 samples and 23 at 1. So a software
+adapter draws at one sample a pixel and a GPU at four (`RENDER_MSAA` says
+otherwise): in the zoo the opaque pass is 600 to 690 ms and the frame 610
+to 730. What's opaque is drawn nearest first, the alpha test's discard in
+a pipeline of its own, so a rasterizer can turn away what's hidden before
+shading it; in the zoo that changes nothing measurable (its floor and
+walls cover the frame about once), and what's left is shading each pixel
+on a CPU.
+
 **The UI and HUD** (`engine2/src/gpu.rs`). s&box draws all of it with one
 bindless shader (`ui_cssbox_batched.shader`, public, about 3,000 lines with
 its includes) over GPU tables, text included: glyph outlines in buffers,
