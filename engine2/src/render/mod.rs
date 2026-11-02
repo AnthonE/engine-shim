@@ -136,9 +136,16 @@ impl GpuDraw {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
     Opaque,
+    /// opaque, alpha-tested (F_ALPHA_TEST): what's below its reference isn't drawn
+    Cutout,
     Blend,
     Glass,
     CheapGlass,
+}
+
+impl Kind {
+    /// drawn with what's opaque, writing depth
+    fn opaque(self) -> bool { matches!(self, Kind::Opaque | Kind::Cutout) }
 }
 
 /// A mesh's draws on the GPU, and the buffers they read.
@@ -173,6 +180,8 @@ pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    /// the opaque pipeline with F_ALPHA_TEST's discard
+    cutout_pipeline: wgpu::RenderPipeline,
     /// translucent, glass and cheap glass, and what glass's view and
     /// material groups hold (what's been drawn; its three textures)
     blend_pipeline: wgpu::RenderPipeline,
@@ -300,18 +309,21 @@ impl Renderer {
             attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Uint32x4, 6 => Float32x4, 7 => Float32x2],
         }];
         // what's opaque writes depth; what's drawn over what's behind doesn't
-        let make = |label, layout: &wgpu::PipelineLayout, entry, blend: Option<wgpu::BlendState>, depth_write| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let make_with = |label, layout: &wgpu::PipelineLayout, entry, blend: Option<wgpu::BlendState>, depth_write, constants: &[(&str, f64)]| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(layout),
             vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &vertex_layout },
-            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(entry), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: COLOR, blend, write_mask: wgpu::ColorWrites::ALL })] }),
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(entry), compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() }, targets: &[Some(wgpu::ColorTargetState { format: COLOR, blend, write_mask: wgpu::ColorWrites::ALL })] }),
             primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: depth_write, depth_compare: wgpu::CompareFunction::Less, stencil: Default::default(), bias: Default::default() }),
             multisample: wgpu::MultisampleState { count: samples(), ..Default::default() },
             multiview: None,
             cache: None,
         });
-        let pipeline = make("complex", &layout, "fs_main", None, true);
+        let make = |label, layout: &wgpu::PipelineLayout, entry, blend: Option<wgpu::BlendState>, depth_write| make_with(label, layout, entry, blend, depth_write, &[]);
+        // what's opaque, without the alpha test's discard; what's alpha-tested, with it
+        let pipeline = make_with("complex", &layout, "fs_main", None, true, &[("ALPHA_TEST", 0.0)]);
+        let cutout_pipeline = make("complex alpha-tested", &layout, "fs_main", None, true);
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow"),
             layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&uniform_layout, &empty_layout, &object_layout], push_constant_ranges: &[] })),
@@ -370,7 +382,7 @@ impl Renderer {
         }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&none, &none, &none, &none], &[BakedLight::default()]);
         let ui = ui::Ui::new(&device, &queue);
-        Ok(Renderer { instance, ui, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
+        Ok(Renderer { instance, ui, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -627,7 +639,7 @@ impl Renderer {
             at(9, &views[6]), at(10, &views[7]), at(11, &views[8]),
         ] });
         // decals wait for their own pass
-        let kind = if m.int("F_DECAL") != 0 || m.shader.contains("overlay") { None } else if translucent { Some(Kind::Blend) } else { Some(Kind::Opaque) };
+        let kind = if m.int("F_DECAL") != 0 || m.shader.contains("overlay") { None } else if translucent { Some(Kind::Blend) } else if alpha_test > 0.0 { Some(Kind::Cutout) } else { Some(Kind::Opaque) };
         (group, kind)
     }
 
@@ -818,7 +830,7 @@ impl Renderer {
             let at = o.transform.transform_point3((o.model.min + o.model.max) * 0.5).distance_squared(view.eye);
             for (mi, m) in o.model.meshes.iter().enumerate().filter(|(_, m)| o.shows(m)) {
                 for (di, dr) in m.draws.iter().enumerate() {
-                    if dr.look(o.skin).1 != Kind::Opaque { later.push((at, k, mi, di)); }
+                    if !dr.look(o.skin).1.opaque() { later.push((at, k, mi, di)); }
                 }
             }
         }
@@ -844,7 +856,7 @@ impl Renderer {
                 for (o, group) in objects.iter().zip(&object_groups).filter(|(o, _)| casts(o)) {
                     pass.set_bind_group(2, group, &[]);
                     for m in o.model.meshes.iter().filter(|m| o.shows(m)) {
-                        for dr in m.draws.iter().filter(|dr| dr.look(o.skin).1 == Kind::Opaque) {
+                        for dr in m.draws.iter().filter(|dr| dr.look(o.skin).1.opaque()) {
                             pass.set_vertex_buffer(0, m.vertices[dr.vertex_buffer].slice(..));
                             pass.set_index_buffer(m.indices[dr.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
                             pass.draw_indexed(dr.range.clone(), dr.base_vertex, 0..1);
@@ -875,19 +887,34 @@ impl Renderer {
                 pass.set_bind_group(1, &sky.group, &[]);
                 pass.draw(0..3, 0..1);
             }
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &view_group, &[]);
-            for (o, group) in objects.iter().zip(&object_groups) {
-                pass.set_bind_group(2, group, &[]);
-                pass.set_bind_group(3, &lit(o).1.group, &[]);
-                for m in o.model.meshes.iter().filter(|m| o.shows(m)) {
-                    for d in m.draws.iter().filter(|d| d.look(o.skin).1 == Kind::Opaque) {
-                        pass.set_vertex_buffer(0, m.vertices[d.vertex_buffer].slice(..));
-                        pass.set_index_buffer(m.indices[d.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
-                        pass.set_bind_group(1, d.look(o.skin).0, &[]);
-                        pass.draw_indexed(d.range.clone(), d.base_vertex, 0..1);
+            // what's opaque, nearest first, so the depth test turns away what's behind before
+            // it's shaded; what's alpha-tested with the pipeline that discards
+            let mut opaque: Vec<(f32, usize, usize, usize)> = Vec::new();
+            for (k, o) in objects.iter().enumerate() {
+                let at = o.transform.transform_point3((o.model.min + o.model.max) * 0.5).distance_squared(view.eye);
+                for (mi, m) in o.model.meshes.iter().enumerate().filter(|(_, m)| o.shows(m)) {
+                    for (di, d) in m.draws.iter().enumerate() {
+                        if d.look(o.skin).1.opaque() { opaque.push((at, k, mi, di)); }
                     }
                 }
+            }
+            opaque.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut cutout = None;
+            for &(_, k, mi, di) in &opaque {
+                let (o, m) = (&objects[k], &objects[k].model.meshes[mi]);
+                let d = &m.draws[di];
+                let (material, kind) = d.look(o.skin);
+                if cutout != Some(kind == Kind::Cutout) {
+                    cutout = Some(kind == Kind::Cutout);
+                    pass.set_pipeline(if kind == Kind::Cutout { &self.cutout_pipeline } else { &self.pipeline });
+                    pass.set_bind_group(0, &view_group, &[]);
+                }
+                pass.set_bind_group(1, material, &[]);
+                pass.set_bind_group(2, &object_groups[k], &[]);
+                pass.set_bind_group(3, &lit(o).1.group, &[]);
+                pass.set_vertex_buffer(0, m.vertices[d.vertex_buffer].slice(..));
+                pass.set_index_buffer(m.indices[d.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(d.range.clone(), d.base_vertex, 0..1);
             }
         }
         profile.mark(&mut encoder, "opaque");

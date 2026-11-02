@@ -41,6 +41,11 @@
 // to four lights it names with how much of each reaches it, as a texel
 // of the lightmaps does.
 
+// Whether this pipeline alpha-tests (F_ALPHA_TEST). The opaque pipeline that
+// doesn't is specialized without its discard, so the depth test can reject a
+// pixel before it's shaded (what's nearer drawn first).
+override ALPHA_TEST: bool = true;
+
 struct View {
     view_proj: mat4x4<f32>,
     inv_view_proj: mat4x4<f32>,
@@ -475,7 +480,7 @@ fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32>
         s.metal = m.metal;
         s.ao = m.ao;
     } else {
-        if (material.params.x > 0.0 && albedo.a < material.params.x) {
+        if (ALPHA_TEST && material.params.x > 0.0 && albedo.a < material.params.x) {
             discard;
         }
         var tint = material.tint.rgb;
