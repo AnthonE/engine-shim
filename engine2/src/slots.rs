@@ -2788,9 +2788,9 @@ unsafe extern "C" fn s1405(_a0: usize) -> u32 { hit(1405); unsafe { core::mem::z
 unsafe extern "C" fn s1406(_a0: usize) { hit(1406);  }
 unsafe extern "C" fn s1407(_a0: usize) -> i32 { hit(1407); 1 }
 unsafe extern "C" fn s1408(_a0: usize) -> i32 { hit(1408); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1409(_a0: usize) -> i32 { hit(1409); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1410(_a0: usize) -> usize { hit(1410); crate::trace::object(1410) }
-unsafe extern "C" fn s1411(_a0: usize) -> usize { hit(1411); crate::trace::object(1411) }
+unsafe extern "C" fn s1409(_a0: usize) -> i32 { hit(1409); unsafe { crate::impls::CTextureBase_IsStrongHandleLoaded(_a0) } }
+unsafe extern "C" fn s1410(_a0: usize) -> usize { hit(1410); unsafe { crate::impls::CTextureBase_CopyStrongHandle(_a0) } }
+unsafe extern "C" fn s1411(_a0: usize) -> usize { hit(1411); unsafe { crate::impls::CTextureBase_GetBindingPtr(_a0) } }
 unsafe extern "C" fn s1412(_a0: usize) -> S_System_Guid { hit(1412); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1413() -> usize { hit(1413); crate::trace::object(1413) }
 unsafe extern "C" fn s1414(_a0: usize) { hit(1414);  }
@@ -4287,13 +4287,13 @@ unsafe extern "C" fn s2904(_a0: usize) -> usize { hit(2904); unsafe { crate::imp
 unsafe extern "C" fn s2905(_a0: usize) -> i32 { hit(2905); unsafe { crate::impls::g_pRenderDevice_GetSamplerIndex(_a0) } }
 unsafe extern "C" fn s2906(_a0: usize) -> S_RenderDeviceInfo_t { hit(2906); unsafe { crate::impls::g_pRenderDevice_GetSwapChainInfo(_a0) } }
 unsafe extern "C" fn s2907(_a0: usize, _a1: i64) -> usize { hit(2907); crate::trace::object(2907) }
-unsafe extern "C" fn s2908(_a0: usize, _a1: i32, _a2: usize, _a3: usize, _a4: i32) -> usize { hit(2908); crate::trace::object(2908) }
-unsafe extern "C" fn s2909(_a0: usize, _a1: S_Color32) { hit(2909);  }
-unsafe extern "C" fn s2910(_a0: usize, _a1: usize, _a2: i32, _a3: usize) { hit(2910);  }
+unsafe extern "C" fn s2908(_a0: usize, _a1: i32, _a2: usize, _a3: usize, _a4: i32) -> usize { hit(2908); unsafe { crate::impls::g_pRenderDevice_FindOrCreateTexture2(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s2909(_a0: usize, _a1: S_Color32) { hit(2909); unsafe { crate::impls::g_pRenderDevice_ClearTexture(_a0, _a1) } }
+unsafe extern "C" fn s2910(_a0: usize, _a1: usize, _a2: i32, _a3: usize) { hit(2910); unsafe { crate::impls::g_pRenderDevice_AsyncSetTextureData2(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s2911(_a0: usize, _a1: i64) -> usize { hit(2911); crate::trace::object(2911) }
 unsafe extern "C" fn s2912() -> usize { hit(2912); crate::trace::object(2912) }
 unsafe extern "C" fn s2913(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(2913); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2914(_a0: usize) -> usize { hit(2914); crate::trace::object(2914) }
+unsafe extern "C" fn s2914(_a0: usize) -> usize { hit(2914); unsafe { crate::impls::g_pRenderDevice_GetTextureDesc(_a0) } }
 unsafe extern "C" fn s2915(_a0: usize) -> usize { hit(2915); crate::trace::object(2915) }
 unsafe extern "C" fn s2916(_a0: usize) -> i64 { hit(2916); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2917(_a0: usize) -> u32 { hit(2917); unsafe { core::mem::zeroed() } }

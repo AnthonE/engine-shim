@@ -837,16 +837,72 @@ buffer's bytes as they were when it was made (managed refills its tables
 between draws, as a GPU would see them).
 
 And it's drawn (`render/ui.wgsl`, `render/ui.rs`): the shader ported to
-WGSL, its tables read as words as HLSL packs them. So far: rounded-rect
-boxes with their backgrounds and solid borders, and glyphs covered from
-their outlines (Lengyel's dual ray method, as s&box's `ui/text.hlsl`),
-blurred shadows too, each instance placed by its transform, blended in
-gamma space over the frame. Measured: Sandbox's join notice slides in
-from the left (its transform animating from -674 to 0) and reads "has
-joined the game", green over its shadow, at 640x360. Not yet: background
-images and gradients, scissors, paths and shapes, box shadows and
-outlines, border styles; and the device only answers with
-`ENGINE2_GRAPHICS=1` while the rest of what it wakes is filled in.
+WGSL, its tables read as words as HLSL packs them, each instance placed by
+its transform and blended in gamma space over the frame (UIGammaOutput: a
+colour stays as it was authored, and blends as a browser blends):
+
+- **Boxes**: rounded rects (each corner its own ellipse) with their
+  background colour, image or gradient, a tile sized, placed, repeated
+  and turned as `background-size`, `-position`, `-repeat` and `-angle`
+  say. Gradients are linear (by angle, or towards a corner, leaning with
+  the box), radial (the four CSS sizes, circles and ellipses) and conic,
+  their stops in pixels or fractions, interpolated premultiplied as the
+  web does. The background is cut back to the padding, content or text box
+  (`background-clip`), then the border goes over it: each side its own
+  colour, the corners split along their diagonal and antialiased on the
+  join; dotted, dashed, double, groove, ridge, inset and outset (a pixel's
+  place along the border's midline, around its elliptical corners, as
+  `border_style.hlsl` walks it); or a nine-slice `border-image`.
+- **Shadows** (`box-shadow`, outset and inset): the box's shape blurred by
+  a gaussian, evaluated analytically (each row a difference of error
+  functions, eight rows integrated, as `rounded_rect.hlsl` does after Evan
+  Wallace). **Outlines** (`outline`, and its offset).
+- **Glyphs**, covered from their outlines (Lengyel's dual ray method, as
+  `ui/text.hlsl`), blurred for `text-shadow`, coloured by a text gradient
+  where there is one.
+- **Clip stacks** (`overflow: hidden`, a rounded panel's corners): each
+  instance's chain of up to four rounded rects a link, each through its
+  own transform, the pixel's footprint carried into it, antialiased; and
+  the inverse one that keeps an outset shadow out of its panel.
+- **Panel opacity**, and the four blend modes (`D_BLENDMODE`: alpha,
+  multiply, lighten, premultiplied).
+
+The shader is bindless in s&box: a box names its image by its texture's
+bindless index. Here a draw binds eight textures (WebGPU allows sixteen a
+stage), found by that index, and a draw whose instances name more is split
+where they outgrow them, in order, so what's drawn over what is unchanged.
+Samplers' address modes (wrap, mirror, clamp, border) and point filtering
+are applied in the shader. The textures are a file's, or ones managed
+makes (`FindOrCreateTexture2`: an image it decoded, an SVG it drew, a
+thumbnail it downloaded), kept as data, their description and pixels, put
+on the GPU again after each write (`AsyncSetTextureData2`, `ClearTexture`).
+A texture is now its own binding (`GetBindingPtr`, which managed caches
+its wrappers by) and reports its size (`GetTextureDesc`): before, every
+texture was 0 by 0.
+
+Measured (`cargo test`, on lavapipe): a gradient down a box runs from red
+to blue, half and half at its middle; a box clipped to its top-left
+quarter shows only that; a shadow blurred 8 is brightest in its middle
+and fades past its shape's edge; a 2x2 image fills its box point-sampled;
+an outline sits 2 to 4 past its box; a border takes each side's colour,
+dashes run about half on and half off, and a double border is line, gap,
+line. In the game (Sandbox's zoo, a windowed player under Xvfb at
+960x540, xdotool at the keys): holding Q opens the spawn menu, 851
+instances a frame (674 glyphs, 130 boxes, 33 gradients, 21 borders, 14
+images), every one under the root's clip: its tabs, the spawnlists down
+the left, the grid of tiles cut off at the bottom of its scroll panel, the
+tool list with its blue section headers, the Elastic tool's sliders and
+its checkbox. Tab shows the scoreboard: the server's name, its blue
+header, the player's row with kills, deaths and ping.
+
+Not yet: `border-shape`'s shapes and paths (ShapeIndex; drawn as the
+rounded rect), world panels (a nameplate in the world), backdrop filters
+and panel layers. Material Icons, the icon font Sandbox's menus use, isn't
+in sbox-public (it comes with Facepunch's download; Google publishes it,
+Apache 2.0), so each icon shows as its name ("construction", "person").
+A spawnlist's tiles are cloud packages, whose thumbnails come from
+sbox.game's package API; here they stay empty. And the device only answers
+with `ENGINE2_GRAPHICS=1` while the rest of what it wakes is filled in.
 
 ## What a player hears
 
@@ -987,7 +1043,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation; what a builder is given (bones, attachments, mesh groups, hitboxes) as a file's model |
-| `engine2/src/gpu.rs` | the render device as data: render attributes, GPU buffers, bindless indices, scene views and managed layers, render contexts that record draws |
+| `engine2/src/gpu.rs` | the render device as data: render attributes, GPU buffers, textures managed makes and samplers, bindless indices, scene views and managed layers, render contexts that record draws |
+| `engine2/src/render/ui.rs`, `ui.wgsl` | the UI: s&box's batched UI box shader ported to WGSL, its draws split where their images outgrow a draw's bindings |
 | `engine2/src/window.rs` | a client's window: SDL3's windows and events on winit, its swap chain a wgpu surface the main camera draws to |
 | `engine2/src/audio.rs` | sound: the device and its pace, sounds read and decoded, voices' mixers, mix buffers, Steam Audio's effects |
 | `engine2/src/rendermesh.rs` | meshes made at runtime: MeshGlue's render meshes, their vertex and index buffers, managed's vertex layouts |

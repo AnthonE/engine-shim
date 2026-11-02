@@ -549,7 +549,13 @@ pub fn draw_camera(camera: usize, sc: usize) {
     if !ui.is_empty() {
         let batched = to_draw(&ui);
         let linear = frame.texture.create_view(&wgpu::TextureViewDescriptor { format: Some(format.remove_srgb_suffix()), ..Default::default() });
-        r.ui.draw(&r.device, &r.queue, &linear, format.remove_srgb_suffix(), width as u32, height as u32, &batched);
+        r.ui.draw(r, &linear, format.remove_srgb_suffix(), width as u32, height as u32, &batched);
+        // what the HUD is made of, now and then
+        static CENSUS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        if CENSUS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 10 == 0 {
+            let said: Vec<String> = batched.iter().map(crate::render::ui::census).collect();
+            crate::trace::note(&format!("window frame {n}: the UI's {} batches: {}", batched.len(), said.join(" | ")));
+        }
     }
     static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     if !ui.is_empty() && (SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 || n % 60 == 0) {
@@ -577,6 +583,9 @@ fn to_draw(draws: &[crate::gpu::Draw]) -> Vec<crate::render::ui::UiDraw> {
     draws.iter().filter(|d| crate::camera::material_shader(d.material).is_some_and(|s| s.contains("ui_cssbox_batched"))).map(|d| {
         let layer = match d.attrs.get(&crate::string_token("LayerMat")) { Some(Val::Matrix(m)) => *m, _ => [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] };
         let instance_offset = match d.attrs.get(&crate::string_token("InstanceOffset")) { Some(Val::Int(o)) => *o, _ => 0 };
+        // the combos the batcher set: how it blends, and whether a panel's opacity scales it
+        let combo = |name: &str| match d.attrs.get(&crate::string_token(name)) { Some(Val::Combo(c)) => *c as i32, Some(Val::Int(c)) => *c, Some(Val::Bool(b)) => *b as i32, _ => 0 };
+        let opacity = match d.attrs.get(&crate::string_token("UIPanelOpacity")) { Some(Val::Float(o)) => *o, _ => 1.0 };
         crate::render::ui::UiDraw {
             boxes: bytes(d, "BoxInstances"),
             texts: bytes(d, "PainterTextInstances"),
@@ -584,9 +593,13 @@ fn to_draw(draws: &[crate::gpu::Draw]) -> Vec<crate::render::ui::UiDraw> {
             glyph_curves: bytes(d, "GlyphCurves"),
             glyph_bands: bytes(d, "GlyphBands"),
             transforms: bytes(d, "TransformBuffer"),
+            scissors: bytes(d, "ScissorBuffer"),
+            gradients: bytes(d, "GradientBuffer"),
             layer,
             instance_offset,
             instances: d.instances.max(0) as u32,
+            blend: combo("D_BLENDMODE").clamp(0, 3) as u8,
+            opacity: (combo("D_PANEL_OPACITY") != 0).then_some(opacity),
         }
     }).collect()
 }

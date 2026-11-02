@@ -407,7 +407,31 @@ pub unsafe fn RenderTools_SetGPUBufferData(_ctx: usize, b: usize, data: usize, s
     gpu::write_buffer(b, unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) }, offset as usize)
 }
 pub unsafe fn g_pRenderDevice_GetTextureViewIndex(t: usize, _color_space: u8, _dim: i64) -> i32 { gpu::texture_index(t) }
-pub unsafe fn g_pRenderDevice_FindOrCreateSamplerState(_desc: usize) -> usize { crate::handles::object() }
+/// CSamplerStateDesc (16 bytes): one sampler object per description.
+pub unsafe fn g_pRenderDevice_FindOrCreateSamplerState(desc: usize) -> usize {
+    match unsafe { rd::<[u8; 16]>(desc) } { Some(d) => gpu::sampler(&d), None => crate::handles::object() }
+}
+/// A texture managed makes (Texture.Create's builder: an image it decoded,
+/// an SVG it drew, a thumbnail, a render target), its first pixels with it
+/// or not (TextureCreationConfig_t, 44 bytes).
+pub unsafe fn g_pRenderDevice_FindOrCreateTexture2(name: usize, anonymous: i32, config: usize, data: usize, size: i32) -> usize {
+    let Some(c) = (unsafe { rd::<[u8; 44]>(config) }) else { return 0 };
+    let pixels: &[u8] = if data != 0 && size > 0 { unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) } } else { &[] };
+    gpu::create_texture(&unsafe { read(name) }, anonymous != 0, &c, pixels)
+}
+/// Rect3D: x, y, z, width, height, depth.
+pub unsafe fn g_pRenderDevice_AsyncSetTextureData2(t: usize, data: usize, size: i32, rect: usize) {
+    if data == 0 || size <= 0 { return; }
+    let r = unsafe { rd::<[i32; 6]>(rect) }.unwrap_or_default();
+    gpu::write_texture(t, unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) }, r)
+}
+pub unsafe fn g_pRenderDevice_ClearTexture(t: usize, c: S_Color32) { gpu::clear_texture(t, [c.f_r, c.f_g, c.f_b, c.f_a]) }
+pub unsafe fn g_pRenderDevice_GetTextureDesc(t: usize) -> usize { gpu::texture_desc(t) as usize }
+/// A texture is its own binding (managed caches its wrappers by it) and
+/// its own strong handle; it's loaded once made.
+pub unsafe fn CTextureBase_GetBindingPtr(t: usize) -> usize { t }
+pub unsafe fn CTextureBase_CopyStrongHandle(t: usize) -> usize { t }
+pub unsafe fn CTextureBase_IsStrongHandleLoaded(t: usize) -> i32 { (t != 0) as i32 }
 pub unsafe fn g_pRenderDevice_GetSamplerIndex(s: usize) -> i32 { gpu::sampler_index(s) }
 /// A material's mode for a layer: here, the material itself.
 pub unsafe fn IMaterial2_GetMode(m: usize, _mode: S_Sandbox_StringToken) -> usize { m }
