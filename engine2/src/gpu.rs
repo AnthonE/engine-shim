@@ -79,6 +79,11 @@ pub struct Draw {
     /// not a draw: what's been drawn so far copied into this texture
     /// (RenderTools.ResolveFrameBuffer: a grab for a backdrop to read)
     pub grab: Option<usize>,
+    /// not a draw: what it draws into cleared to this colour (IRenderContext.Clear)
+    pub clear: Option<[f32; 4]>,
+    /// what it draws into: a texture managed bound (a render target), or the
+    /// layer's own (the frame)
+    pub target: Option<usize>,
 }
 
 /// Vertices a draw carried (managed's Graphics.Draw, DrawQuad): in a vertex
@@ -100,6 +105,11 @@ pub struct Context {
     pub attrs: HashMap<u32, Val>,
     pub index_buffer: Option<(usize, i32, i32)>,
     pub scissor: Option<[i32; 4]>,
+    /// the render target bound (BindRenderTargets), or none: the layer's
+    pub target: Option<usize>,
+    /// the layer's attributes, under every draw's own (UIGammaOutput, set on
+    /// the UI's layer, reaches the shaders it runs)
+    pub layer_attrs: HashMap<u32, Val>,
     pub draws: Vec<Draw>,
 }
 
@@ -413,6 +423,13 @@ pub fn texture_desc(t: usize) -> *const TextureDesc {
     p
 }
 
+/// TSPEC_RENDER_TARGET: a texture made to be drawn into.
+pub const RENDER_TARGET: u32 = 1;
+
+pub fn is_render_target(t: usize) -> bool {
+    device().textures.get(&t).is_some_and(|x| x.desc.flags & RENDER_TARGET != 0)
+}
+
 /// How many times a texture managed made has been written, or None for a
 /// texture it didn't make (a file's).
 pub fn texture_version(t: usize) -> Option<u64> {
@@ -486,6 +503,15 @@ pub fn free_view(view: usize) {
 
 // ---- a render context: what managed draws, recorded
 
+/// A context a layer runs with: its draws under the layer's attributes.
+pub fn new_layer_context(layer: usize) -> usize {
+    let p = new_context();
+    let mut d = device();
+    let base = d.layers.get(&layer).map(|l| flatten(&d, l.attrs)).unwrap_or_default();
+    if let Some(c) = d.contexts.get_mut(&p) { c.layer_attrs = base; }
+    p
+}
+
 pub fn new_context() -> usize {
     let p = object();
     device().contexts.insert(p, Context::default());
@@ -502,7 +528,8 @@ pub fn set_state(ctx: usize, attrs: usize, material: usize) -> bool {
     let values = flatten(&d, attrs);
     let Some(c) = d.contexts.get_mut(&ctx) else { return false };
     c.material = material;
-    c.attrs = values;
+    c.attrs = c.layer_attrs.clone();
+    c.attrs.extend(values);
     true
 }
 
@@ -515,10 +542,10 @@ pub fn record(ctx: usize, primitive: i64, first: i32, count: i32, instances: i32
     let Some(c) = d.contexts.get(&ctx) else { return };
     let attrs = c.attrs.clone();
     let index_buffer = if indexed { c.index_buffer } else { None };
-    let (material, scissor) = (c.material, c.scissor);
+    let (material, scissor, target) = (c.material, c.scissor, c.target);
     let buffers = attrs.values().filter_map(|v| match v { Val::Buffer(b) => d.buffers.get(b).map(|x| (*b, std::sync::Arc::new(x.data.clone()))), _ => None }).collect();
     if let Some(c) = d.contexts.get_mut(&ctx) {
-        c.draws.push(Draw { material, attrs, primitive, index_buffer, first, count, instances, base_vertex, scissor, buffers, inline: None, grab: None });
+        c.draws.push(Draw { material, attrs, primitive, index_buffer, first, count, instances, base_vertex, scissor, buffers, inline: None, grab: None, clear: None, target });
     }
 }
 
@@ -530,13 +557,38 @@ pub fn record_inline(ctx: usize, primitive: i64, inline: Inline) {
     with_context(ctx, |c| if let Some(d) = c.draws.last_mut() { d.inline = Some(inline) });
 }
 
+/// Not a draw, but in the order of draws: a grab or a clear, of what the
+/// context draws into now.
+fn record_step(ctx: usize, grab: Option<usize>, clear: Option<[f32; 4]>) {
+    with_context(ctx, |c| {
+        let target = c.target;
+        c.draws.push(Draw {
+            material: 0, attrs: HashMap::new(), primitive: 0, index_buffer: None, first: 0, count: 0, instances: 0, base_vertex: 0,
+            scissor: None, buffers: HashMap::new(), inline: None, grab, clear, target,
+        })
+    });
+}
+
 /// What's been drawn so far, to be copied into `texture` here in the order of
 /// things (RenderTools.ResolveFrameBuffer).
-pub fn record_grab(ctx: usize, texture: usize) {
-    with_context(ctx, |c| c.draws.push(Draw {
-        material: 0, attrs: HashMap::new(), primitive: 0, index_buffer: None, first: 0, count: 0, instances: 0, base_vertex: 0,
-        scissor: None, buffers: HashMap::new(), inline: None, grab: Some(texture),
-    }));
+pub fn record_grab(ctx: usize, texture: usize) { record_step(ctx, Some(texture), None) }
+
+/// What the context draws into, cleared to a colour here (IRenderContext.Clear).
+pub fn record_clear(ctx: usize, rgba: [f32; 4]) { record_step(ctx, None, Some(rgba)) }
+
+/// What the context draws into from here: a texture (a render target), or
+/// none, the layer's own. The viewport becomes the target's, until managed
+/// sets one.
+pub fn bind_target(ctx: usize, color: usize) {
+    let size = (color != 0).then(|| {
+        let d = device();
+        let (w, h) = d.textures.get(&color).map(|t| (t.desc.width as i32, t.desc.height as i32)).unwrap_or((0, 0));
+        (w, h)
+    });
+    with_context(ctx, |c| {
+        c.target = (color != 0).then_some(color);
+        if let Some((w, h)) = size.filter(|s| s.0 > 0 && s.1 > 0) { c.viewport = [0, 0, w, h]; }
+    });
 }
 
 #[cfg(test)]

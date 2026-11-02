@@ -971,16 +971,41 @@ opened in these runs (with FreeCam on, J, no UI drew at all here; it adds
 `ui` to the camera's excluded tags, and why that hides its own overlay
 here is still to find).
 
-**Sandbox's HUD paints into a render target of its own.** Its gameplay HUD
-(`HudCanvas`) draws into an RGBA16F texture, blits a glow from it, then
-composites it over the frame with a grab and `hud_composite.shader`: the
-grab and the composite reach the UI's list, but what's drawn into a render
-target doesn't yet (`SetRenderTarget` in a command list), which is why its
-vitals and crosshair don't show. A render context now says what it draws
-into (`GetViewport`: the view's size, where managed read 0 by 0 and made
-its grabs 8 square).
+**Render targets: Sandbox's HUD.** Its gameplay HUD (`HudCanvas`) paints
+into an RGBA16F texture of its own, in a command list on the camera after
+the viewmodel; blits a glow from it (`hud_glow.shader`, twice, into two
+half-size targets: what's brighter than white, blurred across, then down);
+then in the UI composites both over the frame with a grab and
+`hud_composite.shader`, scanlines and all. Each frame the camera's stages
+that draw over the frame now run, in the pipeline's order, each as a layer
+of its own (`AddUIHook`): after the viewmodel, after post processing (the
+camera's `Hud`, where a weapon draws its crosshair), the UI, and after it
+(its `Overlay`). A render context keeps what it draws into
+(`BindRenderTargets`, `RestoreRenderTargets`, and the viewport managed sets
+with it), a texture made with `TSPEC_RENDER_TARGET` says it is one
+(`IsTextureRenderTarget`: `RenderTarget.From` threw without it), and
+`Clear` is recorded where it falls. The renderer draws each run of draws
+into its target on the GPU (a float target as `Rgba16Float`), clears where
+managed cleared, grabs from what's being drawn into, and keeps the targets
+from frame to frame for what reads them, by bindless index or by the
+attribute that names them. A draw now has its layer's attributes under its
+own, as native gives them (the UI layer's `UIGammaOutput`). Sandbox's two
+HUD shaders are its own (MIT), and are ported (`render/hud.wgsl`), as the
+UI's are; a game's other shaders aren't drawn yet.
 
-Not yet: render targets in the UI (above), `border-shape`'s shapes and
+Measured (`cargo test`, lavapipe): a box four times brighter than white,
+painted into a float target, glowed and composited over mid grey: 255
+inside it, its glow beside it falling from 252 to 159 over three pixels,
+the grey as it was (128) far from it and above it (the first pass blurs
+across only). In the game (Sandbox's zoo, a windowed player under Xvfb at
+960x540): the HUD's paint (a clear, a batch of 15 boxes and glyphs) into
+its 960x540 target, the two glow blits into 480x270, then the composite in
+the UI, every frame; the vitals show at the bottom left ("HEALTH 100" in
+orange, haloed by their glow) where nothing did. And after post
+processing, the physgun's crosshair: its targeting dot at the middle of
+the screen, its beam's colour at a fifth of its opacity.
+
+Not yet: `border-shape`'s shapes and
 paths (ShapeIndex; drawn as the rounded rect), world panels (a nameplate in
 the world), and panel layers (`filter:`, `mask-image`).
 
