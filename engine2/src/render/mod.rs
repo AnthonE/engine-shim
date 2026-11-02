@@ -706,6 +706,7 @@ impl Renderer {
     /// there, nothing read back, an empty result) or, without one, as an
     /// RGBA image read back.
     pub fn draw_into(&self, objects: &[Instance], view: &View, width: u32, height: u32, target_view: Option<(&wgpu::TextureView, wgpu::TextureFormat)>) -> Vec<u8> {
+        let mut profile = Profile::new(self);
         let (sun, sun_color) = view.sun.unwrap_or((Vec3::new(0.6, 0.35, 0.75), Vec3::new(1.6, 1.55, 1.45)));
         // no auto exposure yet: s&box's default never goes below 1 (its
         // range is 1 to 3), and a map's sun is lit for that
@@ -808,6 +809,7 @@ impl Renderer {
         let store = if later.is_empty() { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store };
         let resolved_view = resolved.create_view(&Default::default());
         let mut encoder = d.create_command_encoder(&Default::default());
+        profile.mark(&mut encoder, "setup");
         {
             // the sun's shadow map (cleared to nothing in the way when there's nothing to cast)
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -834,6 +836,7 @@ impl Renderer {
                 }
             }
         }
+        profile.mark(&mut encoder, "shadow");
         {
             let [r, g, b, a] = view.clear;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -868,6 +871,7 @@ impl Renderer {
                 }
             }
         }
+        profile.mark(&mut encoder, "opaque");
         if !later.is_empty() {
             // what's been drawn, for glass to see through, then what's left over it
             let behind = target(COLOR, 1, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
@@ -908,6 +912,7 @@ impl Renderer {
                 pass.draw_indexed(dr.range.clone(), dr.base_vertex, 0..1);
             }
         }
+        profile.mark(&mut encoder, "translucent");
         // its exposure: as asked, or from what's been drawn
         let debug = std::env::var("RENDER_DEBUG").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0) != 0.0;
         let exposure = match view.exposure {
@@ -931,6 +936,7 @@ impl Renderer {
                 auto_exposure(&mut lum, min, max, compensation)
             }
         };
+        profile.mark(&mut encoder, "exposure");
         let shown = target(SHOWN, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
         let shown_view = shown.create_view(&Default::default());
         let (out_view, out_format) = target_view.unwrap_or((&shown_view, SHOWN));
@@ -954,6 +960,8 @@ impl Renderer {
         }
         if target_view.is_some() {
             self.queue.submit([encoder.finish()]);
+            profile.mark_submitted("tonemap");
+            profile.say(width, height, objects.len());
             return Vec::new();
         }
         let resolved = shown;
@@ -969,8 +977,44 @@ impl Renderer {
         let slice = readback.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
         let _ = d.poll(wgpu::PollType::Wait);
+        profile.mark_submitted("tonemap and read back");
+        profile.say(width, height, objects.len());
         let data = slice.get_mapped_range();
         (0..height as usize).flat_map(|y| data[y * row as usize..y * row as usize + width as usize * 4].to_vec()).collect()
+    }
+}
+
+/// RENDER_PROFILE: each stage of a frame submitted and waited for, and how
+/// long each took (the GPU's part with it), said every 30th frame. Waiting
+/// costs the frame its overlap with the CPU, so only while measuring.
+struct Profile<'a> {
+    r: Option<&'a Renderer>,
+    last: std::time::Instant,
+    marks: Vec<(&'static str, f64)>,
+}
+
+impl<'a> Profile<'a> {
+    fn new(r: &'a Renderer) -> Self {
+        Profile { r: std::env::var_os("RENDER_PROFILE").map(|_| r), last: std::time::Instant::now(), marks: Vec::new() }
+    }
+    fn mark(&mut self, encoder: &mut wgpu::CommandEncoder, name: &'static str) {
+        let Some(r) = self.r else { return };
+        r.queue.submit([std::mem::replace(encoder, r.device.create_command_encoder(&Default::default())).finish()]);
+        self.mark_submitted(name);
+    }
+    fn mark_submitted(&mut self, name: &'static str) {
+        let Some(r) = self.r else { return };
+        let _ = r.device.poll(wgpu::PollType::Wait);
+        self.marks.push((name, self.last.elapsed().as_secs_f64() * 1000.0));
+        self.last = std::time::Instant::now();
+    }
+    fn say(&self, width: u32, height: u32, objects: usize) {
+        if self.r.is_none() { return; }
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 30 != 0 { return; }
+        let total: f64 = self.marks.iter().map(|m| m.1).sum();
+        let stages: Vec<String> = self.marks.iter().map(|(n, ms)| format!("{n} {ms:.0}")).collect();
+        crate::trace::note(&format!("render profile, {width}x{height}, {objects} objects: {total:.0} ms ({})", stages.join(", ")));
     }
 }
 
