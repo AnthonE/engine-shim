@@ -321,6 +321,12 @@ mod draw {
     /// Camera `camera`'s view, `width` by `height`, as RGBA (top row first),
     /// and a line saying what was in it.
     pub fn frame(camera: usize, width: i32, height: i32) -> Option<(Vec<u8>, String)> {
+        frame_into(camera, width, height, None)
+    }
+
+    /// The view drawn into `target` (a window's frame) rather than read back:
+    /// the image is empty then.
+    pub fn frame_into(camera: usize, width: i32, height: i32, target: Option<(&wgpu::TextureView, wgpu::TextureFormat)>) -> Option<(Vec<u8>, String)> {
         if width <= 1 || height <= 1 { return None; }
         let r = renderer()?;
         let get = |prop| crate::state::get::<f32>(camera, prop);
@@ -417,14 +423,14 @@ mod draw {
             }
         }
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
-        let image = r.draw(&instances, &view, width as u32, height as u32);
+        let image = r.draw_into(&instances, &view, width as u32, height as u32, target);
         let said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes)", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
         Some((image, said))
     }
 }
 
 #[cfg(feature = "render")]
-pub use draw::{frame, shared_renderer, to_bitmap};
+pub use draw::{frame, frame_into, shared_renderer, to_bitmap};
 #[cfg(feature = "render")]
 #[allow(unused_imports)]
 pub use draw::probe_volumes;

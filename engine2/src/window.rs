@@ -93,8 +93,8 @@ pub struct WinState {
     /// the startup splash's software surface, until a swap chain replaces it
     pub software: bool,
     pub surface: Option<Surface>,
-    /// the main camera's last frame, waiting for `Present`
-    pub frame: Option<(Vec<u8>, u32, u32)>,
+    /// the main camera's last frame, drawn into the surface, waiting for `Present`
+    pub frame: Option<wgpu::SurfaceTexture>,
 }
 
 pub struct Surface {
@@ -449,7 +449,8 @@ fn surface_for(w: &Win, s: &mut WinState, r: &crate::render::Renderer, width: u3
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
-            view_formats: Vec::new(),
+            // drawn through an sRGB view, as the renderer's own output is
+            view_formats: vec![format.add_srgb_suffix()],
         };
         crate::trace::note(&format!("window: a surface, {format:?}, {width}x{height}"));
         s.surface = Some(Surface { surface, config });
@@ -511,23 +512,41 @@ pub fn window_of_swap_chain(sc: usize) -> usize {
     swap_chains().get(&sc).copied().unwrap_or(0)
 }
 
-/// The main camera drew a frame for a swap chain: kept for Present.
+/// The main camera's view for a swap chain (SceneCamera.Render): drawn
+/// straight into the window's next frame, shown at Present.
 pub fn draw_camera(camera: usize, sc: usize) {
     let window = window_of_swap_chain(sc);
     let (width, height) = size(window);
     if width <= 1 || height <= 1 { return; }
+    let Some(r) = crate::camera::shared_renderer() else { return };
     let began = std::time::Instant::now();
-    let Some((image, said)) = crate::camera::frame(camera, width, height) else { return };
+    let frame = with(window, |w, s| {
+        surface_for(w, s, r, width as u32, height as u32)?;
+        let x = s.surface.as_ref()?;
+        match x.surface.get_current_texture() {
+            Ok(f) => Some((f, x.config.format.add_srgb_suffix())),
+            Err(e) => {
+                x.surface.configure(&r.device, &x.config);
+                crate::trace::note(&format!("window: no frame to draw to: {e}"));
+                None
+            }
+        }
+    }).flatten();
+    let Some((frame, format)) = frame else { return };
+    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor { format: Some(format), ..Default::default() });
+    let Some((_, said)) = crate::camera::frame_into(camera, width, height, Some((&view, format))) else { return };
     static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if n % 30 == 0 { crate::trace::note(&format!("window frame {n} ({} ms): {said}", began.elapsed().as_millis())); }
-    with(window, |_, s| s.frame = Some((image, width as u32, height as u32)));
+    with(window, |_, s| s.frame = Some(frame));
 }
 
 pub fn present(sc: usize) -> bool {
     let window = window_of_swap_chain(sc);
-    let Some((image, w, h)) = with(window, |_, s| s.frame.take()).flatten() else { return true };
-    show_pixels(window, &image, w, h)
+    let Some(frame) = with(window, |_, s| s.frame.take()).flatten() else { return true };
+    if let Some(w) = get(window) { w.window.pre_present_notify(); }
+    frame.present();
+    true
 }
 
 // ---- keys: winit's physical keys as SDL's scancodes (USB HID usages), and

@@ -816,8 +816,16 @@ to the card's rate; a machine with none notes so and carries on
 (`ENGINE2_AUDIO_DEVICE=none` to skip it). Tested here only to the card's
 door: no sound card in this container, the conversion by `cargo test`.
 
-What isn't there yet: the UI and HUD, and speed: each frame is drawn,
-read back and copied to the window, where it could be drawn into it.
+Each frame is drawn straight into the window's surface (its tonemap pass
+renders to the surface's sRGB view), nothing read back but what auto
+exposure measures. On lavapipe that took a 1280x720 frame from 1.2 s to
+1.05 s; on a GPU the round trip it saves is most of a frame.
+
+What isn't there yet: the UI and HUD. s&box draws all of it with one
+bindless shader (`ui_cssbox_batched.shader`, public, about 3,000 lines
+with its includes) over GPU tables, and text through a compute shader:
+that needs the render device's buffers, textures and bindless indices
+answered (`Graphics.IsAvailable`) and the shaders ported to WGSL.
 
 ## What a player hears
 

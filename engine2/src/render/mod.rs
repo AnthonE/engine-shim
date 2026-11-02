@@ -181,7 +181,9 @@ pub struct Renderer {
     glass_pipeline: wgpu::RenderPipeline,
     cheap_glass_pipeline: wgpu::RenderPipeline,
     /// the frame exposed and tonemapped (tonemap.wgsl)
-    tonemap_pipeline: wgpu::RenderPipeline,
+    /// the frame exposed and tonemapped, into an output of each format it's asked for
+    tonemap_shader: wgpu::ShaderModule,
+    tonemap_pipelines: Mutex<HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>>,
     tonemap_layout: wgpu::BindGroupLayout,
     glass_view_layout: wgpu::BindGroupLayout,
     glass_layout: wgpu::BindGroupLayout,
@@ -312,17 +314,7 @@ impl Renderer {
         let cheap_glass_pipeline = make("cheap glass", &glass_pipeline_layout, "fs_glass", Some(wgpu::BlendState::ALPHA_BLENDING), false);
         let tonemap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("tonemap"), source: wgpu::ShaderSource::Wgsl(include_str!("tonemap.wgsl").into()) });
         let tonemap_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("tonemap"), entries: &[uniform(0, wgpu::ShaderStages::FRAGMENT), tex(1)] });
-        let tonemap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("tonemap"),
-            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&tonemap_layout], push_constant_ranges: &[] })),
-            vertex: wgpu::VertexState { module: &tonemap_shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
-            fragment: Some(wgpu::FragmentState { module: &tonemap_shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(SHOWN.into())] }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview: None,
-            cache: None,
-        });
+
         // the sky: a triangle over the screen, its cube looked up per pixel, behind everything
         let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sky"), source: wgpu::ShaderSource::Wgsl(include_str!("sky.wgsl").into()) });
         let sky_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("sky"), entries: &[
@@ -359,7 +351,7 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&none, &none, &none, &none], &[BakedLight::default()]);
-        Ok(Renderer { instance, gpu: adapter, tonemap_pipeline, tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
+        Ok(Renderer { instance, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -687,6 +679,29 @@ impl Renderer {
     /// Objects drawn from a view: an RGBA image, `width` by `height`, its
     /// top row first.
     pub fn draw(&self, objects: &[Instance], view: &View, width: u32, height: u32) -> Vec<u8> {
+        self.draw_into(objects, view, width, height, None)
+    }
+
+    /// The tonemap pass for an output of `format`, made the first time it's asked for.
+    fn tonemap_pipeline(&self, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        let mut all = self.tonemap_pipelines.lock().unwrap();
+        all.entry(format).or_insert_with(|| self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("tonemap"),
+            layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&self.tonemap_layout], push_constant_ranges: &[] })),
+            vertex: wgpu::VertexState { module: &self.tonemap_shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
+            fragment: Some(wgpu::FragmentState { module: &self.tonemap_shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(format.into())] }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview: None,
+            cache: None,
+        })).clone()
+    }
+
+    /// Objects drawn from a view, into `target` (a window's frame: drawn
+    /// there, nothing read back, an empty result) or, without one, as an
+    /// RGBA image read back.
+    pub fn draw_into(&self, objects: &[Instance], view: &View, width: u32, height: u32, target_view: Option<(&wgpu::TextureView, wgpu::TextureFormat)>) -> Vec<u8> {
         let (sun, sun_color) = view.sun.unwrap_or((Vec3::new(0.6, 0.35, 0.75), Vec3::new(1.6, 1.55, 1.45)));
         // no auto exposure yet: s&box's default never goes below 1 (its
         // range is 1 to 3), and a map's sun is lit for that
@@ -913,6 +928,8 @@ impl Renderer {
             }
         };
         let shown = target(SHOWN, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        let shown_view = shown.create_view(&Default::default());
+        let (out_view, out_format) = target_view.unwrap_or((&shown_view, SHOWN));
         {
             let curve = match view.tonemap { Tonemap::Linear => 0.0, Tonemap::Hable => 1.0, Tonemap::Aces => 2.0, Tonemap::ReinhardJodie => 3.0, Tonemap::Agx => 4.0 };
             let u = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("tonemap"), contents: bytemuck::cast_slice(&[exposure, curve, debug as i32 as f32, 0.0]), usage: wgpu::BufferUsages::UNIFORM });
@@ -922,14 +939,18 @@ impl Renderer {
             ] });
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("tonemap"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &shown.create_view(&Default::default()), resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: out_view, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.tonemap_pipeline);
+            pass.set_pipeline(&self.tonemap_pipeline(out_format));
             pass.set_bind_group(0, &group, &[]);
             pass.draw(0..3, 0..1);
+        }
+        if target_view.is_some() {
+            self.queue.submit([encoder.finish()]);
+            return Vec::new();
         }
         let resolved = shown;
         // read it back, a row at a time as copies align them
