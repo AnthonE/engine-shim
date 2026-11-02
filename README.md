@@ -918,9 +918,12 @@ Three things stood between them and the screen:
 
 Measured, in the same game: the construction props' tiles show their
 props (the pipe valves and lever, the metal doors, the blue barrel, the
-gas bottles, the extinguisher); the weapons' thumbnails are the USP, the
-physgun, the shotgun, the MP5 and the rest, each framed and lit as its
-prefab's camera says, on transparency. `ENGINE2_FRAME_DUMP=<folder>`
+gas bottles, the extinguisher, the kegs, the barriers, the fences); the
+Weapons tab shows each weapon's thumbnail (the M4A1, the RPG, the
+crowbar, the grenade, the pistols, the sniper rifle, the physgun, the
+MP5, the shotgun, the toolgun), each framed and lit as its prefab's camera
+says, on transparency, and below them the community items' from
+sbox.game. `ENGINE2_FRAME_DUMP=<folder>`
 writes the first frames a camera rendered to a bitmap and lists what each
 placed; `ENGINE2_UI_DEBUG` lists the HUD's image instances.
 
