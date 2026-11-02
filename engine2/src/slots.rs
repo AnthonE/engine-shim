@@ -3416,19 +3416,19 @@ unsafe extern "C" fn s2033(_a0: usize, _a1: usize, _a2: i64, _a3: i64, _a4: i64,
 unsafe extern "C" fn s2034(_a0: usize, _a1: usize) { hit(2034); unsafe { crate::impls::IRenderContext_SetScissorRect(_a0, _a1) } }
 unsafe extern "C" fn s2035(_a0: usize) -> usize { hit(2035); unsafe { crate::impls::IRenderContext_GetAttributesPtrForModify(_a0) } }
 unsafe extern "C" fn s2036(_a0: usize, _a1: usize) { hit(2036);  }
-unsafe extern "C" fn s2037(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) { hit(2037);  }
+unsafe extern "C" fn s2037(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) { hit(2037); unsafe { crate::impls::IRenderContext_Clear(_a0, _a1, _a2, _a3, _a4) } }
 unsafe extern "C" fn s2038(_a0: usize, _a1: usize, _a2: S_Color32) { hit(2038);  }
 unsafe extern "C" fn s2039(_a0: usize, _a1: usize, _a2: u32) { hit(2039);  }
-unsafe extern "C" fn s2040(_a0: usize, _a1: usize, _a2: usize, _a3: usize) { hit(2040);  }
-unsafe extern "C" fn s2041(_a0: usize, _a1: usize) { hit(2041);  }
-unsafe extern "C" fn s2042(_a0: usize, _a1: usize) { hit(2042);  }
-unsafe extern "C" fn s2043(_a0: usize, _a1: usize) { hit(2043);  }
-unsafe extern "C" fn s2044(_a0: usize, _a1: usize) { hit(2044);  }
-unsafe extern "C" fn s2045(_a0: usize, _a1: i32, _a2: i32, _a3: i32, _a4: i32) { hit(2045);  }
-unsafe extern "C" fn s2046(_a0: usize) -> S_NativeEngine_RenderViewport { hit(2046); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2040(_a0: usize, _a1: usize, _a2: usize, _a3: usize) { hit(2040); unsafe { crate::impls::IRenderContext_BindRenderTargets(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s2041(_a0: usize, _a1: usize) { hit(2041); unsafe { crate::impls::IRenderContext_BindRenderTargets_1(_a0, _a1) } }
+unsafe extern "C" fn s2042(_a0: usize, _a1: usize) { hit(2042); unsafe { crate::impls::IRenderContext_RestoreRenderTargets(_a0, _a1) } }
+unsafe extern "C" fn s2043(_a0: usize, _a1: usize) { hit(2043); unsafe { crate::impls::IRenderContext_SetViewport(_a0, _a1) } }
+unsafe extern "C" fn s2044(_a0: usize, _a1: usize) { hit(2044); unsafe { crate::impls::IRenderContext_SetViewport_1(_a0, _a1) } }
+unsafe extern "C" fn s2045(_a0: usize, _a1: i32, _a2: i32, _a3: i32, _a4: i32) { hit(2045); unsafe { crate::impls::IRenderContext_SetViewport_2(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s2046(_a0: usize) -> S_NativeEngine_RenderViewport { hit(2046); unsafe { crate::impls::IRenderContext_GetViewport(_a0) } }
 unsafe extern "C" fn s2047(_a0: usize) { hit(2047);  }
 unsafe extern "C" fn s2048(_a0: usize) { hit(2048);  }
-unsafe extern "C" fn s2049(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2049);  }
+unsafe extern "C" fn s2049(_a0: usize, _a1: usize, _a2: i32, _a3: i32) { hit(2049); unsafe { crate::impls::IRenderContext_BindRenderTargets_2(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s2050(_a0: usize, _a1: usize, _a2: i32) -> i32 { hit(2050); unsafe { crate::impls::IRenderContext_BindIndexBuffer(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2051(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2051); unsafe { crate::impls::IRenderContext_BindIndexBuffer_1(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s2052(_a0: usize, _a1: i32, _a2: usize, _a3: i32) -> i32 { hit(2052); unsafe { core::mem::zeroed() } }
@@ -4321,7 +4321,7 @@ unsafe extern "C" fn s2938() -> i32 { hit(2938); unsafe { core::mem::zeroed() } 
 unsafe extern "C" fn s2939(_a0: i32) { hit(2939);  }
 unsafe extern "C" fn s2940() -> i64 { hit(2940); unsafe { crate::impls::g_pRenderDevice_GetRenderDeviceAPI() } }
 unsafe extern "C" fn s2941(_a0: usize, _a1: i32) { hit(2941);  }
-unsafe extern "C" fn s2942(_a0: usize) -> i32 { hit(2942); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2942(_a0: usize) -> i32 { hit(2942); unsafe { crate::impls::g_pRenderDevice_IsTextureRenderTarget(_a0) } }
 unsafe extern "C" fn s2943() -> i32 { hit(2943); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2944() -> i32 { hit(2944); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2945(_a0: i64, _a1: usize, _a2: i64, _a3: usize) -> usize { hit(2945); unsafe { crate::impls::g_pRenderDevice_CreateGPUBuffer(_a0, _a1, _a2, _a3) } }

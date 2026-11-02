@@ -592,7 +592,9 @@ pub fn draw_camera(camera: usize, sc: usize) {
     if !ui.is_empty() && (SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 || n % 60 == 0) {
         let mut by: std::collections::BTreeMap<String, (usize, i32)> = Default::default();
         for d in &ui {
-            let e = by.entry(crate::camera::material_shader(d.material).unwrap_or_else(|| format!("{:#x}", d.material))).or_default();
+            let what = if d.clear.is_some() { "clear".to_string() } else if d.grab.is_some() { "grab".to_string() } else { crate::camera::material_shader(d.material).unwrap_or_else(|| format!("{:#x}", d.material)) };
+            let into = d.target.map(|t| format!(" into {}", crate::gpu::device().textures.get(&t).map(|x| format!("'{}' {}x{} format {}", x.name, x.desc.width, x.desc.height, x.desc.format)).unwrap_or_else(|| format!("{t:#x}")))).unwrap_or_default();
+            let e = by.entry(format!("{what}{into}")).or_default();
             e.0 += 1;
             e.1 += d.instances;
         }
@@ -603,23 +605,39 @@ pub fn draw_camera(camera: usize, sc: usize) {
 }
 
 /// The batched UI box's draws, their tables found by their attributes'
-/// names (the shader's): what render/ui.rs draws.
+/// names (the shader's): what render/ui.rs draws. Where managed bound a render
+/// target of its own, a switch to it; a clear; and a game's own shaders over a
+/// quad where they're ported (Sandbox's HUD: hud.wgsl).
 fn to_draw(draws: &[crate::gpu::Draw]) -> Vec<crate::render::ui::UiItem> {
-    use crate::render::ui::UiItem;
-    draws.iter().filter_map(|d| {
-        if let Some(t) = d.grab { return Some(UiItem::Grab(t)); }
-        let shader = crate::camera::material_shader(d.material)?;
-        if shader.contains("ui_cssbox_batched") { return batch(d).map(UiItem::Batch); }
-        if shader.contains("ui_backdropfilter") { return backdrop(d).map(UiItem::Backdrop); }
-        None
-    }).collect()
+    use crate::render::ui::{QuadShader, Target, UiItem};
+    let mut out = Vec::new();
+    let mut into: Option<usize> = None;
+    for d in draws {
+        if d.target != into {
+            into = d.target;
+            let target = into.and_then(|t| {
+                let dev = crate::gpu::device();
+                let x = dev.textures.get(&t)?;
+                Some(Target { texture: t, width: x.desc.width.max(1) as u32, height: x.desc.height.max(1) as u32, format: x.desc.format })
+            });
+            out.push(UiItem::Target(target));
+        }
+        if let Some(c) = d.clear { out.push(UiItem::Clear(c)); continue; }
+        if let Some(t) = d.grab { out.push(UiItem::Grab(t)); continue; }
+        let Some(shader) = crate::camera::material_shader(d.material) else { continue };
+        let item = if shader.contains("ui_cssbox_batched") { batch(d).map(UiItem::Batch) }
+            else if shader.contains("ui_backdropfilter") { backdrop(d).map(UiItem::Backdrop) }
+            else if shader.ends_with("hud_glow.shader") { quad(d, QuadShader::Glow).map(UiItem::Quad) }
+            else if shader.ends_with("hud_composite.shader") { quad(d, QuadShader::Composite).map(UiItem::Quad) }
+            else { None };
+        out.extend(item);
+    }
+    out
 }
 
-/// A backdrop-filter's quad: its vertices (position, texture coordinate and
-/// colour, found in its layout by semantic), as triangles, and the attributes
-/// ui_backdropfilter.shader reads.
-fn backdrop(d: &crate::gpu::Draw) -> Option<crate::render::ui::Backdrop> {
-    use crate::gpu::Val;
+/// A draw's own vertices (RenderTools.Draw) as triangles: position, texture
+/// coordinate and colour each, found in its layout by semantic.
+fn triangles(d: &crate::gpu::Draw) -> Option<Vec<[f32; 8]>> {
     let inline = d.inline.as_ref()?;
     let layout = crate::rendermesh::layout_of(inline.layout)?;
     let field = |name: &str| layout.fields.iter().find(|f| f.name.to_ascii_lowercase().contains(name) && f.index == 0).map(|f| (f.offset, f.format));
@@ -642,6 +660,42 @@ fn backdrop(d: &crate::gpu::Draw) -> Option<crate::render::ui::Backdrop> {
         7 => (2..order.len()).flat_map(|k| [order[k - 2], order[k - 1], order[k]]).collect(),
         _ => order[..order.len() / 3 * 3].to_vec(),
     };
+    Some(triangles.into_iter().map(vertex).collect())
+}
+
+const IDENTITY: [f32; 16] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+
+/// A quad drawn with Sandbox's HUD shaders: its vertices, and the attributes
+/// hud_glow.shader and hud_composite.shader read (their defaults where unset).
+fn quad(d: &crate::gpu::Draw, shader: crate::render::ui::QuadShader) -> Option<crate::render::ui::Quad> {
+    use crate::gpu::Val;
+    let get = |n: &str| d.attrs.get(&crate::string_token(n));
+    let f = |n: &str, dflt: f32| match get(n) { Some(Val::Float(x)) => *x, Some(Val::Int(x)) => *x as f32, Some(Val::Bool(b)) => *b as u8 as f32, _ => dflt };
+    let v2 = |n: &str| match get(n) { Some(Val::Vec2(x)) => *x, Some(Val::Vec4(x)) => [x[0], x[1]], _ => [0.0; 2] };
+    let m = |n: &str| match get(n) { Some(Val::Matrix(x)) => *x, _ => IDENTITY };
+    let t = |n: &str| match get(n) { Some(Val::Texture(x)) => *x, _ => 0 };
+    let (step, inv) = (v2("GlowStep"), v2("HudInvSize"));
+    let glow_source = t("GlowSource");
+    Some(crate::render::ui::Quad {
+        shader,
+        vertices: triangles(d)?,
+        transform: m("TransformMat"),
+        layer: m("LayerMat"),
+        glow: [step[0], step[1], f("GlowReach", 0.0), f("GlowExtract", 0.0)],
+        hud: [inv[0], inv[1], f("GlowStrength", 0.22), f("HudOpacity", 1.0)],
+        scan: [f("ScanlineIntensity", 0.46), f("ScanlinePeriod", 2.0).max(1.0), f("ScanlineThickness", 0.55), f("ScanlineSoftness", 0.04)],
+        gamma_output: f("UIGammaOutput", 0.0) != 0.0,
+        textures: match shader {
+            crate::render::ui::QuadShader::Glow => [glow_source, 0, 0],
+            crate::render::ui::QuadShader::Composite => [t("HudTexture"), t("GlowTexture"), t("FrameBufferCopyTexture")],
+        },
+    })
+}
+
+/// A backdrop-filter's quad: its vertices, and the attributes
+/// ui_backdropfilter.shader reads.
+fn backdrop(d: &crate::gpu::Draw) -> Option<crate::render::ui::Backdrop> {
+    use crate::gpu::Val;
     let get = |n: &str| d.attrs.get(&crate::string_token(n));
     let f = |n: &str, dflt: f32| match get(n) { Some(Val::Float(x)) => *x, Some(Val::Int(x)) => *x as f32, _ => dflt };
     let v4 = |n: &str| match get(n) { Some(Val::Vec4(x)) => *x, _ => [0.0; 4] };
@@ -653,7 +707,7 @@ fn backdrop(d: &crate::gpu::Draw) -> Option<crate::render::ui::Backdrop> {
     for (k, n) in ["BackdropShape01", "BackdropShape23", "BackdropShape45", "BackdropShape67"].iter().enumerate() { points[k * 4..k * 4 + 4].copy_from_slice(&v4(n)); }
     let texture = match get("FrameBufferCopyTexture") { Some(Val::Texture(t)) => *t, _ => 0 };
     Some(crate::render::ui::Backdrop {
-        vertices: triangles.into_iter().map(vertex).collect(),
+        vertices: triangles(d)?,
         transform: m("TransformMat"),
         layer: m("LayerMat"),
         rect: [pos[0], pos[1], size[0], size[1]],
@@ -745,8 +799,13 @@ fn ui_draws(camera: usize, width: i32, height: i32) -> Vec<crate::gpu::Draw> {
     struct Setup { context: usize, view: usize, layer: usize, format: i32, msaa: i32, stats: usize }
     let view = gpu::new_view(crate::impls::camera_id(camera), width, height);
     let add: extern "C" fn(*const core::ffi::c_char, i64, usize, Viewport, usize) -> usize = unsafe { std::mem::transmute(add) };
-    const UI: i64 = 7500;
-    add(c"UI".as_ptr(), UI, view, Viewport { version: 0, x: 0, y: 0, w: width, h: height, min_z: 0.0, max_z: 1.0 }, 0);
+    // the camera's command lists at the stages that draw over the frame, in
+    // the pipeline's order: after its viewmodel (where a game paints render
+    // targets of its own for its UI to read: Sandbox's HUD), after post
+    // processing (its Hud: a weapon's crosshair), the UI, and after it (its Overlay)
+    for (name, stage) in [(c"AfterViewmodel", 5000i64), (c"AfterPostProcess", 7000), (c"UI", 7500), (c"AfterUI", 8000)] {
+        add(name.as_ptr(), stage, view, Viewport { version: 0, x: 0, y: 0, w: width, h: height, min_z: 0.0, max_z: 1.0 }, 0);
+    }
     let layers: Vec<(usize, usize)> = {
         let d = gpu::device();
         d.views.get(&view).map(|v| v.layers.iter().filter_map(|l| d.layers.get(l).map(|x| (*l, x.callback))).collect()).unwrap_or_default()
@@ -754,7 +813,7 @@ fn ui_draws(camera: usize, width: i32, height: i32) -> Vec<crate::gpu::Draw> {
     let mut draws = Vec::new();
     for (layer, callback) in layers {
         if callback == 0 { continue; }
-        let context = gpu::new_context();
+        let context = gpu::new_layer_context(layer);
         gpu::with_context(context, |c| c.viewport = [0, 0, width, height]);
         let run: extern "C" fn(Setup) = unsafe { std::mem::transmute(callback) };
         // ImageFormat RGBA8888 (0), no multisampling (0)

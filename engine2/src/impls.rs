@@ -427,6 +427,9 @@ pub unsafe fn g_pRenderDevice_AsyncSetTextureData2(t: usize, data: usize, size: 
     gpu::write_texture(t, unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) }, r)
 }
 pub unsafe fn g_pRenderDevice_ClearTexture(t: usize, c: S_Color32) { gpu::clear_texture(t, [c.f_r, c.f_g, c.f_b, c.f_a]) }
+/// Made as a render target (TSPEC_RENDER_TARGET in its config's flags): what
+/// RenderTarget.From asks before it draws into one.
+pub unsafe fn g_pRenderDevice_IsTextureRenderTarget(t: usize) -> i32 { gpu::is_render_target(t) as i32 }
 pub unsafe fn g_pRenderDevice_GetTextureDesc(t: usize) -> usize { gpu::texture_desc(t) as usize }
 /// What managed's Texture.Width, Height and Mips read: here the same
 /// description (a file's from its header, every mip it holds).
@@ -452,8 +455,11 @@ pub static CAMERA_IDS: Mutex<std::collections::BTreeMap<usize, i32>> = Mutex::ne
 pub fn camera_id(camera: usize) -> i32 { CAMERA_IDS.lock().unwrap().get(&camera).copied().unwrap_or(0) }
 
 pub unsafe fn ISceneView_GetRenderAttributesPtr(v: usize) -> usize { gpu::device().views.get(&v).map(|v| v.attrs).unwrap_or(0) }
-pub unsafe fn ISceneView_AddManagedProceduralLayer(v: usize, name: usize, _viewport: usize, callback: usize, _before: usize, _delete: i32) -> usize {
-    gpu::add_layer(v, &unsafe { read(name) }, callback)
+pub unsafe fn ISceneView_AddManagedProceduralLayer(v: usize, name: usize, viewport: usize, callback: usize, _before: usize, _delete: i32) -> usize {
+    let layer = gpu::add_layer(v, &unsafe { read(name) }, callback);
+    // its viewport, which managed reads back to restore the frame's after a render target (Layer.m_viewport)
+    unsafe { crate::state::set_from::<crate::slots::S_NativeEngine_RenderViewport>(layer, crate::slots::PROP__ISceneLayer_m_viewport, viewport) };
+    layer
 }
 pub unsafe fn ISceneLayer_GetRenderAttributesPtr(l: usize) -> usize { gpu::device().layers.get(&l).map(|l| l.attrs).unwrap_or(0) }
 pub unsafe fn RndrPplnTls_TargetSupportsSrgbWrite(_v: usize, _target: usize) -> i32 { 1 }
@@ -473,6 +479,36 @@ pub unsafe fn IRenderContext_Draw(ctx: usize, prim: i64, first: i32, count: i32)
 pub unsafe fn IRenderContext_GetViewport(ctx: usize) -> crate::slots::S_NativeEngine_RenderViewport {
     let [x, y, w, h] = gpu::device().contexts.get(&ctx).map(|c| c.viewport).unwrap_or_default();
     crate::slots::S_NativeEngine_RenderViewport { f__m_nVersion_k__BackingField: 0, f__m_nTopLeftX_k__BackingField: x, f__m_nTopLeftY_k__BackingField: y, f__m_nWidth_k__BackingField: w, f__m_nHeight_k__BackingField: h, f__MinZ_k__BackingField: 0.0, f__MaxZ_k__BackingField: 1.0 }
+}
+/// What a render context draws into (Graphics.RenderTarget): a texture managed
+/// made, with or without a depth target (none is kept here) and the layer whose
+/// colour stands in where it gives none.
+pub unsafe fn IRenderContext_BindRenderTargets(ctx: usize, color: usize, _depth: usize, _layer: usize) { gpu::bind_target(ctx, color) }
+/// A standalone renderer's target: colour only.
+pub unsafe fn IRenderContext_BindRenderTargets_1(ctx: usize, color: usize) { gpu::bind_target(ctx, color) }
+/// A swap chain's: the frame, here.
+pub unsafe fn IRenderContext_BindRenderTargets_2(ctx: usize, _swap_chain: usize, _color: i32, _depth: i32) { gpu::bind_target(ctx, 0) }
+/// Back to the layer's own (the frame).
+pub unsafe fn IRenderContext_RestoreRenderTargets(ctx: usize, _layer: usize) { gpu::bind_target(ctx, 0) }
+/// Where a context draws in its target. One with no size (a layer whose
+/// viewport managed never set) leaves it as it was.
+fn set_viewport(ctx: usize, v: [i32; 4]) {
+    if v[2] > 0 && v[3] > 0 { gpu::with_context(ctx, |c| c.viewport = v) }
+}
+pub unsafe fn IRenderContext_SetViewport(ctx: usize, rect: usize) {
+    if let Some(r) = unsafe { rd::<crate::slots::S_NativeRect>(rect) } { set_viewport(ctx, [r.f_x, r.f_y, r.f_w, r.f_h]) }
+}
+pub unsafe fn IRenderContext_SetViewport_1(ctx: usize, viewport: usize) {
+    if let Some(v) = unsafe { rd::<crate::slots::S_NativeEngine_RenderViewport>(viewport) } {
+        set_viewport(ctx, [v.f__m_nTopLeftX_k__BackingField, v.f__m_nTopLeftY_k__BackingField, v.f__m_nWidth_k__BackingField, v.f__m_nHeight_k__BackingField])
+    }
+}
+pub unsafe fn IRenderContext_SetViewport_2(ctx: usize, x: i32, y: i32, w: i32, h: i32) { set_viewport(ctx, [x, y, w, h]) }
+/// What it draws into cleared (Graphics.Clear): its colour, if asked; there's no depth or stencil to clear here.
+pub unsafe fn IRenderContext_Clear(ctx: usize, color: usize, clear_color: i32, _depth: i32, _stencil: i32) {
+    if clear_color == 0 { return; }
+    let c = unsafe { rd::<[f32; 4]>(color) }.unwrap_or_default();
+    gpu::record_clear(ctx, c)
 }
 /// A draw with its vertices given (Graphics.Draw, DrawQuad), in a vertex layout managed made.
 pub unsafe fn RenderTools_Draw(ctx: usize, prim: i64, layout: usize, vertices: usize, count: i32, indices: usize, index_count: i32, _stats: usize) {
