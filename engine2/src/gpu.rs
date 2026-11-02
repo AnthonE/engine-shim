@@ -94,6 +94,8 @@ pub struct Inline {
 
 #[derive(Default)]
 pub struct Context {
+    /// what it draws into: x, y, width, height (IRenderContext.GetViewport)
+    pub viewport: [i32; 4],
     pub material: usize,
     pub attrs: HashMap<u32, Val>,
     pub index_buffer: Option<(usize, i32, i32)>,

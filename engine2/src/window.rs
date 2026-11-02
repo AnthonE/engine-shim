@@ -755,6 +755,7 @@ fn ui_draws(camera: usize, width: i32, height: i32) -> Vec<crate::gpu::Draw> {
     for (layer, callback) in layers {
         if callback == 0 { continue; }
         let context = gpu::new_context();
+        gpu::with_context(context, |c| c.viewport = [0, 0, width, height]);
         let run: extern "C" fn(Setup) = unsafe { std::mem::transmute(callback) };
         // ImageFormat RGBA8888 (0), no multisampling (0)
         run(Setup { context, view, layer, format: 0, msaa: 0, stats: 0 });

@@ -469,16 +469,34 @@ pub unsafe fn IRenderContext_SetScissorRect(ctx: usize, rect: usize) {
     gpu::with_context(ctx, |c| c.scissor = r)
 }
 pub unsafe fn IRenderContext_Draw(ctx: usize, prim: i64, first: i32, count: i32) { gpu::record(ctx, prim, first, count, 1, 0, false) }
+/// What a render context draws into: the UI layer's, the view it was made for.
+pub unsafe fn IRenderContext_GetViewport(ctx: usize) -> crate::slots::S_NativeEngine_RenderViewport {
+    let [x, y, w, h] = gpu::device().contexts.get(&ctx).map(|c| c.viewport).unwrap_or_default();
+    crate::slots::S_NativeEngine_RenderViewport { f__m_nVersion_k__BackingField: 0, f__m_nTopLeftX_k__BackingField: x, f__m_nTopLeftY_k__BackingField: y, f__m_nWidth_k__BackingField: w, f__m_nHeight_k__BackingField: h, f__MinZ_k__BackingField: 0.0, f__MaxZ_k__BackingField: 1.0 }
+}
 /// A draw with its vertices given (Graphics.Draw, DrawQuad), in a vertex layout managed made.
 pub unsafe fn RenderTools_Draw(ctx: usize, prim: i64, layout: usize, vertices: usize, count: i32, indices: usize, index_count: i32, _stats: usize) {
     let Some(l) = crate::rendermesh::layout_of(layout) else { return };
     if vertices == 0 || count <= 0 || l.size == 0 { return; }
     let bytes = unsafe { core::slice::from_raw_parts(vertices as *const u8, count as usize * l.size) }.to_vec();
     let indices = if indices != 0 && index_count > 0 { unsafe { core::slice::from_raw_parts(indices as *const u16, index_count as usize) }.to_vec() } else { Vec::new() };
+    // the first few said: what drew this way, and through what
+    static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+        let material = gpu::device().contexts.get(&ctx).map(|c| c.material);
+        crate::trace::note(&format!("RenderTools.Draw: {count} vertices, primitive {prim}, {} context, material {:?}", if material.is_some() { "a recording" } else { "an unknown" },
+            material.map(|m| crate::camera::material_shader(m).unwrap_or_else(|| format!("{m:#x}")))));
+    }
     gpu::record_inline(ctx, prim, gpu::Inline { layout, stride: l.size, count: count as usize, bytes, indices })
 }
 /// What's been drawn so far copied into a texture (Graphics.GrabFrameTexture: a backdrop's).
-pub unsafe fn RenderTools_ResolveFrameBuffer(ctx: usize, texture: usize, _viewport: usize) { gpu::record_grab(ctx, texture) }
+pub unsafe fn RenderTools_ResolveFrameBuffer(ctx: usize, texture: usize, _viewport: usize) {
+    static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+        crate::trace::note(&format!("RenderTools.ResolveFrameBuffer: into {texture:#x}, {} context", if gpu::device().contexts.contains_key(&ctx) { "a recording" } else { "an unknown" }));
+    }
+    gpu::record_grab(ctx, texture)
+}
 pub unsafe fn IRenderContext_DrawInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32) { gpu::record(ctx, prim, first, count, instances, 0, false) }
 pub unsafe fn IRenderContext_DrawIndexed(ctx: usize, prim: i64, first: i32, count: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, 1, base, true) }
 pub unsafe fn IRenderContext_DrawIndexedInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, instances, base, true) }

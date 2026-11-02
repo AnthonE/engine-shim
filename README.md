@@ -883,6 +883,16 @@ colour stays as it was authored, and blends as a browser blends):
   the inverse one that keeps an outset shadow out of its panel.
 - **Panel opacity**, and the four blend modes (`D_BLENDMODE`: alpha,
   multiply, lighten, premultiplied).
+- **Backdrops** (`backdrop-filter`): a UI layer's draws are kept in order
+  with what else it does, a draw that carries its own vertices
+  (`RenderTools.Draw`: managed's `DrawQuad`) and a grab of what's been drawn
+  so far (`ResolveFrameBuffer`: `GrabFrameTexture`). At a grab the UI's pass
+  ends, the frame's copied into a texture and each mip level below drawn
+  from the one above (a 2x2 box, then a binomial over the level's own
+  texels, as s&box's `downsample_cs` builds it). A backdrop's quad
+  (`ui_backdropfilter.shader`, ported: `render/backdrop.wgsl`) reads it at
+  LOD √(blur / 2), then sepia, invert, contrast, hue-rotate, saturate and
+  brightness, tinted, inside the panel's rounded rect or shape.
 
 The shader is bindless in s&box: a box names its image by its texture's
 bindless index. Here a draw binds eight textures (WebGPU allows sixteen a
@@ -951,9 +961,28 @@ checkout's `core/fonts`, where the game loads fonts from; the spawn menu's
 lists show their icons where each showed its name ("construction",
 "person").
 
-Not yet: `border-shape`'s shapes and paths (ShapeIndex; drawn as the
-rounded rect), world panels (a nameplate in the world), backdrop filters
-and panel layers.
+Backdrops, measured (`cargo test`, lavapipe): over a checkerboard of
+4-pixel squares, one blurred 10 runs them together into their mean, 128
+throughout its middle; what's outside it and in its rounded corners stays
+as it was; one inverted turns each square to the other. In the game none
+has been drawn yet: Sandbox's are its full-screen popups (a resource
+picker's), its FreeCam overlay and its signals, and none of them was
+opened in these runs (with FreeCam on, J, no UI drew at all here; it adds
+`ui` to the camera's excluded tags, and why that hides its own overlay
+here is still to find).
+
+**Sandbox's HUD paints into a render target of its own.** Its gameplay HUD
+(`HudCanvas`) draws into an RGBA16F texture, blits a glow from it, then
+composites it over the frame with a grab and `hud_composite.shader`: the
+grab and the composite reach the UI's list, but what's drawn into a render
+target doesn't yet (`SetRenderTarget` in a command list), which is why its
+vitals and crosshair don't show. A render context now says what it draws
+into (`GetViewport`: the view's size, where managed read 0 by 0 and made
+its grabs 8 square).
+
+Not yet: render targets in the UI (above), `border-shape`'s shapes and
+paths (ShapeIndex; drawn as the rounded rect), world panels (a nameplate in
+the world), and panel layers (`filter:`, `mask-image`).
 
 ## What a player hears
 
