@@ -949,7 +949,10 @@ first block below: the .NET SDK if there's none, the checkout beside this
 one (`../sbox-public`), patched, its interop generated, the server built,
 the natives and reference assemblies in place.
 Building on Linux wants ALSA's headers for the client's sound card
-(`apt-get install libasound2-dev`).
+(`apt-get install libasound2-dev`); a windowed client wants xkbcommon's X11
+library and a Vulkan driver at run time (`apt-get install
+libxkbcommon-x11-0 mesa-vulkan-drivers`: without the first, its window's
+thread panics). `setup.sh` says which are missing.
 Where Microsoft's download host is out of reach, a distribution's SDK does
 (`apt-get install dotnet-sdk-10.0` on Ubuntu 24.04): `setup.sh` takes the
 `dotnet` on the path.

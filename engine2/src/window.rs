@@ -555,6 +555,9 @@ pub fn draw_camera(camera: usize, sc: usize) {
         if CENSUS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 10 == 0 {
             let said: Vec<String> = batched.iter().map(crate::render::ui::census).collect();
             crate::trace::note(&format!("window frame {n}: the UI's {} batches: {}", batched.len(), said.join(" | ")));
+            if std::env::var_os("ENGINE2_UI_DEBUG").is_some() {
+                for d in &batched { for line in crate::render::ui::images(d, 6) { crate::trace::note(&format!("ui {line}")); } }
+            }
         }
     }
     static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);

@@ -22,6 +22,24 @@ static BAKED: Mutex<Option<HashMap<usize, (i32, f32)>>> = Mutex::new(None);
 static MESH_GROUPS: Mutex<Option<HashMap<usize, u64>>> = Mutex::new(None);
 static SKINS: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
 
+/// Each camera's clear colour, as managed configured it
+/// (CameraRenderer.Configure: `clearColor`, the camera's BackgroundColor, or
+/// transparent where it doesn't clear colour), RGBA as authored.
+static CLEAR: Mutex<Option<HashMap<usize, [f32; 4]>>> = Mutex::new(None);
+
+/// A camera's render attributes (SetRenderAttributes): what a frame reads
+/// of them is kept, as the attributes are managed's to free.
+pub fn set_view_attributes(camera: usize, attrs: usize) {
+    if let Some(crate::gpu::Val::Vec4(c)) = crate::gpu::get(attrs, crate::string_token("clearColor")) {
+        CLEAR.lock().unwrap().get_or_insert_with(Default::default).insert(camera, c);
+    }
+}
+
+/// A camera's clear colour, if managed gave it one.
+pub fn clear_color(camera: usize) -> Option<[f32; 4]> {
+    CLEAR.lock().unwrap().as_ref()?.get(&camera).copied()
+}
+
 /// An object's mesh groups: as set, else its model's default.
 pub fn mesh_groups(obj: usize) -> u64 {
     if let Some(&m) = MESH_GROUPS.lock().unwrap().as_ref().and_then(|g| g.get(&obj)) { return m; }
@@ -340,6 +358,16 @@ mod draw {
         let Some((image, said)) = frame(camera, width, height) else { return };
         let out = unsafe { std::slice::from_raw_parts_mut(pixels as *mut u8, (width * height * 4) as usize) };
         out.copy_from_slice(&image);
+        // ENGINE2_FRAME_DUMP=<folder>: the first frames as raw RGBA, for
+        // `convert -size WxH -depth 8 rgba:x.rgba x.png`
+        if let Some(dir) = std::env::var_os("ENGINE2_FRAME_DUMP") {
+            static DUMPED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = DUMPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 32 {
+                let path = std::path::Path::new(&dir).join(format!("frame-{n:02}-{width}x{height}.rgba"));
+                let _ = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, &image));
+            }
+        }
         crate::trace::note(&said);
     }
 
@@ -370,6 +398,9 @@ mod draw {
         );
         // what's in its worlds and shown: each object's model, where, how tinted
         let mut placed: Vec<(Arc<Model>, Mat4, [f32; 4], Vec<Mat4>, bool, Option<u64>, usize)> = Vec::new();
+        // ENGINE2_FRAME_DUMP: what each frame placed, said with it
+        let dump = std::env::var_os("ENGINE2_FRAME_DUMP").is_some();
+        let mut described: Vec<String> = Vec::new();
         for world in super::worlds(camera) {
             for obj in crate::handles::made_with("SceneObject", world) {
                 if !super::shown(obj) { continue; }
@@ -383,7 +414,9 @@ mod draw {
                 let m = mat(&crate::animation::Xf::from_managed(&crate::state::get::<S_Transform>(obj, PROP_Transform)));
                 let tint = crate::state::get::<S_Vector4>(obj, PROP_TintRGBA).f__vec;
                 let tint = if tint.f_X + tint.f_Y + tint.f_Z + tint.f_W == 0.0 { [1.0; 4] } else { [tint.f_X, tint.f_Y, tint.f_Z, tint.f_W] };
-                placed.push((g, m, tint, skin(obj, model), false, super::chosen_mesh_groups(obj), super::skin(obj)));
+                let bones = skin(obj, model);
+                if dump { described.push(format!("{} at {:?} scale {:?}, {} bones posed, bounds {:?}..{:?}", crate::models::name_of(model).unwrap_or_else(|| "(built)".into()), m.w_axis.truncate(), m.x_axis.truncate().length(), bones.len(), g.min, g.max)); }
+                placed.push((g, m, tint, bones, false, super::chosen_mesh_groups(obj), super::skin(obj)));
             }
         }
         // the lights in its worlds that a map's lightmaps name, by their bake index
@@ -428,6 +461,12 @@ mod draw {
         // the sun and sky of its worlds: a directional light, a sky object
         let in_worlds = |obj: usize| crate::handles::links(obj).iter().any(|l| worlds.contains(l));
         let mut view = view;
+        // cleared to the camera's background colour (authored in sRGB, drawn in linear
+        // light), transparent where managed asks for that: a thumbnail's backdrop
+        if let Some([r, g, b, a]) = super::clear_color(camera) {
+            let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+            view.clear = [linear(r) as f64, linear(g) as f64, linear(b) as f64, a.clamp(0.0, 1.0) as f64];
+        }
         view.lightmaps = lit.clone();
         view.probes = probe_volumes(r, &worlds, &baked);
         for (light, made) in super::suns() {
@@ -452,7 +491,11 @@ mod draw {
         }
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
         let image = r.draw_into(&instances, &view, width as u32, height as u32, target);
-        let said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes)", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
+        let mut said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes)", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
+        if dump {
+            let a = crate::state::get::<S_Angles>(camera, PROP__CCameraRenderer_CameraRotation);
+            said += &format!("; looking {:?} (fov {fov}, planes {near}..{far}), clear {:?}: {}", [a.f_pitch, a.f_yaw, a.f_roll], view.clear, described.join("; "));
+        }
         Some((image, said))
     }
 }

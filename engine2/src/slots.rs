@@ -1462,7 +1462,7 @@ unsafe extern "C" fn s79(_a0: usize) { hit(79);  }
 unsafe extern "C" fn s80(_a0: usize, _a1: i32) -> usize { hit(80); unsafe { crate::impls::CCameraRenderer_Create(_a0, _a1) } }
 unsafe extern "C" fn s81(_a0: usize) { hit(81); unsafe { crate::impls::CCameraRenderer_ClearSceneWorlds(_a0) } }
 unsafe extern "C" fn s82(_a0: usize, _a1: usize) { hit(82); unsafe { crate::impls::CCameraRenderer_AddSceneWorld(_a0, _a1) } }
-unsafe extern "C" fn s83(_a0: usize, _a1: usize) { hit(83);  }
+unsafe extern "C" fn s83(_a0: usize, _a1: usize) { hit(83); unsafe { crate::impls::CCameraRenderer_SetRenderAttributes(_a0, _a1) } }
 unsafe extern "C" fn s84(_a0: usize, _a1: usize) { hit(84); unsafe { crate::impls::CCameraRenderer_Render(_a0, _a1) } }
 unsafe extern "C" fn s85(_a0: usize, _a1: usize, _a2: usize, _a3: usize) -> i32 { hit(85); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s86(_a0: usize, _a1: usize, _a2: i32) { hit(86);  }

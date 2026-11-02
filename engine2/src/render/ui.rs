@@ -270,6 +270,28 @@ pub fn census(d: &UiDraw) -> String {
     format!("{glyphs} glyphs, {boxes} boxes, {images} images, {gradients} gradients, {borders} borders, {shadows} shadows, {outlines} outlines, {shapes} shapes; {clipped} clipped")
 }
 
+/// A draw's first image instances as managed filled them (ENGINE2_UI_DEBUG):
+/// where, in what colour, the image's tile and tint, its sampler and texture.
+pub fn images(d: &UiDraw, most: usize) -> Vec<String> {
+    let samplers = crate::gpu::samplers_by_index();
+    let first = d.instance_offset.max(0) as usize;
+    (first..first + d.instances as usize).filter_map(|i| {
+        let b = d.boxes.get(i * BOX..(i + 1) * BOX)?;
+        let int = |at: usize| i32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+        let v4 = |at: usize| -> [f32; 4] { bytemuck::cast_slice::<u8, f32>(&b[at..at + 16]).try_into().unwrap() };
+        let flags = int(228) as u32;
+        if flags & (1 << 14) != 0 || flags & 3 != 0 || int(144) <= 0 { return None; }
+        let t = crate::gpu::texture_at(int(144));
+        let what = t.map(|t| {
+            let desc = unsafe { *crate::gpu::texture_desc(t) };
+            let name = crate::gpu::device().textures.get(&t).map(|x| x.name.clone()).or_else(|| crate::camera::texture_name(t)).unwrap_or_default();
+            format!("'{name}' {}x{} format {}", desc.width, desc.height, desc.format)
+        }).unwrap_or_else(|| "none".into());
+        Some(format!("box {i}: rect {:?} color {:?} image {} {what}, tile {:?} tint {:?} sampler {} {:?} flags {flags:#x} clip {}",
+            v4(0), v4(16), int(144), v4(156), v4(172), int(148), samplers.get(int(148).max(0) as usize), int(232)))
+    }).take(most).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +307,57 @@ mod tests {
     }
     fn set_i(b: &mut [u8], at: usize, v: i32) { b[at..at + 4].copy_from_slice(&v.to_le_bytes()); }
     fn set_f(b: &mut [u8], at: usize, v: &[f32]) { b[at..at + v.len() * 4].copy_from_slice(bytemuck::cast_slice(v)); }
+
+    /// One draw of these box instances over nothing, `w` by `h`, read back as RGBA.
+    fn drawn(r: &crate::render::Renderer, w: u32, h: u32, boxes: Vec<u8>) -> Vec<u8> {
+        let identity = [1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+        let instances = (boxes.len() / BOX) as u32;
+        let draw = UiDraw { boxes, texts: vec![], glyph_table: vec![], glyph_curves: vec![], glyph_bands: vec![], transforms: bytemuck::cast_slice(&identity).to_vec(),
+            scissors: vec![], gradients: vec![], layer: identity, instance_offset: 0, instances, blend: 0, opacity: None };
+        let target = r.device.create_texture(&wgpu::TextureDescriptor {
+            label: None, size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[],
+        });
+        r.ui.draw(r, &target.create_view(&Default::default()), wgpu::TextureFormat::Rgba8Unorm, w, h, &[draw]);
+        let row = (w * 4).div_ceil(256) * 256;
+        let readback = r.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let mut encoder = r.device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo { texture: &target, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        r.queue.submit([encoder.finish()]);
+        readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = r.device.poll(wgpu::PollType::Wait);
+        let data = readback.slice(..).get_mapped_range();
+        (0..h as usize).flat_map(|y| data[y * row as usize..y * row as usize + w as usize * 4].to_vec()).collect()
+    }
+
+    #[test]
+    fn an_image_is_read_bilinear_as_the_ui_reads_its_images() {
+        let Ok(r) = crate::render::Renderer::new() else { eprintln!("no adapter: skipped"); return };
+        // 8x8: transparent but for an opaque white 4x4 square in its middle
+        let mut px = vec![0u8; 8 * 8 * 4];
+        for y in 2..6 { for x in 2..6 { px[(y * 8 + x) * 4..(y * 8 + x) * 4 + 4].copy_from_slice(&[255, 255, 255, 255]); } }
+        let image = crate::gpu::create_texture("ui bilinear image", true, &{ let mut c = [0u8; 44]; c[0] = 8; c[2] = 8; c }, &px);
+        let index = crate::gpu::texture_index(image);
+        // as UICssBoxBatched asks for a no-repeat background: bilinear, border on both axes
+        let sampler = crate::gpu::sampler_index(crate::gpu::sampler(&[0x14, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        // a 64 box, its image contained in it (64 square), no-repeat, centred
+        let mut b = instance([0.0, 0.0, 64.0, 64.0], [0.0, 0.0, 0.0, 0.0]);
+        set_i(&mut b, 144, index);
+        set_i(&mut b, 148, sampler);
+        set_f(&mut b, 156, &[0.0, 0.0, 64.0, 64.0, 1.0, 1.0, 1.0, 1.0]);
+        set_i(&mut b, 228, 3 << 9);
+        let px = drawn(&r, 64, 64, b);
+        let a = |x: usize, y: usize| px[(y * 64 + x) * 4 + 3];
+        assert_eq!(a(32, 32), 255, "the square's middle");
+        assert_eq!(a(4, 4), 0, "the transparent corner");
+        assert_eq!(a(60, 32), 0, "the transparent right");
+        let showing = (0..64 * 64).filter(|i| px[i * 4 + 3] > 127).count();
+        assert!((900..1200).contains(&showing), "about a quarter of the box shows: {showing}");
+    }
 
     #[test]
     fn boxes_are_clipped_shadowed_outlined_and_filled_with_gradients_and_images() {

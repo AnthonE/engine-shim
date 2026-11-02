@@ -2710,6 +2710,8 @@ pub unsafe fn Get__CScnLghtPrbVlmbj_m_hLightProbeDirectLightScalarsTexture(v: us
 
 pub unsafe fn CCameraRenderer_AddSceneWorld(camera: usize, world: usize) { crate::camera::add_world(camera, world) }
 pub unsafe fn CCameraRenderer_ClearSceneWorlds(camera: usize) { crate::camera::clear_worlds(camera) }
+/// The attributes managed configured the camera's view with (its clear colour among them).
+pub unsafe fn CCameraRenderer_SetRenderAttributes(camera: usize, attrs: usize) { crate::camera::set_view_attributes(camera, attrs) }
 /// The camera's view drawn into managed's bitmap (RGBA, four bytes a pixel).
 pub unsafe fn CCameraRenderer_RenderToBitmap(camera: usize, pixels: usize, width: i32, height: i32, bpp: i32) {
     crate::camera::to_bitmap(camera, pixels, width, height, bpp)
