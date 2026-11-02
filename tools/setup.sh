@@ -16,6 +16,13 @@ SKIA=3.116.0
 if [ "$(uname)" = Linux ] && ! pkg-config --exists alsa 2>/dev/null; then
 	echo "setup: ALSA's headers are missing; install them (apt-get install libasound2-dev pkg-config) or build with --no-default-features (a server)"
 fi
+# a client's window and frames, at run time: winit loads xkbcommon's X11 half
+# for the keyboard (without it the window's thread panics), wgpu a Vulkan
+# driver (lavapipe where there's no GPU)
+if [ "$(uname)" = Linux ]; then
+	ldconfig -p 2>/dev/null | grep -q 'libxkbcommon-x11\.so' || echo "setup: a windowed client wants libxkbcommon-x11 (apt-get install libxkbcommon-x11-0)"
+	ldconfig -p 2>/dev/null | grep -q 'libvulkan\.so\.1' || echo "setup: a client draws through Vulkan (apt-get install mesa-vulkan-drivers: lavapipe, where there's no GPU)"
+fi
 
 if ! command -v dotnet >/dev/null; then
 	curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
@@ -67,4 +74,14 @@ for pkg in skiasharp.nativeassets.linux harfbuzzsharp.nativeassets.linux; do
 	cp "$t"/runtimes/linux-x64/native/*.so game/bin/managed/
 	rm -rf "$t"
 done
+# Material Icons, the icon font s&box's UI names (font-family: Material Icons;
+# each icon a ligature of its name): Google's, Apache 2.0, not in sbox-public
+# (it comes with Facepunch's download). The game loads every font under a
+# mounted /fonts/.
+icons=game/core/fonts/MaterialIcons-Regular.ttf
+if [ ! -s "$icons" ]; then
+	mkdir -p game/core/fonts
+	curl -sSfL https://raw.githubusercontent.com/google/material-design-icons/master/font/MaterialIcons-Regular.ttf -o "$icons" || {
+		rm -f "$icons"; echo "setup: Material Icons not fetched; icons will show as their names"; }
+fi
 echo "ready: SBOX=$SBOX sh spike.sh 90 +shimgame $SBOX/game/samples/sweeper/.sbproj"

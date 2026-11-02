@@ -821,12 +821,29 @@ renders to the surface's sRGB view), nothing read back but what auto
 exposure measures. On lavapipe that took a 1280x720 frame from 1.2 s to
 1.05 s; on a GPU the round trip it saves is most of a frame.
 
-What isn't there yet: the UI and HUD, under way (`engine2/src/gpu.rs`).
-s&box draws all of it with one bindless shader (`ui_cssbox_batched.shader`,
-public, about 3,000 lines with its includes) over GPU tables, text
-included: glyph outlines in buffers, covered analytically per pixel. With
-`ENGINE2_GRAPHICS=1` a windowed client says it has a device: render
-attributes keep their values, GPU buffers their bytes, materials made from
+**What a frame costs.** `RENDER_PROFILE` submits each stage of a frame and
+waits for it, and says every 30th frame how long each took. Measured in
+Sandbox's zoo at 960x540 on lavapipe (a CPU, its four cores shared with the
+server): the opaque pass was 950 of a frame's 1,050 ms (the sun's shadow
+map 37, what isn't opaque 30 to 45, exposure 5, the tonemap 4, the
+frame's setup 1; the UI 1 to 2 ms of the CPU's and 30 of the GPU's, as the
+census line says). Lavapipe multisamples on the CPU: a model drawn 960
+square takes the opaque pass 63 ms at 4 samples and 23 at 1. So a software
+adapter draws at one sample a pixel and a GPU at four (`RENDER_MSAA` says
+otherwise): in the zoo the opaque pass is 600 to 690 ms and the frame 610
+to 730. What's opaque is drawn nearest first, the alpha test's discard in
+a pipeline of its own, so a rasterizer can turn away what's hidden before
+shading it; in the zoo that changes nothing measurable (its floor and
+walls cover the frame about once), and what's left is shading each pixel
+on a CPU.
+
+**The UI and HUD** (`engine2/src/gpu.rs`). s&box draws all of it with one
+bindless shader (`ui_cssbox_batched.shader`, public, about 3,000 lines with
+its includes) over GPU tables, text included: glyph outlines in buffers,
+covered analytically per pixel. A windowed client says it has a device
+(`ENGINE2_GRAPHICS=0`: the empty one, as a server or a headless player
+has), and managed's GPU paths wake with it: render attributes keep their
+values, GPU buffers their bytes, materials made from
 a shader their shader, textures and samplers have bindless indices; and
 each frame the camera's view gets managed's UI hook (`AddUIHook`), whose
 layers run with a render context that records what they draw. Measured:
@@ -837,16 +854,135 @@ buffer's bytes as they were when it was made (managed refills its tables
 between draws, as a GPU would see them).
 
 And it's drawn (`render/ui.wgsl`, `render/ui.rs`): the shader ported to
-WGSL, its tables read as words as HLSL packs them. So far: rounded-rect
-boxes with their backgrounds and solid borders, and glyphs covered from
-their outlines (Lengyel's dual ray method, as s&box's `ui/text.hlsl`),
-blurred shadows too, each instance placed by its transform, blended in
-gamma space over the frame. Measured: Sandbox's join notice slides in
-from the left (its transform animating from -674 to 0) and reads "has
-joined the game", green over its shadow, at 640x360. Not yet: background
-images and gradients, scissors, paths and shapes, box shadows and
-outlines, border styles; and the device only answers with
-`ENGINE2_GRAPHICS=1` while the rest of what it wakes is filled in.
+WGSL, its tables read as words as HLSL packs them, each instance placed by
+its transform and blended in gamma space over the frame (UIGammaOutput: a
+colour stays as it was authored, and blends as a browser blends):
+
+- **Boxes**: rounded rects (each corner its own ellipse) with their
+  background colour, image or gradient, a tile sized, placed, repeated
+  and turned as `background-size`, `-position`, `-repeat` and `-angle`
+  say. Gradients are linear (by angle, or towards a corner, leaning with
+  the box), radial (the four CSS sizes, circles and ellipses) and conic,
+  their stops in pixels or fractions, interpolated premultiplied as the
+  web does. The background is cut back to the padding, content or text box
+  (`background-clip`), then the border goes over it: each side its own
+  colour, the corners split along their diagonal and antialiased on the
+  join; dotted, dashed, double, groove, ridge, inset and outset (a pixel's
+  place along the border's midline, around its elliptical corners, as
+  `border_style.hlsl` walks it); or a nine-slice `border-image`.
+- **Shadows** (`box-shadow`, outset and inset): the box's shape blurred by
+  a gaussian, evaluated analytically (each row a difference of error
+  functions, eight rows integrated, as `rounded_rect.hlsl` does after Evan
+  Wallace). **Outlines** (`outline`, and its offset).
+- **Glyphs**, covered from their outlines (Lengyel's dual ray method, as
+  `ui/text.hlsl`), blurred for `text-shadow`, coloured by a text gradient
+  where there is one.
+- **Clip stacks** (`overflow: hidden`, a rounded panel's corners): each
+  instance's chain of up to four rounded rects a link, each through its
+  own transform, the pixel's footprint carried into it, antialiased; and
+  the inverse one that keeps an outset shadow out of its panel.
+- **Panel opacity**, and the four blend modes (`D_BLENDMODE`: alpha,
+  multiply, lighten, premultiplied).
+- **Backdrops** (`backdrop-filter`): a UI layer's draws are kept in order
+  with what else it does, a draw that carries its own vertices
+  (`RenderTools.Draw`: managed's `DrawQuad`) and a grab of what's been drawn
+  so far (`ResolveFrameBuffer`: `GrabFrameTexture`). At a grab the UI's pass
+  ends, the frame's copied into a texture and each mip level below drawn
+  from the one above (a 2x2 box, then a binomial over the level's own
+  texels, as s&box's `downsample_cs` builds it). A backdrop's quad
+  (`ui_backdropfilter.shader`, ported: `render/backdrop.wgsl`) reads it at
+  LOD √(blur / 2), then sepia, invert, contrast, hue-rotate, saturate and
+  brightness, tinted, inside the panel's rounded rect or shape.
+
+The shader is bindless in s&box: a box names its image by its texture's
+bindless index. Here a draw binds eight textures (WebGPU allows sixteen a
+stage), found by that index, and a draw whose instances name more is split
+where they outgrow them, in order, so what's drawn over what is unchanged.
+Samplers' address modes (wrap, mirror, clamp, border) and point filtering
+are applied in the shader. The textures are a file's, or ones managed
+makes (`FindOrCreateTexture2`: an image it decoded, an SVG it drew, a
+thumbnail it downloaded), kept as data, their description and pixels, put
+on the GPU again after each write (`AsyncSetTextureData2`, `ClearTexture`).
+A texture is now its own binding (`GetBindingPtr`, which managed caches
+its wrappers by) and reports its size (`GetTextureDesc`): before, every
+texture was 0 by 0.
+
+Measured (`cargo test`, on lavapipe): a gradient down a box runs from red
+to blue, half and half at its middle; a box clipped to its top-left
+quarter shows only that; a shadow blurred 8 is brightest in its middle
+and fades past its shape's edge; a 2x2 image fills its box point-sampled;
+an outline sits 2 to 4 past its box; a border takes each side's colour,
+dashes run about half on and half off, and a double border is line, gap,
+line. In the game (Sandbox's zoo, a windowed player under Xvfb at
+960x540, xdotool at the keys): holding Q opens the spawn menu, 851
+instances a frame (674 glyphs, 130 boxes, 33 gradients, 21 borders, 14
+images), every one under the root's clip: its tabs, the spawnlists down
+the left, the grid of tiles cut off at the bottom of its scroll panel, the
+tool list with its blue section headers, the Elastic tool's sliders and
+its checkbox. Tab shows the scoreboard: the server's name, its blue
+header, the player's row with kills, deaths and ping.
+
+**The spawn menu's pictures.** Its tiles are images: a spawnlist's props
+are cloud packages, each tile the package's thumbnail from sbox.game
+(fetched by managed, decoded, made a texture); a weapon's is rendered
+here, Sandbox's `ThumbnailCamera` framing its prefab in a scene of its own
+with studio lights, through this library's camera (`RenderToBitmap`, 512
+square), read back into managed's bitmap, resized and made a texture.
+Three things stood between them and the screen:
+
+- a texture's size is read through `GetOnDiskTextureDesc` (managed's
+  `Texture.Width`), which gave nothing: every texture was 0 by 0, so an
+  image's `background-size: contain` worked out to NaN (its aspect 0 / 0)
+  and each tile showed one texel of its image all over;
+- a camera's background colour never reached the renderer
+  (`SetRenderAttributes`, its `clearColor`): a thumbnail's backdrop, which
+  `ThumbnailCamera` asks to be transparent so its fit can find the weapon
+  in it, came back the renderer's opaque grey;
+- managed sizes and centres its first window by the display's bounds,
+  asked before there's a window to ask the monitor of: they were a
+  1920x1080 guess, and under a smaller display the window could stay off
+  centre. The primary monitor is asked now.
+
+Measured, in the same game: the construction props' tiles show their
+props (the pipe valves and lever, the metal doors, the blue barrel, the
+gas bottles, the extinguisher, the kegs, the barriers, the fences); the
+Weapons tab shows each weapon's thumbnail (the M4A1, the RPG, the
+crowbar, the grenade, the pistols, the sniper rifle, the physgun, the
+MP5, the shotgun, the toolgun), each framed and lit as its prefab's camera
+says, on transparency, and below them the community items' from
+sbox.game. `ENGINE2_FRAME_DUMP=<folder>`
+writes the first frames a camera rendered to a bitmap and lists what each
+placed; `ENGINE2_UI_DEBUG` lists the HUD's image instances.
+
+Material Icons, the icon font s&box's UI names (each icon a ligature of its
+name), isn't in sbox-public: it comes with Facepunch's download. It's
+Google's (Apache 2.0), and `tools/setup.sh` fetches it into the
+checkout's `core/fonts`, where the game loads fonts from; the spawn menu's
+lists show their icons where each showed its name ("construction",
+"person").
+
+Backdrops, measured (`cargo test`, lavapipe): over a checkerboard of
+4-pixel squares, one blurred 10 runs them together into their mean, 128
+throughout its middle; what's outside it and in its rounded corners stays
+as it was; one inverted turns each square to the other. In the game none
+has been drawn yet: Sandbox's are its full-screen popups (a resource
+picker's), its FreeCam overlay and its signals, and none of them was
+opened in these runs (with FreeCam on, J, no UI drew at all here; it adds
+`ui` to the camera's excluded tags, and why that hides its own overlay
+here is still to find).
+
+**Sandbox's HUD paints into a render target of its own.** Its gameplay HUD
+(`HudCanvas`) draws into an RGBA16F texture, blits a glow from it, then
+composites it over the frame with a grab and `hud_composite.shader`: the
+grab and the composite reach the UI's list, but what's drawn into a render
+target doesn't yet (`SetRenderTarget` in a command list), which is why its
+vitals and crosshair don't show. A render context now says what it draws
+into (`GetViewport`: the view's size, where managed read 0 by 0 and made
+its grabs 8 square).
+
+Not yet: render targets in the UI (above), `border-shape`'s shapes and
+paths (ShapeIndex; drawn as the rounded rect), world panels (a nameplate in
+the world), and panel layers (`filter:`, `mask-image`).
 
 ## What a player hears
 
@@ -885,7 +1021,10 @@ first block below: the .NET SDK if there's none, the checkout beside this
 one (`../sbox-public`), patched, its interop generated, the server built,
 the natives and reference assemblies in place.
 Building on Linux wants ALSA's headers for the client's sound card
-(`apt-get install libasound2-dev`).
+(`apt-get install libasound2-dev`); a windowed client wants xkbcommon's X11
+library and a Vulkan driver at run time (`apt-get install
+libxkbcommon-x11-0 mesa-vulkan-drivers`: without the first, its window's
+thread panics). `setup.sh` says which are missing.
 Where Microsoft's download host is out of reach, a distribution's SDK does
 (`apt-get install dotnet-sdk-10.0` on Ubuntu 24.04): `setup.sh` takes the
 `dotnet` on the path.
@@ -987,7 +1126,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation; what a builder is given (bones, attachments, mesh groups, hitboxes) as a file's model |
-| `engine2/src/gpu.rs` | the render device as data: render attributes, GPU buffers, bindless indices, scene views and managed layers, render contexts that record draws |
+| `engine2/src/gpu.rs` | the render device as data: render attributes, GPU buffers, textures managed makes and samplers, bindless indices, scene views and managed layers, render contexts that record draws |
+| `engine2/src/render/ui.rs`, `ui.wgsl` | the UI: s&box's batched UI box shader ported to WGSL, its draws split where their images outgrow a draw's bindings |
 | `engine2/src/window.rs` | a client's window: SDL3's windows and events on winit, its swap chain a wgpu surface the main camera draws to |
 | `engine2/src/audio.rs` | sound: the device and its pace, sounds read and decoded, voices' mixers, mix buffers, Steam Audio's effects |
 | `engine2/src/rendermesh.rs` | meshes made at runtime: MeshGlue's render meshes, their vertex and index buffers, managed's vertex layouts |

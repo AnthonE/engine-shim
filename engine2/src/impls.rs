@@ -186,6 +186,7 @@ mod win {
     pub fn set_cursor_visible(_: bool) {}
     pub fn monitor() -> (i32, i32, u32) { (1920, 1080, 60_000) }
     pub fn any() -> bool { false }
+    pub fn graphics() -> bool { false }
 }
 
 unsafe fn put<T>(p: usize, v: T) { if p != 0 { unsafe { *(p as *mut T) = v } } }
@@ -407,7 +408,34 @@ pub unsafe fn RenderTools_SetGPUBufferData(_ctx: usize, b: usize, data: usize, s
     gpu::write_buffer(b, unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) }, offset as usize)
 }
 pub unsafe fn g_pRenderDevice_GetTextureViewIndex(t: usize, _color_space: u8, _dim: i64) -> i32 { gpu::texture_index(t) }
-pub unsafe fn g_pRenderDevice_FindOrCreateSamplerState(_desc: usize) -> usize { crate::handles::object() }
+/// CSamplerStateDesc (16 bytes): one sampler object per description.
+pub unsafe fn g_pRenderDevice_FindOrCreateSamplerState(desc: usize) -> usize {
+    match unsafe { rd::<[u8; 16]>(desc) } { Some(d) => gpu::sampler(&d), None => crate::handles::object() }
+}
+/// A texture managed makes (Texture.Create's builder: an image it decoded,
+/// an SVG it drew, a thumbnail, a render target), its first pixels with it
+/// or not (TextureCreationConfig_t, 44 bytes).
+pub unsafe fn g_pRenderDevice_FindOrCreateTexture2(name: usize, anonymous: i32, config: usize, data: usize, size: i32) -> usize {
+    let Some(c) = (unsafe { rd::<[u8; 44]>(config) }) else { return 0 };
+    let pixels: &[u8] = if data != 0 && size > 0 { unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) } } else { &[] };
+    gpu::create_texture(&unsafe { read(name) }, anonymous != 0, &c, pixels)
+}
+/// Rect3D: x, y, z, width, height, depth.
+pub unsafe fn g_pRenderDevice_AsyncSetTextureData2(t: usize, data: usize, size: i32, rect: usize) {
+    if data == 0 || size <= 0 { return; }
+    let r = unsafe { rd::<[i32; 6]>(rect) }.unwrap_or_default();
+    gpu::write_texture(t, unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) }, r)
+}
+pub unsafe fn g_pRenderDevice_ClearTexture(t: usize, c: S_Color32) { gpu::clear_texture(t, [c.f_r, c.f_g, c.f_b, c.f_a]) }
+pub unsafe fn g_pRenderDevice_GetTextureDesc(t: usize) -> usize { gpu::texture_desc(t) as usize }
+/// What managed's Texture.Width, Height and Mips read: here the same
+/// description (a file's from its header, every mip it holds).
+pub unsafe fn g_pRenderDevice_GetOnDiskTextureDesc(t: usize) -> usize { gpu::texture_desc(t) as usize }
+/// A texture is its own binding (managed caches its wrappers by it) and
+/// its own strong handle; it's loaded once made.
+pub unsafe fn CTextureBase_GetBindingPtr(t: usize) -> usize { t }
+pub unsafe fn CTextureBase_CopyStrongHandle(t: usize) -> usize { t }
+pub unsafe fn CTextureBase_IsStrongHandleLoaded(t: usize) -> i32 { (t != 0) as i32 }
 pub unsafe fn g_pRenderDevice_GetSamplerIndex(s: usize) -> i32 { gpu::sampler_index(s) }
 /// A material's mode for a layer: here, the material itself.
 pub unsafe fn IMaterial2_GetMode(m: usize, _mode: S_Sandbox_StringToken) -> usize { m }
@@ -441,6 +469,34 @@ pub unsafe fn IRenderContext_SetScissorRect(ctx: usize, rect: usize) {
     gpu::with_context(ctx, |c| c.scissor = r)
 }
 pub unsafe fn IRenderContext_Draw(ctx: usize, prim: i64, first: i32, count: i32) { gpu::record(ctx, prim, first, count, 1, 0, false) }
+/// What a render context draws into: the UI layer's, the view it was made for.
+pub unsafe fn IRenderContext_GetViewport(ctx: usize) -> crate::slots::S_NativeEngine_RenderViewport {
+    let [x, y, w, h] = gpu::device().contexts.get(&ctx).map(|c| c.viewport).unwrap_or_default();
+    crate::slots::S_NativeEngine_RenderViewport { f__m_nVersion_k__BackingField: 0, f__m_nTopLeftX_k__BackingField: x, f__m_nTopLeftY_k__BackingField: y, f__m_nWidth_k__BackingField: w, f__m_nHeight_k__BackingField: h, f__MinZ_k__BackingField: 0.0, f__MaxZ_k__BackingField: 1.0 }
+}
+/// A draw with its vertices given (Graphics.Draw, DrawQuad), in a vertex layout managed made.
+pub unsafe fn RenderTools_Draw(ctx: usize, prim: i64, layout: usize, vertices: usize, count: i32, indices: usize, index_count: i32, _stats: usize) {
+    let Some(l) = crate::rendermesh::layout_of(layout) else { return };
+    if vertices == 0 || count <= 0 || l.size == 0 { return; }
+    let bytes = unsafe { core::slice::from_raw_parts(vertices as *const u8, count as usize * l.size) }.to_vec();
+    let indices = if indices != 0 && index_count > 0 { unsafe { core::slice::from_raw_parts(indices as *const u16, index_count as usize) }.to_vec() } else { Vec::new() };
+    // the first few said: what drew this way, and through what
+    static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+        let material = gpu::device().contexts.get(&ctx).map(|c| c.material);
+        crate::trace::note(&format!("RenderTools.Draw: {count} vertices, primitive {prim}, {} context, material {:?}", if material.is_some() { "a recording" } else { "an unknown" },
+            material.map(|m| crate::camera::material_shader(m).unwrap_or_else(|| format!("{m:#x}")))));
+    }
+    gpu::record_inline(ctx, prim, gpu::Inline { layout, stride: l.size, count: count as usize, bytes, indices })
+}
+/// What's been drawn so far copied into a texture (Graphics.GrabFrameTexture: a backdrop's).
+pub unsafe fn RenderTools_ResolveFrameBuffer(ctx: usize, texture: usize, _viewport: usize) {
+    static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+        crate::trace::note(&format!("RenderTools.ResolveFrameBuffer: into {texture:#x}, {} context", if gpu::device().contexts.contains_key(&ctx) { "a recording" } else { "an unknown" }));
+    }
+    gpu::record_grab(ctx, texture)
+}
 pub unsafe fn IRenderContext_DrawInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32) { gpu::record(ctx, prim, first, count, instances, 0, false) }
 pub unsafe fn IRenderContext_DrawIndexed(ctx: usize, prim: i64, first: i32, count: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, 1, base, true) }
 pub unsafe fn IRenderContext_DrawIndexedInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, instances, base, true) }
@@ -607,13 +663,12 @@ pub unsafe fn global_Plat_ExitProcess(code: i32) {
 
 const RENDER_DEVICE_API_EMPTY: i64 = 2;
 const RENDER_DEVICE_API_VULKAN: i64 = 1;
-/// A client with a window draws (Vulkan, as far as managed need know); a
-/// server or a headless player has the empty device.
-/// (`ENGINE2_GRAPHICS=1` while the device is built out: managed's GPU paths,
-/// the UI among them, wake with it.)
+/// A client with a window draws (Vulkan, as far as managed need know), and
+/// managed's GPU paths wake with it, the UI among them; a server or a
+/// headless player has the empty device (and `ENGINE2_GRAPHICS=0` gives a
+/// windowed client the empty one too).
 pub unsafe fn g_pRenderDevice_GetRenderDeviceAPI() -> i64 {
-    let graphics = std::env::var("ENGINE2_GRAPHICS").is_ok_and(|v| v == "1");
-    if graphics && win::any() { RENDER_DEVICE_API_VULKAN } else { RENDER_DEVICE_API_EMPTY }
+    if win::graphics() { RENDER_DEVICE_API_VULKAN } else { RENDER_DEVICE_API_EMPTY }
 }
 
 // ---- compiled resources: a game's JSON resources (scenes, prefabs, its own
@@ -2686,6 +2741,8 @@ pub unsafe fn Get__CScnLghtPrbVlmbj_m_hLightProbeDirectLightScalarsTexture(v: us
 
 pub unsafe fn CCameraRenderer_AddSceneWorld(camera: usize, world: usize) { crate::camera::add_world(camera, world) }
 pub unsafe fn CCameraRenderer_ClearSceneWorlds(camera: usize) { crate::camera::clear_worlds(camera) }
+/// The attributes managed configured the camera's view with (its clear colour among them).
+pub unsafe fn CCameraRenderer_SetRenderAttributes(camera: usize, attrs: usize) { crate::camera::set_view_attributes(camera, attrs) }
 /// The camera's view drawn into managed's bitmap (RGBA, four bytes a pixel).
 pub unsafe fn CCameraRenderer_RenderToBitmap(camera: usize, pixels: usize, width: i32, height: i32, bpp: i32) {
     crate::camera::to_bitmap(camera, pixels, width, height, bpp)

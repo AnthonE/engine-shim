@@ -9,7 +9,7 @@
 pub mod ui;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::assets::{material, mesh, resource::Resource, texture};
 use glam::{Mat4, Vec3};
@@ -136,9 +136,16 @@ impl GpuDraw {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
     Opaque,
+    /// opaque, alpha-tested (F_ALPHA_TEST): what's below its reference isn't drawn
+    Cutout,
     Blend,
     Glass,
     CheapGlass,
+}
+
+impl Kind {
+    /// drawn with what's opaque, writing depth
+    fn opaque(self) -> bool { matches!(self, Kind::Opaque | Kind::Cutout) }
 }
 
 /// A mesh's draws on the GPU, and the buffers they read.
@@ -173,6 +180,8 @@ pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    /// the opaque pipeline with F_ALPHA_TEST's discard
+    cutout_pipeline: wgpu::RenderPipeline,
     /// translucent, glass and cheap glass, and what glass's view and
     /// material groups hold (what's been drawn; its three textures)
     blend_pipeline: wgpu::RenderPipeline,
@@ -225,7 +234,21 @@ pub struct Renderer {
 const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const SHOWN: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const SAMPLES: u32 = 4;
+/// Samples a pixel the scene is drawn with, chosen once the adapter's known:
+/// 4 on a GPU; 1 on a software rasterizer (lavapipe), where each sample is
+/// the CPU's work (measured: the opaque pass a third the time without);
+/// RENDER_MSAA (1, 2, 4 or 8) either way.
+static SAMPLES: OnceLock<u32> = OnceLock::new();
+
+fn samples() -> u32 { SAMPLES.get().copied().unwrap_or(4) }
+
+fn choose_samples(adapter: &wgpu::AdapterInfo) -> u32 {
+    match std::env::var("RENDER_MSAA").ok().and_then(|v| v.parse().ok()) {
+        Some(n @ (1 | 2 | 4 | 8)) => n,
+        _ if adapter.device_type == wgpu::DeviceType::Cpu => 1,
+        _ => 4,
+    }
+}
 /// the sun's shadow map's size, and how far from the eye what casts into it may be
 const SHADOW_SIZE: u32 = 2048;
 const SHADOW_REACH: f32 = 4000.0;
@@ -235,6 +258,7 @@ impl Renderer {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends: wgpu::Backends::VULKAN | wgpu::Backends::GL | wgpu::Backends::METAL | wgpu::Backends::DX12, ..Default::default() });
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).map_err(|e| format!("no adapter: {e}"))?;
         let info = adapter.get_info();
+        let _ = SAMPLES.set(choose_samples(&info));
         let bc = adapter.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: if bc { wgpu::Features::TEXTURE_COMPRESSION_BC } else { wgpu::Features::empty() },
@@ -285,18 +309,21 @@ impl Renderer {
             attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Uint32x4, 6 => Float32x4, 7 => Float32x2],
         }];
         // what's opaque writes depth; what's drawn over what's behind doesn't
-        let make = |label, layout: &wgpu::PipelineLayout, entry, blend: Option<wgpu::BlendState>, depth_write| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let make_with = |label, layout: &wgpu::PipelineLayout, entry, blend: Option<wgpu::BlendState>, depth_write, constants: &[(&str, f64)]| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(layout),
             vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &vertex_layout },
-            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(entry), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: COLOR, blend, write_mask: wgpu::ColorWrites::ALL })] }),
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(entry), compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() }, targets: &[Some(wgpu::ColorTargetState { format: COLOR, blend, write_mask: wgpu::ColorWrites::ALL })] }),
             primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: depth_write, depth_compare: wgpu::CompareFunction::Less, stencil: Default::default(), bias: Default::default() }),
-            multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
+            multisample: wgpu::MultisampleState { count: samples(), ..Default::default() },
             multiview: None,
             cache: None,
         });
-        let pipeline = make("complex", &layout, "fs_main", None, true);
+        let make = |label, layout: &wgpu::PipelineLayout, entry, blend: Option<wgpu::BlendState>, depth_write| make_with(label, layout, entry, blend, depth_write, &[]);
+        // what's opaque, without the alpha test's discard; what's alpha-tested, with it
+        let pipeline = make_with("complex", &layout, "fs_main", None, true, &[("ALPHA_TEST", 0.0)]);
+        let cutout_pipeline = make("complex alpha-tested", &layout, "fs_main", None, true);
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow"),
             layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&uniform_layout, &empty_layout, &object_layout], push_constant_ranges: &[] })),
@@ -332,7 +359,7 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState { module: &sky_shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(COLOR.into())] }),
             primitive: Default::default(),
             depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: false, depth_compare: wgpu::CompareFunction::Always, stencil: Default::default(), bias: Default::default() }),
-            multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
+            multisample: wgpu::MultisampleState { count: samples(), ..Default::default() },
             multiview: None,
             cache: None,
         });
@@ -354,8 +381,8 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&none, &none, &none, &none], &[BakedLight::default()]);
-        let ui = ui::Ui::new(&device);
-        Ok(Renderer { instance, ui, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
+        let ui = ui::Ui::new(&device, &queue);
+        Ok(Renderer { instance, ui, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -612,7 +639,7 @@ impl Renderer {
             at(9, &views[6]), at(10, &views[7]), at(11, &views[8]),
         ] });
         // decals wait for their own pass
-        let kind = if m.int("F_DECAL") != 0 || m.shader.contains("overlay") { None } else if translucent { Some(Kind::Blend) } else { Some(Kind::Opaque) };
+        let kind = if m.int("F_DECAL") != 0 || m.shader.contains("overlay") { None } else if translucent { Some(Kind::Blend) } else if alpha_test > 0.0 { Some(Kind::Cutout) } else { Some(Kind::Opaque) };
         (group, kind)
     }
 
@@ -706,6 +733,7 @@ impl Renderer {
     /// there, nothing read back, an empty result) or, without one, as an
     /// RGBA image read back.
     pub fn draw_into(&self, objects: &[Instance], view: &View, width: u32, height: u32, target_view: Option<(&wgpu::TextureView, wgpu::TextureFormat)>) -> Vec<u8> {
+        let mut profile = Profile::new(self);
         let (sun, sun_color) = view.sun.unwrap_or((Vec3::new(0.6, 0.35, 0.75), Vec3::new(1.6, 1.55, 1.45)));
         // no auto exposure yet: s&box's default never goes below 1 (its
         // range is 1 to 3), and a map's sun is lit for that
@@ -791,16 +819,18 @@ impl Renderer {
             label: None, size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: samples,
             dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[],
         });
-        let msaa = target(COLOR, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
         let resolved = target(COLOR, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING);
-        let depth = target(DEPTH, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
+        // drawn multisampled and resolved into `resolved`; with one sample, into it
+        let multisampled = samples() > 1;
+        let msaa = if multisampled { target(COLOR, samples(), wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default()) } else { resolved.create_view(&Default::default()) };
+        let depth = target(DEPTH, samples(), wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
         // what's drawn over what's behind it, farthest first
         let mut later: Vec<(f32, usize, usize, usize)> = Vec::new();
         for (k, o) in objects.iter().enumerate() {
             let at = o.transform.transform_point3((o.model.min + o.model.max) * 0.5).distance_squared(view.eye);
             for (mi, m) in o.model.meshes.iter().enumerate().filter(|(_, m)| o.shows(m)) {
                 for (di, dr) in m.draws.iter().enumerate() {
-                    if dr.look(o.skin).1 != Kind::Opaque { later.push((at, k, mi, di)); }
+                    if !dr.look(o.skin).1.opaque() { later.push((at, k, mi, di)); }
                 }
             }
         }
@@ -808,6 +838,7 @@ impl Renderer {
         let store = if later.is_empty() { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store };
         let resolved_view = resolved.create_view(&Default::default());
         let mut encoder = d.create_command_encoder(&Default::default());
+        profile.mark(&mut encoder, "setup");
         {
             // the sun's shadow map (cleared to nothing in the way when there's nothing to cast)
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -825,7 +856,7 @@ impl Renderer {
                 for (o, group) in objects.iter().zip(&object_groups).filter(|(o, _)| casts(o)) {
                     pass.set_bind_group(2, group, &[]);
                     for m in o.model.meshes.iter().filter(|m| o.shows(m)) {
-                        for dr in m.draws.iter().filter(|dr| dr.look(o.skin).1 == Kind::Opaque) {
+                        for dr in m.draws.iter().filter(|dr| dr.look(o.skin).1.opaque()) {
                             pass.set_vertex_buffer(0, m.vertices[dr.vertex_buffer].slice(..));
                             pass.set_index_buffer(m.indices[dr.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
                             pass.draw_indexed(dr.range.clone(), dr.base_vertex, 0..1);
@@ -834,14 +865,17 @@ impl Renderer {
                 }
             }
         }
+        profile.mark(&mut encoder, "shadow");
         {
             let [r, g, b, a] = view.clear;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &msaa,
-                    resolve_target: Some(&resolved_view),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store },
+                    resolve_target: multisampled.then_some(&resolved_view),
+                    // the multisampled colour is resolved and only kept for what's drawn over it;
+                    // drawn straight into the resolved target, it's the frame
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store: if multisampled { store } else { wgpu::StoreOp::Store } },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store }), stencil_ops: None }),
                 timestamp_writes: None,
@@ -853,21 +887,37 @@ impl Renderer {
                 pass.set_bind_group(1, &sky.group, &[]);
                 pass.draw(0..3, 0..1);
             }
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &view_group, &[]);
-            for (o, group) in objects.iter().zip(&object_groups) {
-                pass.set_bind_group(2, group, &[]);
-                pass.set_bind_group(3, &lit(o).1.group, &[]);
-                for m in o.model.meshes.iter().filter(|m| o.shows(m)) {
-                    for d in m.draws.iter().filter(|d| d.look(o.skin).1 == Kind::Opaque) {
-                        pass.set_vertex_buffer(0, m.vertices[d.vertex_buffer].slice(..));
-                        pass.set_index_buffer(m.indices[d.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
-                        pass.set_bind_group(1, d.look(o.skin).0, &[]);
-                        pass.draw_indexed(d.range.clone(), d.base_vertex, 0..1);
+            // what's opaque, nearest first, so the depth test turns away what's behind before
+            // it's shaded; what's alpha-tested with the pipeline that discards
+            let mut opaque: Vec<(f32, usize, usize, usize)> = Vec::new();
+            for (k, o) in objects.iter().enumerate() {
+                let at = o.transform.transform_point3((o.model.min + o.model.max) * 0.5).distance_squared(view.eye);
+                for (mi, m) in o.model.meshes.iter().enumerate().filter(|(_, m)| o.shows(m)) {
+                    for (di, d) in m.draws.iter().enumerate() {
+                        if d.look(o.skin).1.opaque() { opaque.push((at, k, mi, di)); }
                     }
                 }
             }
+            opaque.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut cutout = None;
+            for &(_, k, mi, di) in &opaque {
+                let (o, m) = (&objects[k], &objects[k].model.meshes[mi]);
+                let d = &m.draws[di];
+                let (material, kind) = d.look(o.skin);
+                if cutout != Some(kind == Kind::Cutout) {
+                    cutout = Some(kind == Kind::Cutout);
+                    pass.set_pipeline(if kind == Kind::Cutout { &self.cutout_pipeline } else { &self.pipeline });
+                    pass.set_bind_group(0, &view_group, &[]);
+                }
+                pass.set_bind_group(1, material, &[]);
+                pass.set_bind_group(2, &object_groups[k], &[]);
+                pass.set_bind_group(3, &lit(o).1.group, &[]);
+                pass.set_vertex_buffer(0, m.vertices[d.vertex_buffer].slice(..));
+                pass.set_index_buffer(m.indices[d.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(d.range.clone(), d.base_vertex, 0..1);
+            }
         }
+        profile.mark(&mut encoder, "opaque");
         if !later.is_empty() {
             // what's been drawn, for glass to see through, then what's left over it
             let behind = target(COLOR, 1, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
@@ -882,8 +932,8 @@ impl Renderer {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &msaa,
-                    resolve_target: Some(&resolved_view),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard },
+                    resolve_target: multisampled.then_some(&resolved_view),
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: if multisampled { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store } },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard }), stencil_ops: None }),
                 timestamp_writes: None,
@@ -908,6 +958,7 @@ impl Renderer {
                 pass.draw_indexed(dr.range.clone(), dr.base_vertex, 0..1);
             }
         }
+        profile.mark(&mut encoder, "translucent");
         // its exposure: as asked, or from what's been drawn
         let debug = std::env::var("RENDER_DEBUG").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0) != 0.0;
         let exposure = match view.exposure {
@@ -931,6 +982,7 @@ impl Renderer {
                 auto_exposure(&mut lum, min, max, compensation)
             }
         };
+        profile.mark(&mut encoder, "exposure");
         let shown = target(SHOWN, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
         let shown_view = shown.create_view(&Default::default());
         let (out_view, out_format) = target_view.unwrap_or((&shown_view, SHOWN));
@@ -954,6 +1006,8 @@ impl Renderer {
         }
         if target_view.is_some() {
             self.queue.submit([encoder.finish()]);
+            profile.mark_submitted("tonemap");
+            profile.say(width, height, objects.len());
             return Vec::new();
         }
         let resolved = shown;
@@ -969,8 +1023,44 @@ impl Renderer {
         let slice = readback.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
         let _ = d.poll(wgpu::PollType::Wait);
+        profile.mark_submitted("tonemap and read back");
+        profile.say(width, height, objects.len());
         let data = slice.get_mapped_range();
         (0..height as usize).flat_map(|y| data[y * row as usize..y * row as usize + width as usize * 4].to_vec()).collect()
+    }
+}
+
+/// RENDER_PROFILE: each stage of a frame submitted and waited for, and how
+/// long each took (the GPU's part with it), said every 30th frame. Waiting
+/// costs the frame its overlap with the CPU, so only while measuring.
+struct Profile<'a> {
+    r: Option<&'a Renderer>,
+    last: std::time::Instant,
+    marks: Vec<(&'static str, f64)>,
+}
+
+impl<'a> Profile<'a> {
+    fn new(r: &'a Renderer) -> Self {
+        Profile { r: std::env::var_os("RENDER_PROFILE").map(|_| r), last: std::time::Instant::now(), marks: Vec::new() }
+    }
+    fn mark(&mut self, encoder: &mut wgpu::CommandEncoder, name: &'static str) {
+        let Some(r) = self.r else { return };
+        r.queue.submit([std::mem::replace(encoder, r.device.create_command_encoder(&Default::default())).finish()]);
+        self.mark_submitted(name);
+    }
+    fn mark_submitted(&mut self, name: &'static str) {
+        let Some(r) = self.r else { return };
+        let _ = r.device.poll(wgpu::PollType::Wait);
+        self.marks.push((name, self.last.elapsed().as_secs_f64() * 1000.0));
+        self.last = std::time::Instant::now();
+    }
+    fn say(&self, width: u32, height: u32, objects: usize) {
+        if self.r.is_none() { return; }
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 30 != 0 { return; }
+        let total: f64 = self.marks.iter().map(|m| m.1).sum();
+        let stages: Vec<String> = self.marks.iter().map(|(n, ms)| format!("{n} {ms:.0}")).collect();
+        crate::trace::note(&format!("render profile, {width}x{height}, {objects} objects: {total:.0} ms ({})", stages.join(", ")));
     }
 }
 
