@@ -12,6 +12,11 @@ SBOX=${1:-$ROOT/../sbox-public}
 export DOTNET_ROOT=${DOTNET_ROOT:-$HOME/.dotnet} PATH=$HOME/.dotnet:$PATH
 SKIA=3.116.0
 
+# the client's sound card wants ALSA's headers to build against (Linux)
+if [ "$(uname)" = Linux ] && ! pkg-config --exists alsa 2>/dev/null; then
+	echo "setup: ALSA's headers are missing; install them (apt-get install libasound2-dev pkg-config) or build with --no-default-features (a server)"
+fi
+
 if ! command -v dotnet >/dev/null; then
 	curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
 	bash /tmp/dotnet-install.sh --channel 10.0 --install-dir "$HOME/.dotnet"

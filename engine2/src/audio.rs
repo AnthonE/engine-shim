@@ -479,6 +479,8 @@ pub fn send(buffers: &DeviceBuffers) {
     o.peak = o.peak.max(levels(&interleaved).0);
     debug("sent", &interleaved);
     if let Some(w) = &mut o.capture { w.write(&interleaved); }
+    #[cfg(feature = "render")]
+    card::play(&interleaved);
     // a line a second while anything sounds
     let per_second = (RATE as u64).div_ceil(SAMPLES as u64);
     if n - o.said >= per_second {
@@ -516,6 +518,131 @@ pub fn start() {
             if next > now { std::thread::sleep(next - now); }
         }
     }).expect("audio: a thread");
+}
+
+// ---- a sound card (a client's): the mix through a short queue its callback
+// drains, at the card's own rate if it isn't 44.1 kHz
+
+#[cfg(feature = "render")]
+mod card {
+    use super::{CHANNELS, RATE};
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    /// What's queued for the card: interleaved stereo at 44.1 kHz.
+    type Queue = Arc<Mutex<VecDeque<f32>>>;
+    /// The most a queue holds: 150 ms; past it the oldest goes (the mix ran ahead).
+    const MOST: usize = RATE as usize * CHANNELS * 15 / 100;
+
+    struct Card { queue: Queue, _stream: cpal::Stream }
+    // cpal's stream is kept only to keep it playing; nothing else touches it
+    unsafe impl Send for Card {}
+    unsafe impl Sync for Card {}
+
+    fn card() -> Option<&'static Card> {
+        static C: OnceLock<Option<Card>> = OnceLock::new();
+        C.get_or_init(|| {
+            if std::env::var("ENGINE2_AUDIO_DEVICE").is_ok_and(|v| v == "none") { return None; }
+            open().map_err(|e| crate::trace::note(&format!("audio: no sound card: {e}"))).ok()
+        }).as_ref()
+    }
+
+    fn open() -> Result<Card, String> {
+        let host = cpal::default_host();
+        let device = host.default_output_device().ok_or("no output device")?;
+        let config = device.default_output_config().map_err(|e| e.to_string())?;
+        let (rate, channels) = (config.sample_rate().0, config.channels() as usize);
+        let queue: Queue = Arc::new(Mutex::new(VecDeque::with_capacity(MOST)));
+        let q = queue.clone();
+        let mut r = Resampler::new(rate, channels);
+        let mut fill = move |out: &mut [f32]| r.fill(&mut q.lock().unwrap(), out);
+        let err = |e| crate::trace::note(&format!("audio: the sound card: {e}"));
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => device.build_output_stream(&config.into(), move |o: &mut [f32], _| fill(o), err, None),
+            cpal::SampleFormat::I16 => {
+                let mut buf = Vec::new();
+                device.build_output_stream(&config.into(), move |o: &mut [i16], _| {
+                    buf.resize(o.len(), 0.0);
+                    fill(&mut buf);
+                    for (d, s) in o.iter_mut().zip(&buf) { *d = (s.clamp(-1.0, 1.0) * 32767.0) as i16; }
+                }, err, None)
+            }
+            f => return Err(format!("a sample format of {f:?}")),
+        }.map_err(|e| e.to_string())?;
+        stream.play().map_err(|e| e.to_string())?;
+        crate::trace::note(&format!("audio: playing on {} ({rate} Hz, {channels} channels)", device.name().unwrap_or_default()));
+        Ok(Card { queue, _stream: stream })
+    }
+
+    /// Our 44.1 kHz stereo to a card's rate and channels: between our frames,
+    /// linearly; silence when the queue runs dry.
+    pub struct Resampler {
+        step: f64,
+        at: f64,
+        channels: usize,
+        last: [f32; CHANNELS],
+    }
+
+    impl Resampler {
+        pub fn new(rate: u32, channels: usize) -> Resampler {
+            Resampler { step: RATE as f64 / rate.max(1) as f64, at: 1.0, channels: channels.max(1), last: [0.0; CHANNELS] }
+        }
+
+        pub fn fill(&mut self, q: &mut VecDeque<f32>, out: &mut [f32]) {
+            for frame in out.chunks_mut(self.channels) {
+                while self.at >= 1.0 {
+                    self.at -= 1.0;
+                    if q.len() >= CHANNELS { for c in 0..CHANNELS { self.last[c] = q.pop_front().unwrap(); } } else { self.last = [0.0; CHANNELS]; }
+                }
+                let next = [q.front().copied().unwrap_or(self.last[0]), q.get(1).copied().unwrap_or(self.last[1])];
+                for (c, x) in frame.iter_mut().enumerate() {
+                    let k = c.min(CHANNELS - 1);
+                    *x = self.last[k] + (next[k] - self.last[k]) * self.at as f32;
+                }
+                self.at += self.step;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_mix_reaches_a_card_at_its_rate() {
+            // a ramp, left rising and right falling, at 44.1 kHz
+            let mut q: VecDeque<f32> = (0..441).flat_map(|i| [i as f32 / 441.0, -(i as f32) / 441.0]).collect();
+            // a 44.1 kHz stereo card: as it is
+            let mut r = Resampler::new(RATE, 2);
+            let mut out = vec![0f32; 20];
+            r.fill(&mut q, &mut out);
+            assert_eq!(&out[..6], &[0.0, 0.0, 1.0 / 441.0, -1.0 / 441.0, 2.0 / 441.0, -2.0 / 441.0]);
+            // a 48 kHz one: each of its frames 0.91875 of ours on, between them
+            let mut q: VecDeque<f32> = (0..441).flat_map(|i| [i as f32, 0.0]).collect();
+            let mut r = Resampler::new(48_000, 2);
+            let mut out = vec![0f32; 480 * 2];
+            r.fill(&mut q, &mut out);
+            assert!((out[2 * 100] - 100.0 * 44_100.0 / 48_000.0).abs() < 1e-3, "{}", out[200]);
+            // a 5.1 card: our left and right, the rest the right again
+            let mut q: VecDeque<f32> = [0.5, -0.5].into();
+            let mut r = Resampler::new(RATE, 6);
+            let mut out = vec![9f32; 12];
+            r.fill(&mut q, &mut out);
+            assert_eq!(&out[..6], &[0.5, -0.5, -0.5, -0.5, -0.5, -0.5]);
+            // and dry, silence
+            assert!(out[6..].iter().all(|&x| x == 0.0));
+        }
+    }
+
+    /// The mix, to the card (opened the first time: a player's, never a server's).
+    pub fn play(interleaved: &[f32]) {
+        let Some(c) = card() else { return };
+        let mut q = c.queue.lock().unwrap();
+        q.extend(interleaved.iter().copied());
+        let over = q.len().saturating_sub(MOST);
+        q.drain(..over - over % CHANNELS);
+    }
 }
 
 // ---- a WAV file, written as it goes (its sizes fixed up each write)

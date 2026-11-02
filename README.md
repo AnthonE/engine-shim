@@ -810,8 +810,13 @@ moving the mouse turns the view.
 sh tools/play.sh            # the zoo; or: sh tools/play.sh flatgrass 1920 1080
 ```
 
-What isn't there yet: a sound card (the mix still goes to
-`ENGINE2_AUDIO_CAPTURE`), the UI and HUD, and speed: each frame is drawn,
+And it's heard: a player's mix goes to the default sound card (cpal:
+ALSA, WASAPI, CoreAudio), queued no more than 150 ms ahead and converted
+to the card's rate; a machine with none notes so and carries on
+(`ENGINE2_AUDIO_DEVICE=none` to skip it). Tested here only to the card's
+door: no sound card in this container, the conversion by `cargo test`.
+
+What isn't there yet: the UI and HUD, and speed: each frame is drawn,
 read back and copied to the window, where it could be drawn into it.
 
 ## What a player hears
@@ -821,9 +826,9 @@ native reads its sounds, keeps its buffers, paces it and takes the mix.
 
 - **The device**: stereo at 44.1 kHz. A thread asks managed for each 512
   samples (`MixOneBuffer`) at the pace a sound card plays them, and takes
-  what managed sends back (`SendOutput`): to a WAV file at
-  `ENGINE2_AUDIO_CAPTURE`, else nowhere yet (the client's window will
-  bring a sound card). A dedicated server mixes nothing.
+  what managed sends back (`SendOutput`): to the sound card (below), and
+  to a WAV file at `ENGINE2_AUDIO_CAPTURE`. A dedicated server mixes
+  nothing.
 - **Sounds**: a compiled sound (`.vsnd_c`: rate, format, channels, loop
   and length in its DATA block, the samples after the resource), or a
   project's source (`.wav`, `.mp3`, decoded in pure Rust), read once.
@@ -850,6 +855,8 @@ On a fresh Linux machine with Rust, `tools/setup.sh` does all of the
 first block below: the .NET SDK if there's none, the checkout beside this
 one (`../sbox-public`), patched, its interop generated, the server built,
 the natives and reference assemblies in place.
+Building on Linux wants ALSA's headers for the client's sound card
+(`apt-get install libasound2-dev`).
 Where Microsoft's download host is out of reach, a distribution's SDK does
 (`apt-get install dotnet-sdk-10.0` on Ubuntu 24.04): `setup.sh` takes the
 `dotnet` on the path.

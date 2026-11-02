@@ -13,7 +13,7 @@ path = "src/lib.rs"
 # What a client draws (render/): wgpu and what it brings. A server can
 # build without it.
 default = ["render"]
-render = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:glam", "dep:winit"]
+render = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:glam", "dep:winit", "dep:cpal"]
 
 [dependencies]
 # Sign-In With Ethereum: recover a signer (secp256k1) from a keccak digest.
@@ -53,3 +53,5 @@ glam = { version = "0.30", optional = true }
 # A client's window and its input (feature "render"): X11 and Wayland
 # loaded at run time, Windows, macOS; what SDL is to s&box.
 winit = { version = "0.30", optional = true }
+# A client's sound card (feature "render"): ALSA, WASAPI, CoreAudio.
+cpal = { version = "0.15", optional = true }
