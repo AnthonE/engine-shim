@@ -529,6 +529,7 @@ mod tests {
         // inside the blurred one the squares run together, near their mean
         let inside: Vec<u8> = (20..44).flat_map(|y| (20..44).map(move |x| (x, y))).map(|(x, y)| px(x, y)).collect();
         let (lo, hi) = (*inside.iter().min().unwrap(), *inside.iter().max().unwrap());
+        eprintln!("backdrop: blurred, the middle's squares between {lo} and {hi}");
         assert!(lo > 60 && hi < 195, "blurred: {lo}..{hi}");
         // outside it, and in its rounded corner, the squares as they were
         assert_eq!((px(2, 2), px(6, 2)), (255, 0), "left of it");
