@@ -821,12 +821,13 @@ renders to the surface's sRGB view), nothing read back but what auto
 exposure measures. On lavapipe that took a 1280x720 frame from 1.2 s to
 1.05 s; on a GPU the round trip it saves is most of a frame.
 
-What isn't there yet: the UI and HUD, under way (`engine2/src/gpu.rs`).
-s&box draws all of it with one bindless shader (`ui_cssbox_batched.shader`,
-public, about 3,000 lines with its includes) over GPU tables, text
-included: glyph outlines in buffers, covered analytically per pixel. With
-`ENGINE2_GRAPHICS=1` a windowed client says it has a device: render
-attributes keep their values, GPU buffers their bytes, materials made from
+**The UI and HUD** (`engine2/src/gpu.rs`). s&box draws all of it with one
+bindless shader (`ui_cssbox_batched.shader`, public, about 3,000 lines with
+its includes) over GPU tables, text included: glyph outlines in buffers,
+covered analytically per pixel. A windowed client says it has a device
+(`ENGINE2_GRAPHICS=0`: the empty one, as a server or a headless player
+has), and managed's GPU paths wake with it: render attributes keep their
+values, GPU buffers their bytes, materials made from
 a shader their shader, textures and samplers have bindless indices; and
 each frame the camera's view gets managed's UI hook (`AddUIHook`), whose
 layers run with a render context that records what they draw. Measured:
@@ -936,8 +937,7 @@ lists show their icons where each showed its name ("construction",
 
 Not yet: `border-shape`'s shapes and paths (ShapeIndex; drawn as the
 rounded rect), world panels (a nameplate in the world), backdrop filters
-and panel layers. And the device only answers with `ENGINE2_GRAPHICS=1`
-while the rest of what it wakes is filled in.
+and panel layers.
 
 ## What a player hears
 

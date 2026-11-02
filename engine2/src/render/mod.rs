@@ -9,7 +9,7 @@
 pub mod ui;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::assets::{material, mesh, resource::Resource, texture};
 use glam::{Mat4, Vec3};
@@ -225,7 +225,21 @@ pub struct Renderer {
 const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const SHOWN: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const SAMPLES: u32 = 4;
+/// Samples a pixel the scene is drawn with, chosen once the adapter's known:
+/// 4 on a GPU; 1 on a software rasterizer (lavapipe), where each sample is
+/// the CPU's work (measured: the opaque pass a third the time without);
+/// RENDER_MSAA (1, 2, 4 or 8) either way.
+static SAMPLES: OnceLock<u32> = OnceLock::new();
+
+fn samples() -> u32 { SAMPLES.get().copied().unwrap_or(4) }
+
+fn choose_samples(adapter: &wgpu::AdapterInfo) -> u32 {
+    match std::env::var("RENDER_MSAA").ok().and_then(|v| v.parse().ok()) {
+        Some(n @ (1 | 2 | 4 | 8)) => n,
+        _ if adapter.device_type == wgpu::DeviceType::Cpu => 1,
+        _ => 4,
+    }
+}
 /// the sun's shadow map's size, and how far from the eye what casts into it may be
 const SHADOW_SIZE: u32 = 2048;
 const SHADOW_REACH: f32 = 4000.0;
@@ -235,6 +249,7 @@ impl Renderer {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends: wgpu::Backends::VULKAN | wgpu::Backends::GL | wgpu::Backends::METAL | wgpu::Backends::DX12, ..Default::default() });
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).map_err(|e| format!("no adapter: {e}"))?;
         let info = adapter.get_info();
+        let _ = SAMPLES.set(choose_samples(&info));
         let bc = adapter.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: if bc { wgpu::Features::TEXTURE_COMPRESSION_BC } else { wgpu::Features::empty() },
@@ -292,7 +307,7 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(entry), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: COLOR, blend, write_mask: wgpu::ColorWrites::ALL })] }),
             primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: depth_write, depth_compare: wgpu::CompareFunction::Less, stencil: Default::default(), bias: Default::default() }),
-            multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
+            multisample: wgpu::MultisampleState { count: samples(), ..Default::default() },
             multiview: None,
             cache: None,
         });
@@ -332,7 +347,7 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState { module: &sky_shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(COLOR.into())] }),
             primitive: Default::default(),
             depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: false, depth_compare: wgpu::CompareFunction::Always, stencil: Default::default(), bias: Default::default() }),
-            multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
+            multisample: wgpu::MultisampleState { count: samples(), ..Default::default() },
             multiview: None,
             cache: None,
         });
@@ -355,7 +370,7 @@ impl Renderer {
         }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&none, &none, &none, &none], &[BakedLight::default()]);
         let ui = ui::Ui::new(&device, &queue);
-        Ok(Renderer { instance, ui, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
+        Ok(Renderer { instance, ui, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -792,9 +807,11 @@ impl Renderer {
             label: None, size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: samples,
             dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[],
         });
-        let msaa = target(COLOR, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
         let resolved = target(COLOR, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING);
-        let depth = target(DEPTH, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
+        // drawn multisampled and resolved into `resolved`; with one sample, into it
+        let multisampled = samples() > 1;
+        let msaa = if multisampled { target(COLOR, samples(), wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default()) } else { resolved.create_view(&Default::default()) };
+        let depth = target(DEPTH, samples(), wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
         // what's drawn over what's behind it, farthest first
         let mut later: Vec<(f32, usize, usize, usize)> = Vec::new();
         for (k, o) in objects.iter().enumerate() {
@@ -843,8 +860,10 @@ impl Renderer {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &msaa,
-                    resolve_target: Some(&resolved_view),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store },
+                    resolve_target: multisampled.then_some(&resolved_view),
+                    // the multisampled colour is resolved and only kept for what's drawn over it;
+                    // drawn straight into the resolved target, it's the frame
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store: if multisampled { store } else { wgpu::StoreOp::Store } },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store }), stencil_ops: None }),
                 timestamp_writes: None,
@@ -886,8 +905,8 @@ impl Renderer {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &msaa,
-                    resolve_target: Some(&resolved_view),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard },
+                    resolve_target: multisampled.then_some(&resolved_view),
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: if multisampled { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store } },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard }), stencil_ops: None }),
                 timestamp_writes: None,
