@@ -92,7 +92,9 @@ fn main() {
             bones: Vec::new(),
             lightmapped: true,
             origin: None,
-        }).chain(props.iter().map(|(m, at)| Instance { model: m, transform: Mat4::from_translation(*at), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None })).collect();
+            mask: None,
+            skin: 0,
+        }).chain(props.iter().map(|(m, at)| Instance { model: m, transform: Mat4::from_translation(*at), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 })).collect();
         let loaded = t.elapsed();
         let image = r.draw(&instances, &view, w, h);
         png(std::path::Path::new(out), w, h, &image).unwrap_or_else(|e| fail(&e));
@@ -106,7 +108,7 @@ fn main() {
     let m = r.model(&content, model).unwrap_or_else(|e| fail(&e));
     let loaded = t.elapsed();
     let size = num(5, 768.0) as u32;
-    let image = r.draw(&[Instance { model: &m, transform: Default::default(), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None }], &{ let mut v = View::framing(&m, num(3, 35.0), num(4, 20.0)); tone(&mut v); v }, size, size);
+    let image = r.draw(&[Instance { model: &m, transform: Default::default(), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 }], &{ let mut v = View::framing(&m, num(3, 35.0), num(4, 20.0)); tone(&mut v); v }, size, size);
     png(std::path::Path::new(out), size, size, &image).unwrap_or_else(|e| fail(&e));
     eprintln!("{model} on {}: bounds {:?}..{:?}, loaded in {loaded:.2?}, drawn in {:.2?}", r.adapter, m.min, m.max, t.elapsed() - loaded);
     for n in &m.notes { eprintln!("  {n}"); }
