@@ -427,6 +427,9 @@ pub unsafe fn g_pRenderDevice_AsyncSetTextureData2(t: usize, data: usize, size: 
 }
 pub unsafe fn g_pRenderDevice_ClearTexture(t: usize, c: S_Color32) { gpu::clear_texture(t, [c.f_r, c.f_g, c.f_b, c.f_a]) }
 pub unsafe fn g_pRenderDevice_GetTextureDesc(t: usize) -> usize { gpu::texture_desc(t) as usize }
+/// What managed's Texture.Width, Height and Mips read: here the same
+/// description (a file's from its header, every mip it holds).
+pub unsafe fn g_pRenderDevice_GetOnDiskTextureDesc(t: usize) -> usize { gpu::texture_desc(t) as usize }
 /// A texture is its own binding (managed caches its wrappers by it) and
 /// its own strong handle; it's loaded once made.
 pub unsafe fn CTextureBase_GetBindingPtr(t: usize) -> usize { t }

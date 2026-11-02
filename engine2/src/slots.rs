@@ -4294,7 +4294,7 @@ unsafe extern "C" fn s2911(_a0: usize, _a1: i64) -> usize { hit(2911); crate::tr
 unsafe extern "C" fn s2912() -> usize { hit(2912); crate::trace::object(2912) }
 unsafe extern "C" fn s2913(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(2913); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2914(_a0: usize) -> usize { hit(2914); unsafe { crate::impls::g_pRenderDevice_GetTextureDesc(_a0) } }
-unsafe extern "C" fn s2915(_a0: usize) -> usize { hit(2915); crate::trace::object(2915) }
+unsafe extern "C" fn s2915(_a0: usize) -> usize { hit(2915); unsafe { crate::impls::g_pRenderDevice_GetOnDiskTextureDesc(_a0) } }
 unsafe extern "C" fn s2916(_a0: usize) -> i64 { hit(2916); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2917(_a0: usize) -> u32 { hit(2917); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2918(_a0: u32) -> usize { hit(2918); crate::trace::object(2918) }
