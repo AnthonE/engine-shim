@@ -175,6 +175,40 @@ ENGINE2_RELAY=127.0.0.1:27080 ENGINE2_HOST_KEY=$PWD/host.key \
 A sign-in through a relay names the relay's address, so a server behind
 one lists the relay's name in `ENGINE2_SIWE_DOMAINS`.
 
+**A player finds a server** (`engine2/src/serverlist.rs`). s&box's server
+browser, `CServerList` (what `Networking.QueryLobbies`, `JoinBestLobby` and
+the `servers` command ask), is answered from shard lists rather than
+Steam's master servers. A server's row carries, past the store's fields,
+what the browser shows and filters on: its `identity`, its `game`, the
+`tags` managed sets (`protocol`, `gameident`, `mapident`, `hdn`...) and
+`password` when it has one. A player reads the lists, keeps the rows
+that pass managed's filters (Steam's `gametagsand`, `gametagsnor`, `map`),
+asks each one's `status_url` for its players and takes the time that took as its
+ping, and hands each to managed as Steam's `gameserveritem_t`. A server's
+identity, once listed, is where `connect <identity>` goes: straight to its
+address, no relay between. With no Steam client, managed's lobby query
+comes back empty and the server list is the whole answer.
+
+| | |
+| --- | --- |
+| `ENGINE2_SERVER_LIST` | where a player looks for servers: files, or `http(s)://` URLs of `elo-shardlist-v1` documents (commas between) |
+
+Measured: the real server, hosting Sweeper, writes its row (`"tags":
+"revision:,protocol:1113,gameident:local.sweeper,..."`, its identity
+`76561201477069945`); a headless player reading that list runs `servers`
+and gets `127.0.0.1:27015 SteamId=76561201477069945 Game=Sweeper
+Map=Sweeper Players=0 MaxPlayers=64 Ping=1`, then `connect
+76561201477069945`, which dials the row's address. The server says `is
+connected` and the player loads the game.
+
+```sh
+ENGINE2_PUBLIC_ADDR=127.0.0.1:27015 ENGINE2_SHARDLIST=/tmp/servers.json \
+  ENGINE2_STATUS_ADDR=127.0.0.1:27016 ENGINE2_STATUS_URL=http://127.0.0.1:27016/status.json \
+  SBOX=../sbox-public sh spike.sh 240 +shimgame $PWD/../sbox-public/game/samples/sweeper/.sbproj +shimhost &
+# once "Server started! (SteamID: <identity>)":
+(cd ../sbox-public/game && ENGINE2_SERVER_LIST=/tmp/servers.json ./sbox-server +shimclient <identity> +shimrun servers +instanceid 2)
+```
+
 The rest is tested the way managed calls it (`cargo test`): a proof a
 stand-in launcher signed, a player without a copy refused at the door by a
 stand-in origin, a kicked one hearing why.
@@ -519,8 +553,6 @@ What the game's components still can't do:
   has compared a pose with Facepunch's engine: a graph runs as its nodes
   are read here. Footsteps, the events a player's walk would fire, are
   Citizen's, which comes only with Facepunch's closed download.
-- **Runtime models' rest.** A model built at runtime (`ModelBuilder`)
-  keeps its collision, not its bones, hitboxes and meshes.
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
   has none.
 - **Workshop maps.** A map that's only on Steam's workshop needs Steam
@@ -583,6 +615,40 @@ particles, decals and the UI. A headless player has no tonemapper of
 managed's (`Graphics.IsAvailable` is false with the empty render device):
 the watcher's turning auto exposure off reaches nothing, and frames are
 exposed as s&box's defaults would expose them (above).
+
+**What's built at runtime is drawn** (`engine2/src/rendermesh.rs`). A
+model made by managed's `ModelBuilder` (an editor mesh's faces, a
+terrain's, a procedural prop) has what it was given, not only its
+collision: its render meshes, bones (each given in its parent's space,
+found by name whichever order they come in), attachments, mesh groups and
+the body groups they make, LOD masks and hitboxes. It is the same kind of
+model a file makes, so a game reads it through the same slots
+(`Model.Bones`, `HitboxSet`, `Attachments`, body groups) and a scene
+object poses it. The meshes are MeshGlue's: a vertex buffer kept as
+managed wrote it, its fields described by managed's `VertexLayout`
+(a semantic, an index, a format: s&box's ColorFormat is DXGI's numbering),
+an index buffer, draw calls and their materials. The renderer reads them
+as it reads a compiled mesh's buffers, and draws them again once managed
+writes to a buffer (a lock hands it the buffer's own bytes).
+
+Measured: a floor 64 square made through the slots, looked down on from
+100 away with a 60° view, covers 36 pixels square of 64 (35.5 predicted),
+in `materials/dev/reflectivity_30.vmat` from flatgrass's package
+(`cargo test`, `ENGINE2_CONTENT`). Under the real server, a headless
+player of Sandbox's zoo draws the level's 11 editor meshes, which it
+didn't before: the floor and walls in their dev grid material and the
+painted stripe across the floor, around the physgun in the player's hand
+(31 objects a frame where there were 20).
+
+**Skins and body groups.** An object shows what managed chose of its
+model: the mesh groups its body groups pick (`ModelRenderer.BodyGroups`,
+`SetBodyGroup` by a part's name; the model's default until then) and its
+material group (`SetMaterialGroup`), each draw's material swapped for the
+one in its place in that group. Measured (`cargo test`, s&box's download
+cache and `tools/package.sh facepunch.soda_can`): the cola can covers the
+same 2,857 pixels in each of its three skins and looks different in each;
+the MP5 covers 815 as it comes, 689 without its magazine, 834 with its
+rail mount on.
 
 **A map is lit as it was baked.** A map compiled with baked lighting
 (flatgrass is: `m_worldLightingInfo` in its `world.vwrld_c`) is lit from
@@ -715,12 +781,114 @@ fetches a map's materials and textures (outside the project: a project's
 files are sent to its players). `RENDER_DEBUG` shows what the shader read (1 base colour, 2 normal, 3
 occlusion, 4 roughness, 5 the light that bounced, 6 the direct light).
 
+## Playing, in a window
+
+`engine2/src/window.rs`. Run as a game with a window (`+shimwindow`: no
+console app), the engine makes its window and draws to it as s&box's own
+client does, and this library answers it:
+
+- **SDL3's window**: the startup splash and the game's window are
+  winit's, made on a thread of their own (X11, Wayland and Windows allow
+  it; macOS doesn't yet), shown, sized, placed, focused, the splash's
+  pixels shown as managed draws them.
+- **Its input**: keys (as SDL's scancodes and a US layout's keycodes),
+  text, the mouse's position, buttons and wheel, focus and closing, as
+  SDL3's 128-byte events for managed to poll; mouse look (relative mode)
+  holds and hides the cursor and sends the mouse's own motion.
+- **Each frame**: native's frame asks managed for its output
+  (`EngineLoop.OnClientOutput`): the main camera renders to the window's
+  swap chain (`CCameraRenderer::Render`), drawn by `render/`, and is
+  shown at `Present`, through a wgpu surface on the renderer's device.
+
+Measured, under a virtual display (Xvfb) with xdotool at the keys: the
+player of Sandbox's zoo opens a window and draws its first-person view in
+it each frame (0.5 s a frame at 640x360 on lavapipe, which is a CPU);
+holding W walks it 197 forward, which the server sees (`at 197,-0,2`);
+moving the mouse turns the view.
+
+```sh
+sh tools/play.sh            # the zoo; or: sh tools/play.sh flatgrass 1920 1080
+```
+
+And it's heard: a player's mix goes to the default sound card (cpal:
+ALSA, WASAPI, CoreAudio), queued no more than 150 ms ahead and converted
+to the card's rate; a machine with none notes so and carries on
+(`ENGINE2_AUDIO_DEVICE=none` to skip it). Tested here only to the card's
+door: no sound card in this container, the conversion by `cargo test`.
+
+Each frame is drawn straight into the window's surface (its tonemap pass
+renders to the surface's sRGB view), nothing read back but what auto
+exposure measures. On lavapipe that took a 1280x720 frame from 1.2 s to
+1.05 s; on a GPU the round trip it saves is most of a frame.
+
+What isn't there yet: the UI and HUD, under way (`engine2/src/gpu.rs`).
+s&box draws all of it with one bindless shader (`ui_cssbox_batched.shader`,
+public, about 3,000 lines with its includes) over GPU tables, text
+included: glyph outlines in buffers, covered analytically per pixel. With
+`ENGINE2_GRAPHICS=1` a windowed client says it has a device: render
+attributes keep their values, GPU buffers their bytes, materials made from
+a shader their shader, textures and samplers have bindless indices; and
+each frame the camera's view gets managed's UI hook (`AddUIHook`), whose
+layers run with a render context that records what they draw. Measured:
+Sandbox's HUD arrives as one instanced draw of `ui_cssbox_batched` a
+frame, 33 boxes (272 bytes each, as the shader declares them): a line of
+text, 16 green glyphs over 16 shadows, in its box. A draw keeps each
+buffer's bytes as they were when it was made (managed refills its tables
+between draws, as a GPU would see them).
+
+And it's drawn (`render/ui.wgsl`, `render/ui.rs`): the shader ported to
+WGSL, its tables read as words as HLSL packs them. So far: rounded-rect
+boxes with their backgrounds and solid borders, and glyphs covered from
+their outlines (Lengyel's dual ray method, as s&box's `ui/text.hlsl`),
+blurred shadows too, each instance placed by its transform, blended in
+gamma space over the frame. Measured: Sandbox's join notice slides in
+from the left (its transform animating from -674 to 0) and reads "has
+joined the game", green over its shadow, at 640x360. Not yet: background
+images and gradients, scissors, paths and shapes, box shadows and
+outlines, border styles; and the device only answers with
+`ENGINE2_GRAPHICS=1` while the rest of what it wakes is filled in.
+
+## What a player hears
+
+`engine2/src/audio.rs`. s&box mixes in C# (`Sandbox.Audio.MixingThread`);
+native reads its sounds, keeps its buffers, paces it and takes the mix.
+
+- **The device**: stereo at 44.1 kHz. A thread asks managed for each 512
+  samples (`MixOneBuffer`) at the pace a sound card plays them, and takes
+  what managed sends back (`SendOutput`): to the sound card (below), and
+  to a WAV file at `ENGINE2_AUDIO_CAPTURE`. A dedicated server mixes
+  nothing.
+- **Sounds**: a compiled sound (`.vsnd_c`: rate, format, channels, loop
+  and length in its DATA block, the samples after the resource), or a
+  project's source (`.wav`, `.mp3`, decoded in pure Rust), read once.
+- **Voices**: each playing sound's mixer reads it 512 samples at a time
+  at the pitch managed asks (between samples, linearly), loops where the
+  sound says, waits out a delay, stops at an end.
+- **Where it comes from**: Steam Audio's effects, simpler. The direct
+  path (distance, air, what's in the way) as one gain where Steam Audio
+  has a three-band EQ, gliding from buffer to buffer; a sound's direction
+  as managed's own fallback pans it (`snd_steamaudio 0`), where Steam
+  Audio has an HRTF. Reverb and pathing add nothing yet.
+
+Measured: a headless player of Sandbox's zoo, its mix captured, hears its
+weapon drawn (peak 0.31 in the first second) and, when its watcher plays
+Sandbox's own `rpg_shoot.sound` (a WAV source) where the camera is, the
+shot at 0.96, dying away over four seconds; the physgun's idle hum (an
+MP3 at 48 kHz) under it. Managed takes 0.3 ms of each buffer's 11.6.
+Core's own sounds (footsteps, impacts) come only with Facepunch's closed
+download, and are not found.
+
 ## Reproduce
 
 On a fresh Linux machine with Rust, `tools/setup.sh` does all of the
 first block below: the .NET SDK if there's none, the checkout beside this
 one (`../sbox-public`), patched, its interop generated, the server built,
 the natives and reference assemblies in place.
+Building on Linux wants ALSA's headers for the client's sound card
+(`apt-get install libasound2-dev`).
+Where Microsoft's download host is out of reach, a distribution's SDK does
+(`apt-get install dotnet-sdk-10.0` on Ubuntu 24.04): `setup.sh` takes the
+`dotnet` on the path.
 
 ```sh
 sh tools/setup.sh
@@ -771,6 +939,13 @@ first.
   opens the lobby, as a networked game's `NetworkHelper` does for itself.
 - `+shimclient <address>` boots the same launcher as a headless player (a
   game app, not a dedicated server) and runs `connect <address>`.
+- `+shimrun <command>` runs a console command on that player before it
+  connects (the server browser's `servers`, say).
+- `+shimwindow` makes that player a game with a window, as s&box's client
+  is (no console app). Its splash closes rather than handing over to the
+  startup screen when there is no menu to show it in, and a camera with
+  tonemapping on but no tonemapper (no graphics device) sets none rather
+  than throwing. An app that fails to start prints where.
 - A dedicated server running a local project counts as a developer host
   (`NetworkSystem.IsDeveloperHost`). It already sends such a game's code
   to its players (`GameInstanceDll`'s code archives), but told them it was
@@ -811,7 +986,11 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/surfaces.rs` | surfaces: what shapes are made of, by index and by name, and what each does to them |
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
-| `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation |
+| `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation; what a builder is given (bones, attachments, mesh groups, hitboxes) as a file's model |
+| `engine2/src/gpu.rs` | the render device as data: render attributes, GPU buffers, bindless indices, scene views and managed layers, render contexts that record draws |
+| `engine2/src/window.rs` | a client's window: SDL3's windows and events on winit, its swap chain a wgpu surface the main camera draws to |
+| `engine2/src/audio.rs` | sound: the device and its pace, sounds read and decoded, voices' mixers, mix buffers, Steam Audio's effects |
+| `engine2/src/rendermesh.rs` | meshes made at runtime: MeshGlue's render meshes, their vertex and index buffers, managed's vertex layouts |
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
 | `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
 | `engine2/src/camera.rs` | cameras managed asks for pixels: their worlds, what's shown, the view drawn into managed's bitmap |
@@ -822,6 +1001,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/steam.rs` | Steam's part without Steam: logon, identity, sign-in tickets, the callbacks managed waits on |
 | `engine2/src/relay.rs`, `src/bin/relay.rs` | the relay: servers register by identity, players dial them through it |
 | `engine2/src/elo.rs` | the store's side of a server: the shard-list row, `status.json`, copies checked at join and on a sweep |
+| `engine2/src/serverlist.rs` | the server browser: `CServerList` answered from shard lists, and identities to addresses |
 | `engine2/src/siwe.rs` | Sign-In With Ethereum, checked: the signer recovered, the message's fields read |
 | `engine2/src/elo_overlay.rs` | the Elo Pros launcher's client, vendored as its SDK asks (elo-pros-launcher `sdk/rust/elo_overlay.rs`) |
 | `engine2/src/trace.rs` | which slots are called, in order, and how often |
@@ -833,6 +1013,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/map.sh` | a map package's paks from sbox.game, into a project |
 | `tools/package.sh` | a package's files from sbox.game, at their game paths, for development (never committed) |
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
+| `tools/play.sh` | Sandbox hosted here and joined in a window: play it |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
@@ -841,8 +1022,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    and is joined (above), and models run their animation graphs. What's
    left is fidelity: IK, root motion, animation events.
 2. **Steam's part.** Connections, a server's logon, the Elo Pros sign-in,
-   the shard list and the relay are ours now, and a player joins (above).
-   Next: lobbies. A relay run for others wants a price, as the stream relay's
+   the shard list, the server browser and the relay are ours now, and a
+   player finds a server and joins (above). Next: Steam's lobbies, the
+   player-hosted kind (`SteamLobbySocket`, through `steam_api64` itself). A relay run for others wants a price, as the stream relay's
    credits do (scry-forge `meter/relay.py`).
 3. **Assets.** Models (collision, bones, hitboxes, sequences, key
    values, animation graphs), surfaces and maps are read (above).

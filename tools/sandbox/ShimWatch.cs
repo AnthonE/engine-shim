@@ -123,6 +123,7 @@ public sealed class ShimWatch : Component
 		Shoot();
 		Events();
 		View();
+		Listen();
 
 		// each player: what the controller's ground probe finds under them, and the map still there
 		foreach ( var p in Scene.GetAllComponents<PlayerController>() )
@@ -246,6 +247,18 @@ public sealed class ShimWatch : Component
 			Log.Info( $"shimwatch events: crowbar swings, graph {_crowbar.SceneModel?.AnimationGraph?.Name}" );
 			_crowbar.Set( "b_attack", true );
 		}
+	}
+
+	// what a player hears: two of Sandbox's own sounds (a WAV and an MP3
+	// source) played where its camera is, mixed by s&box's mixer
+	void Listen()
+	{
+		if ( Networking.IsHost || (_ticks != 15 && _ticks != 25) ) return;
+		var camera = Scene.Camera;
+		var at = camera.IsValid() ? camera.WorldPosition : Vector3.Zero;
+		var name = _ticks == 15 ? "weapons/rpg/sounds/rpg_shoot.sound" : "weapons/physgun/sounds/physgun.shoot.start.sound";
+		var handle = Sound.Play( name, at );
+		Log.Info( $"shimwatch sound {_ticks}: {name} at {at}: {(handle.IsValid ? "playing" : "none")}, volume {handle.Volume}, master {Sound.MasterVolume}" );
 	}
 
 	// what a player sees, through the engine's own way to ask: the scene's

@@ -5,7 +5,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{CStr, CString};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// A string for managed to read: native keeps it (leaked, as the engine's
@@ -78,9 +78,28 @@ pub unsafe fn CMtrlSystm2ppSys_GetContentPath(_self: usize) -> usize { global_Ge
 /// stub at 60 Hz, as a dedicated server's default tick would.
 pub unsafe fn global_SourceEngineFrame(_app_system: usize, _time: f64, _previous: f64) -> i32 {
     crate::elo::TICK.fetch_add(1, Ordering::Relaxed);
+    // a client with a window: its output, as native's frame asks for it
+    // (EngineLoop.OnClientOutput: every view drawn to its swap chain), then shown
+    if win::window_of_swap_chain(MAIN_SWAP_CHAIN.load(Ordering::Relaxed) as usize) != 0 {
+        let began = std::time::Instant::now();
+        for slot in [crate::slots::M_Sandbox_EngineLoop_OnClientOutput, crate::slots::M_SandboxEngine_GameWindow_Present] {
+            let f = crate::managed(slot);
+            if f != 0 {
+                let f: extern "C" fn() -> i32 = unsafe { std::mem::transmute(f) };
+                f();
+            }
+        }
+        // what's left of the frame's 60th of a second
+        if let Some(rest) = std::time::Duration::from_micros(16_667).checked_sub(began.elapsed()) { std::thread::sleep(rest) }
+        return 1;
+    }
     std::thread::sleep(std::time::Duration::from_micros(16_667));
     1
 }
+
+/// The swap chain the scene system draws its main views to (SetMainSwapChain).
+static MAIN_SWAP_CHAIN: AtomicU64 = AtomicU64::new(0);
+pub unsafe fn g_pSceneSystem_SetMainSwapChain(sc: usize) { MAIN_SWAP_CHAIN.store(sc as u64, Ordering::Relaxed) }
 
 // ---- images
 
@@ -123,14 +142,451 @@ pub unsafe fn ImageLoader_GetMemRequired_1(w: i32, h: i32, d: i32, mips: i32, fo
     mem_required(w, h, d, mips, format)
 }
 
-// ---- sound: a device with nowhere to play, as a server's is
+// ---- a client's window: window.rs, as SDL3 answers s&box (and, built
+// without a renderer, no window at all)
 
-pub unsafe fn g_pAudioDevice_Name() -> usize { cstr("null") }
-pub unsafe fn g_pAudioDevice_ChannelCount() -> u32 { 2 }
-pub unsafe fn g_pAudioDevice_MixChannelCount() -> u32 { 2 }
+#[cfg(feature = "render")]
+use crate::window as win;
+#[cfg(not(feature = "render"))]
+mod win {
+    pub fn create(_: &str, _: i32, _: i32, _: i64, _: bool) -> usize { set_error("built without a renderer: no windows"); 0 }
+    pub fn destroy(_: usize) {}
+    pub fn poll(_: usize) -> bool { false }
+    pub fn window_of_event(_: usize) -> usize { 0 }
+    pub fn size(_: usize) -> (i32, i32) { (0, 0) }
+    pub fn flags(_: usize) -> i64 { 0 }
+    pub fn keyboard_focus() -> usize { 0 }
+    pub fn mouse_focus() -> usize { 0 }
+    pub fn show(_: usize, _: bool) -> bool { false }
+    pub fn set_relative(_: usize, _: bool) -> bool { false }
+    pub fn relative(_: usize) -> bool { false }
+    pub fn show_pixels(_: usize, _: &[u8], _: u32, _: u32) -> bool { false }
+    pub fn create_swap_chain(_: usize) -> usize { 0 }
+    pub fn window_of_swap_chain(_: usize) -> usize { 0 }
+    pub fn draw_camera(_: usize, _: usize) {}
+    pub fn present(_: usize) -> bool { true }
+    pub fn set_error(_: &str) {}
+    pub fn error_ptr() -> usize { c"".as_ptr() as usize }
+    pub fn key_name(_: u32) -> String { String::new() }
+    pub fn keycode(s: u32) -> u32 { s | (1 << 30) }
+    pub fn modifiers() -> u16 { 0 }
+    pub fn set_title(_: usize, _: &str) -> bool { false }
+    pub fn set_size(_: usize, _: i32, _: i32) -> bool { false }
+    pub fn position(_: usize) -> (i32, i32) { (0, 0) }
+    pub fn set_position(_: usize, _: i32, _: i32) -> bool { false }
+    pub fn set_fullscreen(_: usize, _: bool) -> bool { false }
+    pub fn set_bordered(_: usize, _: bool) -> bool { false }
+    pub fn set_resizable(_: usize, _: bool) -> bool { false }
+    pub fn raise(_: usize) -> bool { false }
+    pub fn warp_mouse(_: usize, _: f32, _: f32) {}
+    pub fn mouse_state() -> (u32, f32, f32) { (0, 0.0, 0.0) }
+    pub fn has_software_surface(_: usize) -> bool { false }
+    pub fn release_software_surface(_: usize) -> bool { false }
+    pub fn set_text_input(_: usize, _: bool) -> bool { false }
+    pub fn set_cursor_visible(_: bool) {}
+    pub fn monitor() -> (i32, i32, u32) { (1920, 1080, 60_000) }
+    pub fn any() -> bool { false }
+}
+
+unsafe fn put<T>(p: usize, v: T) { if p != 0 { unsafe { *(p as *mut T) = v } } }
+
+/// The startup window comes first: true, there's a way to make windows.
+pub unsafe fn global_SourceEngineInitStartupWindow(_app: usize) -> i32 { 1 }
+pub unsafe fn globalSdl_InitSubSystem(_flags: i64) -> i32 { 1 }
+pub unsafe fn globalSdl_SetHint(_name: usize, _value: usize) -> i32 { 1 }
+pub unsafe fn globalSdl_GetError() -> usize { win::error_ptr() }
+pub unsafe fn globalSdl_GetCurrentVideoDriver() -> usize { cstr(if std::env::var("WAYLAND_DISPLAY").is_ok() { "wayland" } else { "x11" }) }
+pub unsafe fn globalSdl_DelayPrecise(ns: u64) { std::thread::sleep(std::time::Duration::from_nanos(ns)) }
+
+pub unsafe fn globalSdl_CreateWindow(title: usize, w: i32, h: i32, flags: i64) -> usize { win::create(&unsafe { read(title) }, w, h, flags, false) }
+/// The splash: a window whose software surface managed draws into first.
+pub unsafe fn globalSdl_CreateStartupWindow(title: usize, w: i32, h: i32, flags: i64) -> usize { win::create(&unsafe { read(title) }, w, h, flags, true) }
+pub unsafe fn globalSdl_DestroyWindow(w: usize) { win::destroy(w) }
+pub unsafe fn globalSdl_SetWindowTitle(w: usize, title: usize) -> i32 { win::set_title(w, &unsafe { read(title) }) as i32 }
+pub unsafe fn globalSdl_ShowWindow(w: usize) -> i32 { win::show(w, true) as i32 }
+pub unsafe fn globalSdl_HideWindow(w: usize) -> i32 { win::show(w, false) as i32 }
+pub unsafe fn globalSdl_RaiseWindow(w: usize) -> i32 { win::raise(w) as i32 }
+pub unsafe fn globalSdl_RestoreWindow(w: usize) -> i32 { (win::flags(w) != 0) as i32 }
+pub unsafe fn globalSdl_SyncWindow(w: usize) -> i32 { (win::flags(w) != 0) as i32 }
+pub unsafe fn globalSdl_GetWindowFlags(w: usize) -> i64 { win::flags(w) }
+pub unsafe fn globalSdl_GetWindowSize(w: usize, x: usize, y: usize) -> i32 {
+    let (a, b) = win::size(w);
+    unsafe { put(x, a); put(y, b) };
+    (a > 0) as i32
+}
+pub unsafe fn globalSdl_GetWindowSizeInPixels(w: usize, x: usize, y: usize) -> i32 { unsafe { globalSdl_GetWindowSize(w, x, y) } }
+pub unsafe fn globalSdl_SetWindowSize(w: usize, x: i32, y: i32) -> i32 { win::set_size(w, x, y) as i32 }
+pub unsafe fn globalSdl_GetWindowPosition(w: usize, x: usize, y: usize) -> i32 {
+    let (a, b) = win::position(w);
+    unsafe { put(x, a); put(y, b) };
+    (win::flags(w) != 0) as i32
+}
+pub unsafe fn globalSdl_SetWindowPosition(w: usize, x: i32, y: i32) -> i32 { win::set_position(w, x, y) as i32 }
+pub unsafe fn globalSdl_SetWindowBordered(w: usize, on: i32) -> i32 { win::set_bordered(w, on != 0) as i32 }
+pub unsafe fn globalSdl_SetWindowResizable(w: usize, on: i32) -> i32 { win::set_resizable(w, on != 0) as i32 }
+pub unsafe fn globalSdl_SetWindowFullscreen(w: usize, on: i32) -> i32 { win::set_fullscreen(w, on != 0) as i32 }
+pub unsafe fn globalSdl_SetWindowFullscreenMode(w: usize, _mode: usize) -> i32 { (win::flags(w) != 0) as i32 }
+pub unsafe fn globalSdl_SetWindowMinimumSize(w: usize, _x: i32, _y: i32) -> i32 { (win::flags(w) != 0) as i32 }
+pub unsafe fn globalSdl_GetWindowPixelDensity(_w: usize) -> f32 { 1.0 }
+pub unsafe fn globalSdl_GetWindowDisplayScale(_w: usize) -> f32 { 1.0 }
+pub unsafe fn globalSdl_GetDisplayContentScale(_d: u32) -> f32 { 1.0 }
+pub unsafe fn globalSdl_GetDisplayForWindow(_w: usize) -> u32 { 1 }
+pub unsafe fn globalSdl_GetPrimaryDisplay() -> u32 { 1 }
+pub unsafe fn globalSdl_GetDisplayForPoint(_p: usize) -> u32 { 1 }
+/// One display, its id 1, in a list that ends with 0 (SDL_free's to free: never).
+pub unsafe fn globalSdl_GetDisplays(count: usize) -> usize {
+    static ONE: [u32; 2] = [1, 0];
+    unsafe { put(count, 1i32) };
+    ONE.as_ptr() as usize
+}
+pub unsafe fn globalSdl_Free(_p: usize) {}
+pub unsafe fn globalSdl_GetDisplayBounds(_d: u32, rect: usize) -> i32 {
+    let (w, h, _) = win::monitor();
+    unsafe { put(rect, [0i32, 0, w, h]) };
+    1
+}
+pub unsafe fn globalSdl_GetDisplayUsableBounds(d: u32, rect: usize) -> i32 { unsafe { globalSdl_GetDisplayBounds(d, rect) } }
+/// SDL_DisplayMode: display, format, w, h, density, refresh, its fraction, internal.
+fn display_mode() -> usize {
+    #[repr(C)]
+    struct Mode { display: u32, format: u32, w: i32, h: i32, density: f32, refresh: f32, num: i32, den: i32, internal: usize }
+    static M: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *M.get_or_init(|| {
+        let (w, h, mhz) = win::monitor();
+        Box::into_raw(Box::new(Mode { display: 1, format: 0x16362004, w, h, density: 1.0, refresh: mhz as f32 / 1000.0, num: mhz as i32, den: 1000, internal: 0 })) as usize
+    })
+}
+pub unsafe fn globalSdl_GetDesktopDisplayMode(_d: u32) -> usize { display_mode() }
+pub unsafe fn globalSdl_GetCurrentDisplayMode(_d: u32) -> usize { display_mode() }
+
+pub unsafe fn globalSdl_PollEvent(out: usize) -> i32 { win::poll(out) as i32 }
+pub unsafe fn globalSdl_GetWindowFromEvent(e: usize) -> usize { win::window_of_event(e) }
+pub unsafe fn globalSdl_GetKeyboardFocus() -> usize { win::keyboard_focus() }
+pub unsafe fn globalSdl_GetMouseFocus() -> usize { win::mouse_focus() }
+pub unsafe fn globalSdl_GetMouseState(x: usize, y: usize) -> u32 {
+    let (b, a, c) = win::mouse_state();
+    unsafe { put(x, a); put(y, c) };
+    b
+}
+pub unsafe fn globalSdl_GetGlobalMouseState(x: usize, y: usize) -> u32 { unsafe { globalSdl_GetMouseState(x, y) } }
+pub unsafe fn globalSdl_SetWindowRelativeMouseMode(w: usize, on: i32) -> i32 { win::set_relative(w, on != 0) as i32 }
+pub unsafe fn globalSdl_GetWindowRelativeMouseMode(w: usize) -> i32 { win::relative(w) as i32 }
+pub unsafe fn globalSdl_WarpMouseInWindow(w: usize, x: f32, y: f32) { win::warp_mouse(w, x, y) }
+pub unsafe fn globalSdl_CaptureMouse(_on: i32) -> i32 { 1 }
+pub unsafe fn globalSdl_ShowCursor() -> i32 { win::set_cursor_visible(true); 1 }
+pub unsafe fn globalSdl_HideCursor() -> i32 { win::set_cursor_visible(false); 1 }
+pub unsafe fn globalSdl_CreateSystemCursor(_kind: i64) -> usize { crate::handles::object() }
+pub unsafe fn globalSdl_SetCursor(_cursor: usize) -> i32 { 1 }
+pub unsafe fn globalSdl_GetModState() -> u32 { win::modifiers() as u32 }
+pub unsafe fn globalSdl_GetKeyFromScancode(scancode: i32, _mods: u32, _event: i32) -> u32 { win::keycode(scancode.max(0) as u32) }
+pub unsafe fn globalSdl_GetKeyName(key: u32) -> usize { cstr(&win::key_name(key)) }
+pub unsafe fn globalSdl_StartTextInput(w: usize) -> i32 { win::set_text_input(w, true) as i32 }
+pub unsafe fn globalSdl_StopTextInput(w: usize) -> i32 { win::set_text_input(w, false) as i32 }
+pub unsafe fn globalSdl_DisableScreenSaver() -> i32 { 1 }
+
+/// The splash's software surface: managed fills it, then hands the window
+/// to Vulkan (here, a swap chain on the same window).
+pub unsafe fn globalSdl_WindowHasSurface(w: usize) -> i32 { win::has_software_surface(w) as i32 }
+pub unsafe fn globalSdl_DestroyWindowSurface(w: usize) -> i32 { win::release_software_surface(w) as i32 }
+pub unsafe fn globalSdl_FillWindowColor(w: usize, r: u8, g: u8, b: u8, a: u8) -> i32 {
+    let (x, y) = win::size(w);
+    if x <= 0 || y <= 0 { return 0; }
+    let px: Vec<u8> = [r, g, b, a].repeat((x * y) as usize);
+    win::show_pixels(w, &px, x as u32, y as u32) as i32
+}
+pub unsafe fn globalSdl_PresentWindowPixels(w: usize, width: i32, height: i32, pixels: usize, pitch: i32) -> i32 {
+    if pixels == 0 || width <= 0 || height <= 0 { return 0; }
+    // rows of `pitch` bytes, 32-bit pixels (SDL's ARGB8888 as managed writes it: B, G, R, A in memory)
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..height as usize {
+        let line = unsafe { core::slice::from_raw_parts((pixels + row * pitch as usize) as *const u8, (width * 4) as usize) };
+        for p in line.chunks_exact(4) { rgba.extend_from_slice(&[p[2], p[1], p[0], 255]); }
+    }
+    win::show_pixels(w, &rgba, width as u32, height as u32) as i32
+}
+
+// the swap chain: a window the main camera draws to (window.rs)
+pub unsafe fn g_pRenderDevice_CreateSwapChain(window: usize, _mode: usize, _name: usize) -> usize { win::create_swap_chain(window) }
+pub unsafe fn g_pRenderDevice_DestroySwapChain(_sc: usize) {}
+pub unsafe fn g_pRenderDevice_CanRenderToSwapChain(sc: usize) -> i32 { (win::window_of_swap_chain(sc) != 0) as i32 }
+pub unsafe fn g_pRenderDevice_UpdateSwapChain(sc: usize, _mode: usize) -> i32 { (win::window_of_swap_chain(sc) != 0) as i32 }
+pub unsafe fn g_pRenderDevice_GetSwapChainInfo(sc: usize) -> crate::slots::S_RenderDeviceInfo_t {
+    use crate::slots::{S_RenderDeviceInfo_t, S_RenderDisplayMode_t};
+    let (w, h) = win::size(win::window_of_swap_chain(sc));
+    S_RenderDeviceInfo_t {
+        f_m_DisplayMode: S_RenderDisplayMode_t { f_m_nWidth: w, f_m_nHeight: h, f_m_Format: 0, f_m_nRefreshRateNumerator: 60, f_m_nRefreshRateDenominator: 1 },
+        f_m_nMultisampleType: 0, f_m_nModeUsage: 0, f_m_bWaitForVSync: 1, f_m_bIsMainWindow: 1,
+    }
+}
+pub unsafe fn g_pRenderDevice_Present(sc: usize) -> i32 { win::present(sc) as i32 }
+/// The main camera's view, drawn for a swap chain (SceneCamera.Render).
+pub unsafe fn CCameraRenderer_Render(camera: usize, sc: usize) { win::draw_camera(camera, sc) }
+
+// ---- the render device's data (gpu.rs): render attributes, GPU buffers,
+// bindless indices, scene views and managed layers, render contexts
+
+use crate::gpu::{self, Val};
+use crate::slots::{S_Matrix, S_Vector2, S_Vector4};
+
+unsafe fn rd<T: Copy>(p: usize) -> Option<T> { if p == 0 { None } else { Some(unsafe { std::ptr::read_unaligned(p as *const T) }) } }
+
+pub unsafe fn CRndrttrbts_Create() -> usize { gpu::new_attrs() }
+pub unsafe fn CRndrttrbts_DeleteThis(a: usize) { gpu::device().attrs.remove(&a); }
+pub unsafe fn CRndrttrbts_Clear(a: usize, _b: i32, _c: i32) { gpu::clear(a) }
+pub unsafe fn CRndrttrbts_IsEmpty(a: usize) -> i32 { gpu::device().attrs.get(&a).is_none_or(|x| x.values.is_empty()) as i32 }
+pub unsafe fn CRndrttrbts_SetParent(a: usize, parent: usize) { gpu::set_parent(a, parent) }
+pub unsafe fn CRndrttrbts_MergeToPtr(a: usize, into: usize) { gpu::merge(a, into) }
+pub unsafe fn CRndrttrbts_AreEqual(a: usize, b: usize, _x: i32) -> i32 {
+    let d = gpu::device();
+    (gpu::flatten(&d, a) == gpu::flatten(&d, b)) as i32
+}
+pub unsafe fn CRndrttrbts_SetFloatValue(a: usize, k: S_Sandbox_StringToken, v: f32) { gpu::set(a, k.f_Value, Val::Float(v)) }
+pub unsafe fn CRndrttrbts_GetFloatValue(a: usize, k: S_Sandbox_StringToken, d: f32) -> f32 { match gpu::get(a, k.f_Value) { Some(Val::Float(v)) => v, _ => d } }
+pub unsafe fn CRndrttrbts_SetIntValue(a: usize, k: S_Sandbox_StringToken, v: i32) { gpu::set(a, k.f_Value, Val::Int(v)) }
+pub unsafe fn CRndrttrbts_GetIntValue(a: usize, k: S_Sandbox_StringToken, d: i32) -> i32 { match gpu::get(a, k.f_Value) { Some(Val::Int(v)) => v, _ => d } }
+pub unsafe fn CRndrttrbts_SetComboValue(a: usize, k: S_Sandbox_StringToken, v: u8) { gpu::set(a, k.f_Value, Val::Combo(v)) }
+pub unsafe fn CRndrttrbts_GetComboValue(a: usize, k: S_Sandbox_StringToken, d: u8) -> u8 { match gpu::get(a, k.f_Value) { Some(Val::Combo(v)) => v, _ => d } }
+pub unsafe fn CRndrttrbts_SetBoolValue(a: usize, k: S_Sandbox_StringToken, v: i32) { gpu::set(a, k.f_Value, Val::Bool(v != 0)) }
+pub unsafe fn CRndrttrbts_GetBoolValue(a: usize, k: S_Sandbox_StringToken, d: i32) -> i32 { match gpu::get(a, k.f_Value) { Some(Val::Bool(v)) => v as i32, _ => d } }
+pub unsafe fn CRndrttrbts_SetVector2DValue(a: usize, k: S_Sandbox_StringToken, v: usize) {
+    if let Some(v) = unsafe { rd::<[f32; 2]>(v) } { gpu::set(a, k.f_Value, Val::Vec2(v)) }
+}
+pub unsafe fn CRndrttrbts_GetVector2DValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> S_Vector2 {
+    let v = match gpu::get(a, k.f_Value) { Some(Val::Vec2(v)) => v, _ => unsafe { rd::<[f32; 2]>(d) }.unwrap_or_default() };
+    unsafe { std::mem::transmute(v) }
+}
+pub unsafe fn CRndrttrbts_SetVectorValue(a: usize, k: S_Sandbox_StringToken, v: usize) {
+    if let Some(v) = unsafe { rd::<[f32; 3]>(v) } { gpu::set(a, k.f_Value, Val::Vec3(v)) }
+}
+pub unsafe fn CRndrttrbts_GetVectorValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> S_Vector3 {
+    let v = match gpu::get(a, k.f_Value) { Some(Val::Vec3(v)) => v, _ => unsafe { rd::<[f32; 3]>(d) }.unwrap_or_default() };
+    unsafe { std::mem::transmute(v) }
+}
+pub unsafe fn CRndrttrbts_SetVector4DValue(a: usize, k: S_Sandbox_StringToken, v: usize) {
+    if let Some(v) = unsafe { rd::<[f32; 4]>(v) } { gpu::set(a, k.f_Value, Val::Vec4(v)) }
+}
+pub unsafe fn CRndrttrbts_GetVector4DValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> S_Vector4 {
+    let v = match gpu::get(a, k.f_Value) { Some(Val::Vec4(v)) => v, _ => unsafe { rd::<[f32; 4]>(d) }.unwrap_or_default() };
+    unsafe { std::mem::transmute(v) }
+}
+pub unsafe fn CRndrttrbts_SetVMatrixValue(a: usize, k: S_Sandbox_StringToken, v: usize) {
+    if let Some(v) = unsafe { rd::<[f32; 16]>(v) } { gpu::set(a, k.f_Value, Val::Matrix(v)) }
+}
+pub unsafe fn CRndrttrbts_GetVMatrixValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> S_Matrix {
+    let v = match gpu::get(a, k.f_Value) { Some(Val::Matrix(v)) => v, _ => unsafe { rd::<[f32; 16]>(d) }.unwrap_or_default() };
+    unsafe { std::mem::transmute(v) }
+}
+pub unsafe fn CRndrttrbts_SetIntVector4DValue(a: usize, k: S_Sandbox_StringToken, x: i32, y: i32, z: i32, w: i32) { gpu::set(a, k.f_Value, Val::IntVec4([x, y, z, w])) }
+pub unsafe fn CRndrttrbts_SetStringValue(a: usize, k: S_Sandbox_StringToken, v: usize) { gpu::set(a, k.f_Value, Val::String(unsafe { read(v) })) }
+pub unsafe fn CRndrttrbts_SetTextureValue(a: usize, k: S_Sandbox_StringToken, t: usize, _mip: i32) { gpu::set(a, k.f_Value, Val::Texture(t)) }
+pub unsafe fn CRndrttrbts_GetTextureValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> usize { match gpu::get(a, k.f_Value) { Some(Val::Texture(t)) => t, _ => d } }
+pub unsafe fn CRndrttrbts_SetSamplerValue(a: usize, k: S_Sandbox_StringToken, v: usize) { gpu::set(a, k.f_Value, Val::Sampler(v)) }
+pub unsafe fn CRndrttrbts_SetBufferValue(a: usize, k: S_Sandbox_StringToken, v: usize) { gpu::set(a, k.f_Value, Val::Buffer(v)) }
+pub unsafe fn CRndrttrbts_SetPtrValue(a: usize, k: S_Sandbox_StringToken, v: usize) { gpu::set(a, k.f_Value, Val::Ptr(v)) }
+pub unsafe fn CRndrttrbts_DeleteFloatValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteIntValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteComboValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteBoolValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteVector2DValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteVectorValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteVector4DValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteVMatrixValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteStringValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteTextureValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeletePtrValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+
+/// BufferDesc_t: elements, each's size, its debug name.
+pub unsafe fn g_pRenderDevice_CreateGPUBuffer(kind: i64, desc: usize, _usage: i64, name: usize) -> usize {
+    #[repr(C)] #[derive(Clone, Copy)] struct Desc { elements: i32, size: i32, name: usize, budget: usize }
+    let Some(d) = (unsafe { rd::<Desc>(desc) }) else { return 0 };
+    gpu::new_buffer(kind, d.elements, d.size, &unsafe { read(name) })
+}
+pub unsafe fn g_pRenderDevice_DestroyGPUBuffer(b: usize) { gpu::free_buffer(b) }
+pub unsafe fn RenderTools_SetGPUBufferData(_ctx: usize, b: usize, data: usize, size: u32, offset: u32) {
+    if data == 0 || size == 0 { return; }
+    gpu::write_buffer(b, unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) }, offset as usize)
+}
+pub unsafe fn g_pRenderDevice_GetTextureViewIndex(t: usize, _color_space: u8, _dim: i64) -> i32 { gpu::texture_index(t) }
+pub unsafe fn g_pRenderDevice_FindOrCreateSamplerState(_desc: usize) -> usize { crate::handles::object() }
+pub unsafe fn g_pRenderDevice_GetSamplerIndex(s: usize) -> i32 { gpu::sampler_index(s) }
+/// A material's mode for a layer: here, the material itself.
+pub unsafe fn IMaterial2_GetMode(m: usize, _mode: S_Sandbox_StringToken) -> usize { m }
+pub unsafe fn IMaterial2_GetMode_1(m: usize) -> usize { m }
+pub unsafe fn IMaterial2_GetMode_2(m: usize, _layer: usize) -> usize { m }
+
+/// A camera renderer, made for managed's camera (its id: the view's m_ManagedCameraId).
+pub unsafe fn CCameraRenderer_Create(_name: usize, camera_id: i32) -> usize {
+    let p = crate::handles::object();
+    CAMERA_IDS.lock().unwrap().insert(p, camera_id);
+    p
+}
+pub static CAMERA_IDS: Mutex<std::collections::BTreeMap<usize, i32>> = Mutex::new(std::collections::BTreeMap::new());
+pub fn camera_id(camera: usize) -> i32 { CAMERA_IDS.lock().unwrap().get(&camera).copied().unwrap_or(0) }
+
+pub unsafe fn ISceneView_GetRenderAttributesPtr(v: usize) -> usize { gpu::device().views.get(&v).map(|v| v.attrs).unwrap_or(0) }
+pub unsafe fn ISceneView_AddManagedProceduralLayer(v: usize, name: usize, _viewport: usize, callback: usize, _before: usize, _delete: i32) -> usize {
+    gpu::add_layer(v, &unsafe { read(name) }, callback)
+}
+pub unsafe fn ISceneLayer_GetRenderAttributesPtr(l: usize) -> usize { gpu::device().layers.get(&l).map(|l| l.attrs).unwrap_or(0) }
+pub unsafe fn RndrPplnTls_TargetSupportsSrgbWrite(_v: usize, _target: usize) -> i32 { 1 }
+pub unsafe fn RndrPplnTls_GetTargetWidth(v: usize, _target: usize) -> i32 { gpu::device().views.get(&v).map(|v| v.width).unwrap_or(0) }
+pub unsafe fn RndrPplnTls_GetTargetHeight(v: usize, _target: usize) -> i32 { gpu::device().views.get(&v).map(|v| v.height).unwrap_or(0) }
+
+pub unsafe fn RenderTools_SetRenderState(ctx: usize, attrs: usize, mode: usize, _layout: usize, _stats: usize) -> i32 { gpu::set_state(ctx, attrs, mode) as i32 }
+pub unsafe fn IRenderContext_GetAttributesPtrForModify(_ctx: usize) -> usize { gpu::new_attrs() }
+pub unsafe fn IRenderContext_BindIndexBuffer(ctx: usize, b: usize, offset: i32) -> i32 { gpu::with_context(ctx, |c| c.index_buffer = Some((b, 2, offset))); 1 }
+pub unsafe fn IRenderContext_BindIndexBuffer_1(ctx: usize, b: usize, size: i32, offset: i32) -> i32 { gpu::with_context(ctx, |c| c.index_buffer = Some((b, size, offset))); 1 }
+pub unsafe fn IRenderContext_SetScissorRect(ctx: usize, rect: usize) {
+    let r = unsafe { rd::<[i32; 4]>(rect) };
+    gpu::with_context(ctx, |c| c.scissor = r)
+}
+pub unsafe fn IRenderContext_Draw(ctx: usize, prim: i64, first: i32, count: i32) { gpu::record(ctx, prim, first, count, 1, 0, false) }
+pub unsafe fn IRenderContext_DrawInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32) { gpu::record(ctx, prim, first, count, instances, 0, false) }
+pub unsafe fn IRenderContext_DrawIndexed(ctx: usize, prim: i64, first: i32, count: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, 1, base, true) }
+pub unsafe fn IRenderContext_DrawIndexedInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, instances, base, true) }
+
+// ---- sound: audio.rs. Managed mixes; native reads its sounds, keeps its
+// buffers, paces it and takes the mix.
+
+use crate::audio;
+
+pub unsafe fn g_pAudioDevice_Name() -> usize { cstr("engine-shim") }
+pub unsafe fn g_pAudioDevice_ChannelCount() -> u32 { audio::CHANNELS as u32 }
+pub unsafe fn g_pAudioDevice_MixChannelCount() -> u32 { audio::CHANNELS as u32 }
 pub unsafe fn g_pAudioDevice_BitsPerSample() -> u32 { 16 }
 pub unsafe fn g_pAudioDevice_BytesPerSample() -> u32 { 2 }
-pub unsafe fn g_pAudioDevice_SampleRate() -> u32 { 44_100 }
+pub unsafe fn g_pAudioDevice_SampleRate() -> u32 { audio::RATE }
+pub unsafe fn g_pAudioDevice_IsValid() -> i32 { 1 }
+pub unsafe fn g_pAudioDevice_IsActive() -> i32 { 1 }
+pub unsafe fn g_pAudioDevice_SendOutput(buffers: usize) {
+    if let Some(b) = unsafe { audio::device_buffers(buffers) } { audio::send(b) }
+}
+
+pub unsafe fn g_pSndSystmntrnl_PrecacheSound(name: usize) -> usize { audio::precache(&unsafe { read(name) }) }
+pub unsafe fn g_pSndSystmntrnl_CreateSound(name: usize, channels: i32, rate: i32, format: i32, frames: i32, _duration: f32, loop_start: i32, loop_end: i32, data: usize, size: i32) -> usize {
+    let bytes = if data == 0 || size <= 0 { &[][..] } else { unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) } };
+    audio::create(&unsafe { read(name) }, channels, rate, format, frames, loop_start, loop_end, bytes)
+}
+pub unsafe fn g_pSndSystmntrnl_PreloadSound(_sfx: usize) {}
+
+// a sound (CSfxTable), and its resource (VSound_t): the same object here
+fn sfx<T>(p: usize, f: impl FnOnce(&audio::Sound) -> T, otherwise: T) -> T { audio::sound(p).map(|s| f(&s)).unwrap_or(otherwise) }
+pub unsafe fn CSfxTable_GetCacheStatus(p: usize) -> i32 { sfx(p, |s| if s.failed { 0 } else { 2 }, 0) }
+pub unsafe fn CSfxTable_GetSampleCount(p: usize) -> i32 { sfx(p, |s| s.frames() as i32, 0) }
+pub unsafe fn CSfxTable_IsValidForPlayback(p: usize) -> i32 { sfx(p, |s| !s.failed && s.frames() > 0, false) as i32 }
+pub unsafe fn CSfxTable_FailedResourceLoad(p: usize) -> i32 { sfx(p, |s| s.failed, true) as i32 }
+pub unsafe fn CSfxTable_GetSound(p: usize) -> usize { p }
+/// Its samples as 16-bit: mono (channels averaged), or as recorded, interleaved.
+unsafe fn samples16(p: usize, out: usize, n: u32, interleaved: bool) -> i32 {
+    let Some(s) = audio::sound(p).filter(|s| !s.failed) else { return 0 };
+    if out == 0 { return 0; }
+    let out = unsafe { core::slice::from_raw_parts_mut(out as *mut i16, n as usize) };
+    let keep = interleaved && s.channels == 2;
+    let ch = s.channels.max(1);
+    let it: Box<dyn Iterator<Item = f32>> = if keep { Box::new(s.data.iter().copied()) } else { Box::new(s.data.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32)) };
+    for (o, x) in out.iter_mut().zip(it) { *o = (x.clamp(-1.0, 1.0) * 32767.0) as i16; }
+    1
+}
+pub unsafe fn CSfxTable_GetSamples(p: usize, out: usize, n: u32) -> i32 { unsafe { samples16(p, out, n, false) } }
+pub unsafe fn CSfxTable_GetSamplesInterleaved(p: usize, out: usize, n: u32) -> i32 { unsafe { samples16(p, out, n, true) } }
+pub unsafe fn CSfxTable_CreateMixer(p: usize) -> usize {
+    let m = audio::new_mixer(p);
+    // a player mixes what it plays; a dedicated server has nobody to hear it
+    if m != 0 && DEDICATED.load(Ordering::Relaxed) == 0 { audio::start() }
+    m
+}
+pub unsafe fn VSound_t_IsStrongHandleValid(p: usize) -> i32 { audio::sound(p).is_some() as i32 }
+pub unsafe fn VSound_t_IsStrongHandleLoaded(p: usize) -> i32 { sfx(p, |s| !s.failed, false) as i32 }
+pub unsafe fn VSound_t_IsError(p: usize) -> i32 { sfx(p, |s| s.failed, true) as i32 }
+pub unsafe fn VSound_t_CopyStrongHandle(p: usize) -> usize { p }
+pub unsafe fn VSound_t_DestroyStrongHandle(_p: usize) {}
+pub unsafe fn VSound_t_GetBindingPtr(p: usize) -> usize { p }
+pub unsafe fn VSound_t_format(p: usize) -> i64 { sfx(p, |s| s.format as i64, 0) }
+pub unsafe fn VSound_t_BitsPerSample(p: usize) -> i32 { sfx(p, |s| if s.format == audio::PCM8 { 8 } else { 16 }, 16) }
+pub unsafe fn VSound_t_BytesPerSample(p: usize) -> i32 { sfx(p, |s| if s.format == audio::PCM8 { 1 } else { 2 }, 2) }
+pub unsafe fn VSound_t_channels(p: usize) -> i32 { sfx(p, |s| s.channels as i32, 1) }
+pub unsafe fn VSound_t_m_sampleFrameSize(p: usize) -> i32 { unsafe { VSound_t_BytesPerSample(p) * VSound_t_channels(p) } }
+pub unsafe fn VSound_t_m_rate(p: usize) -> i32 { sfx(p, |s| s.rate as i32, audio::RATE as i32) }
+pub unsafe fn VSound_t_Duration(p: usize) -> f32 { sfx(p, |s| s.duration(), 0.0) }
+
+// a voice's place in its sound (CAudioMixer)
+fn mixer<T>(p: usize, f: impl FnOnce(&mut audio::Mixer) -> T, otherwise: T) -> T { audio::with_mixer(p, f).unwrap_or(otherwise) }
+pub unsafe fn CAudioMixer_Dispose(p: usize) { audio::drop_mixer(p) }
+pub unsafe fn CAudioMixer_GetSamplePosition(p: usize) -> i32 { mixer(p, |m| m.position as i32, 0) }
+pub unsafe fn CAudioMixer_SetSamplePosition(p: usize, at: i32) { mixer(p, |m| m.position = at.max(0) as f64, ()) }
+pub unsafe fn CAudioMixer_GetPositionForSave(p: usize) -> i32 { unsafe { CAudioMixer_GetSamplePosition(p) } }
+pub unsafe fn CAudioMixer_SetPositionFromSaved(p: usize, at: i32) { unsafe { CAudioMixer_SetSamplePosition(p, at) } }
+pub unsafe fn CAudioMixer_ShouldContinueMixing(p: usize) -> i32 { mixer(p, |m| !m.finished(), false) as i32 }
+pub unsafe fn CAudioMixer_IsReadyToMix(p: usize) -> i32 { audio::with_mixer(p, |_| ()).is_some() as i32 }
+pub unsafe fn CAudioMixer_SetSampleEnd(p: usize, end: u32) { mixer(p, |m| m.end = Some(end), ()) }
+/// Positive: wait that many samples first; negative: skip ahead.
+pub unsafe fn CAudioMixer_DelayOrSkipSamples(p: usize, n: i32) {
+    mixer(p, |m| if n >= 0 { m.delay += n as i64 } else { m.position += (-n) as f64 }, ())
+}
+pub unsafe fn CAudioMixer_GetSfxTable(p: usize) -> usize { mixer(p, |m| m.sfx, 0) }
+pub unsafe fn CAudioMixer_GetSampleCount(p: usize) -> i32 { mixer(p, |m| m.sound.frames() as i32, 0) }
+pub unsafe fn CAudioMixer_GetChannelCount(p: usize) -> i32 { mixer(p, |m| m.sound.channels as i32, 1) }
+pub unsafe fn CAudioMixer_SetTimeScale(p: usize, scale: f32) -> i32 { mixer(p, |m| { m.time_scale = scale; true }, false) as i32 }
+pub unsafe fn CAudioMixer_EnableLooping(p: usize, on: i32) { mixer(p, |m| m.looping = on != 0, ()) }
+pub unsafe fn CAudioMixer_ReadToBuffer(p: usize, pitch: f32, buffers: usize) {
+    let Some(b) = (unsafe { audio::device_buffers(buffers) }) else { return };
+    let mut out: Vec<&mut [f32; audio::SAMPLES]> = b.bufs.iter_mut().map(|x| &mut x.0).collect();
+    if audio::with_mixer(p, |m| m.read(pitch, &mut out)).is_none() { for o in out.iter_mut() { o.fill(0.0) } }
+    audio::debug("read", &out[0][..]);
+}
+
+// mix buffers: 512 floats, managed's to fill through their pointer
+pub unsafe fn CAudioMixBuffer_Create() -> usize { audio::new_buffer() }
+pub unsafe fn CAudioMixBuffer_Dispose(p: usize) { unsafe { audio::free_buffer(p) } }
+pub unsafe fn CAudioMixBuffer_GetDataPointer(p: usize) -> usize { p }
+pub unsafe fn CAudioMixBuffer_Silence(p: usize) { if let Some(b) = unsafe { audio::buffer(p) } { b.fill(0.0) } }
+pub unsafe fn CAudioMixBuffer_AbsLevel(p: usize) -> f32 { unsafe { audio::buffer(p) }.map(|b| audio::levels(b).0).unwrap_or(0.0) }
+pub unsafe fn CAudioMixBuffer_AvergeLevel(p: usize) -> f32 { unsafe { audio::buffer(p) }.map(|b| audio::levels(b).1).unwrap_or(0.0) }
+pub unsafe fn CAudioMixBuffer_Ramp(p: usize, a: f32, b: f32) { if let Some(x) = unsafe { audio::buffer(p) } { audio::ramp(x, a, b) } }
+pub unsafe fn CAudioMixBuffer_CopyFrom(p: usize, from: usize) {
+    if p == from { return; }
+    if let (Some(x), Some(y)) = unsafe { (audio::buffer(p), audio::buffer(from)) } { x.copy_from_slice(y) }
+}
+pub unsafe fn CAudioMixBuffer_Mix(p: usize, from: usize, scale: f32) { unsafe { CAudioMixBuffer_MixRamp(p, from, scale, scale) } }
+pub unsafe fn CAudioMixBuffer_MixRamp(p: usize, from: usize, a: f32, b: f32) {
+    let Some(y) = (unsafe { audio::buffer(from) }).map(|y| *y) else { return };
+    if let Some(x) = unsafe { audio::buffer(p) } { audio::mix_ramp(x, &y, a, b) }
+}
+// Steam Audio's effects (audio.rs): the direct path and where a sound comes
+// from; reverb and pathing add nothing yet
+pub unsafe fn CDirectEffect_Create() -> usize { audio::new_effect() }
+pub unsafe fn CDirectEffect_Dispose(p: usize) { unsafe { audio::free_effect(p) } }
+pub unsafe fn CDirectEffect_Apply(p: usize, distance: f32, air0: f32, air1: f32, air2: f32, occlusion: f32, t0: f32, t1: f32, t2: f32, input: usize, output: usize) {
+    let (Some(e), Some(i), Some(o)) = (unsafe { audio::effect(p) }, unsafe { audio::device_buffers(input) }, unsafe { audio::device_buffers(output) }) else { return };
+    audio::direct(e, distance, [air0, air1, air2], occlusion, [t0, t1, t2], i, o)
+}
+pub unsafe fn CBinauralEffect_Create() -> usize { audio::new_effect() }
+pub unsafe fn CBinauralEffect_Dispose(p: usize) { unsafe { audio::free_effect(p) } }
+pub unsafe fn CBinauralEffect_Apply(p: usize, direction: usize, blend: f32, _nearest: i32, input: usize, output: usize) {
+    let (Some(e), Some(i), Some(o)) = (unsafe { audio::effect(p) }, unsafe { audio::device_buffers(input) }, unsafe { audio::device_buffers(output) }) else { return };
+    let d = if direction == 0 { [1.0, 0.0, 0.0] } else { let v = phys::vec(unsafe { *(direction as *const S_Vector3) }); [v.x, v.y, v.z] };
+    audio::binaural(e, d, blend, i, o)
+}
+pub unsafe fn CReverbEffect_Create() -> usize { audio::new_effect() }
+pub unsafe fn CReverbEffect_Dispose(p: usize) { unsafe { audio::free_effect(p) } }
+pub unsafe fn CPathEffect_Create() -> usize { audio::new_effect() }
+pub unsafe fn CPathEffect_Dispose(p: usize) { unsafe { audio::free_effect(p) } }
+/// Reverb and pathing: nothing added (their output silent, never stale).
+unsafe fn silent(output: usize) { if let Some(o) = unsafe { audio::device_buffers(output) } { for b in o.bufs.iter_mut() { b.0.fill(0.0) } } }
+pub unsafe fn CReverbEffect_Apply(_p: usize, _low: f32, _mid: f32, _high: f32, _input: usize, output: usize) { unsafe { silent(output) } }
+pub unsafe fn CPathEffect_Apply(_p: usize, _a: f32, _b: f32, _c: f32, _d: f32, _e: f32, _f: f32, _g: f32, _input: usize, output: usize) { unsafe { silent(output) } }
+
+/// managed's memcpy (MixBuffer.CopyFrom): as V_memcpy, overlap tolerated.
+pub unsafe fn NativeLowLevel_Copy(dest: usize, src: usize, count: i64) {
+    if dest == 0 || src == 0 || count <= 0 { return; }
+    unsafe { core::ptr::copy(src as *const u8, dest as *mut u8, count as usize) }
+}
+
+pub unsafe fn CdMxDvcBffrs_Create(channels: i32) -> usize { audio::new_device_buffers(channels) }
+pub unsafe fn CdMxDvcBffrs_Destroy(p: usize) { unsafe { audio::free_device_buffers(p) } }
+pub unsafe fn CdMxDvcBffrs_GetBuffer(p: usize, i: i32) -> usize {
+    unsafe { audio::device_buffers(p) }.and_then(|d| d.bufs.get_mut(i.max(0) as usize)).map(|b| b as *mut audio::MixBuf as usize).unwrap_or(0)
+}
 
 /// What the engine would show in a box: on a server, a line on stderr.
 pub unsafe fn global_Plat_MessageBox(title: usize, text: usize) {
@@ -150,7 +606,15 @@ pub unsafe fn global_Plat_ExitProcess(code: i32) {
 // server on (Graphics.Initialize skips the GPU's work for it)
 
 const RENDER_DEVICE_API_EMPTY: i64 = 2;
-pub unsafe fn g_pRenderDevice_GetRenderDeviceAPI() -> i64 { RENDER_DEVICE_API_EMPTY }
+const RENDER_DEVICE_API_VULKAN: i64 = 1;
+/// A client with a window draws (Vulkan, as far as managed need know); a
+/// server or a headless player has the empty device.
+/// (`ENGINE2_GRAPHICS=1` while the device is built out: managed's GPU paths,
+/// the UI among them, wake with it.)
+pub unsafe fn g_pRenderDevice_GetRenderDeviceAPI() -> i64 {
+    let graphics = std::env::var("ENGINE2_GRAPHICS").is_ok_and(|v| v == "1");
+    if graphics && win::any() { RENDER_DEVICE_API_VULKAN } else { RENDER_DEVICE_API_EMPTY }
+}
 
 // ---- compiled resources: a game's JSON resources (scenes, prefabs, its own
 // GameResource types) are read as `<name>_c`. Ours is the JSON itself, as
@@ -398,8 +862,13 @@ pub unsafe fn Glue_Networking_GetConnectionMessages(conn: Conn, out: usize, max:
     unsafe { hand_over(net().receive(conn.f_Id, max as usize), out) }
 }
 
-/// A peer by identity alone, through the relay at `ENGINE2_RELAY`.
+/// A peer by identity alone: straight to its address if a server list
+/// names it (serverlist.rs), else through the relay at `ENGINE2_RELAY`.
 pub unsafe fn Glue_Networking_ConnectToSteamId(id: u64, vport: i32) -> Conn {
+    if let Some(addr) = crate::serverlist::address_of(id) {
+        crate::trace::note(&format!("net: {id} is at {addr}, as its server list says"));
+        return Conn { f_Id: net().connect(&addr, vport) };
+    }
     match std::env::var("ENGINE2_RELAY").ok().filter(|r| !r.is_empty()) {
         Some(relay) => Conn { f_Id: net().connect_via(&relay, id, vport) },
         None => {
@@ -465,6 +934,28 @@ pub unsafe fn globalSteam_SteamGameServer_RunCallbacks() {
 pub unsafe fn globalSteam_SteamAPI_RunCallbacks() {
     dispatch(false);
     net().run_callbacks(&SteamNetwork);
+    if let Some(m) = server_list_managed() { crate::serverlist::pump(&m) }
+}
+
+// ---- the server browser: serverlist.rs
+
+/// Sandbox.Services.ServerList's callbacks, if managed gave them.
+fn server_list_managed() -> Option<crate::serverlist::Managed> {
+    use crate::slots::*;
+    let (a, b, c) = (crate::managed(M_SndbxSrvcs_ServerList_OnStarted), crate::managed(M_SndbxSrvcs_ServerList_OnServerResponded), crate::managed(M_SndbxSrvcs_ServerList_OnFinished));
+    if a == 0 || b == 0 || c == 0 { return None; }
+    unsafe { Some(crate::serverlist::Managed { started: std::mem::transmute(a), responded: std::mem::transmute(b), finished: std::mem::transmute(c) }) }
+}
+pub unsafe fn CServerList_Create(owner: u32) -> usize { crate::serverlist::create(owner) }
+pub unsafe fn CServerList_Destroy(list: usize) { crate::serverlist::destroy(list) }
+pub unsafe fn CServerList_AddFilter(list: usize, key: usize, value: usize) {
+    crate::serverlist::add_filter(list, &unsafe { read(key) }, &unsafe { read(value) })
+}
+pub unsafe fn CServerList_StartQuery(list: usize) {
+    match server_list_managed() {
+        Some(m) => crate::serverlist::start(list, &m),
+        None => crate::trace::note("serverlist: managed gave no ServerList callbacks"),
+    }
 }
 pub unsafe fn globalSteam_SteamGameServer_GetSteamID() -> u64 { crate::steam::identity() }
 
@@ -493,6 +984,15 @@ pub unsafe fn ISteamGameServer_SetMapName(_self: usize, map: usize) {
     crate::elo::describe(|s| s.map = map)
 }
 pub unsafe fn ISteamGameServer_SetMaxPlayerCount(_self: usize, max: i32) { crate::elo::describe(|s| s.max_players = max) }
+pub unsafe fn ISteamGameServer_SetGameDescription(_self: usize, game: usize) {
+    let game = unsafe { read(game) };
+    crate::elo::describe(|s| s.game = game)
+}
+pub unsafe fn ISteamGameServer_SetGameTags(_self: usize, tags: usize) {
+    let tags = unsafe { read(tags) };
+    crate::elo::describe(|s| s.tags = tags)
+}
+pub unsafe fn ISteamGameServer_SetPasswordProtected(_self: usize, on: i32) { crate::elo::describe(|s| s.password = on != 0) }
 pub unsafe fn ISteamGameServer_LogOff(_self: usize) { crate::steam::log_off() }
 pub unsafe fn ISteamGameServer_BLoggedOn(_self: usize) -> i32 { crate::steam::logged_on() as i32 }
 
@@ -1182,6 +1682,99 @@ pub unsafe fn CModelBuilder_SetPhysics_Runtime(builder: usize, bodies: usize) {
     if let Some(Obj::Builder { physics }) = models::models().objs.get_mut(&builder) { *physics = bodies; }
 }
 pub unsafe fn CModelBuilder_CreateRuntimeModel(builder: usize, _name: usize, _strong: i32) -> usize { models::build(builder) }
+
+// what a model built at runtime draws and is posed by: its render meshes
+// (rendermesh.rs), bones, attachments, mesh groups and hitboxes (models.rs)
+pub unsafe fn CModelBuilder_AddRunTimeMesh(builder: usize, mesh: usize, groups: u64, lods: i32) {
+    if mesh != 0 { models::draft(builder, |d| d.meshes.push((mesh, groups, lods))) }
+}
+pub unsafe fn CModelBuilder_AddRunTimeBone(builder: usize, name: usize, parent: usize, pos: usize, rot: usize, _bounds: usize) {
+    let (name, parent) = unsafe { (read(name), read(parent)) };
+    let (pos, rot) = unsafe { (phys::vec(*(pos as *const S_Vector3)), phys::quat(*(rot as *const S_Rotation))) };
+    models::draft(builder, |d| d.bones.push((name, parent, pos, rot)))
+}
+pub unsafe fn CModelBuilder_AddRunTimeAttachment(builder: usize, name: usize, parent: usize, pos: usize, rot: usize) {
+    let (name, parent) = unsafe { (read(name), read(parent)) };
+    let (pos, rot) = unsafe { (phys::vec(*(pos as *const S_Vector3)), phys::quat(*(rot as *const S_Rotation))) };
+    models::draft(builder, |d| d.attachments.push((name, parent, pos, rot)))
+}
+pub unsafe fn CModelBuilder_AddMeshGroup(builder: usize, name: usize) -> i32 {
+    let name = unsafe { read(name) };
+    let mut i = 0;
+    models::draft(builder, |d| { d.groups.push(name); i = d.groups.len() as i32 - 1 });
+    i
+}
+pub unsafe fn CModelBuilder_SetDefaultMeshGroupMask(builder: usize, mask: u64) { models::draft(builder, |d| d.default_mask = Some(mask)) }
+pub unsafe fn CModelBuilder_SetLODSwitchDistance(builder: usize, lod: i32, distance: f32) { models::draft(builder, |d| d.lod_switch.push((lod, distance))) }
+pub unsafe fn CModelBuilder_AddHitBox(builder: usize, set: usize, name: usize) -> usize {
+    models::add_hitbox(builder, &unsafe { read(set) }, &unsafe { read(name) })
+}
+pub unsafe fn CBuilderHitBox_SetBoneName(h: usize, name: usize) { let n = unsafe { read(name) }; models::hitbox(h, |x| x.bone = n) }
+pub unsafe fn CBuilderHitBox_SetSurface(h: usize, name: usize) { let n = unsafe { read(name) }; models::hitbox(h, |x| x.surface = n) }
+pub unsafe fn CBuilderHitBox_AddTag(h: usize, tag: usize) { let t = unsafe { read(tag) }; models::hitbox(h, |x| x.tags.push(t)) }
+pub unsafe fn CBuilderHitBox_SetBox(h: usize, mins: usize, maxs: usize) {
+    let (a, b) = unsafe { (phys::vec(*(mins as *const S_Vector3)), phys::vec(*(maxs as *const S_Vector3))) };
+    models::hitbox(h, |x| { x.shape = 0; x.min = a; x.max = b; x.radius = 0.0 })
+}
+pub unsafe fn CBuilderHitBox_SetSphere(h: usize, center: usize, radius: f32) {
+    let c = unsafe { phys::vec(*(center as *const S_Vector3)) };
+    models::hitbox(h, |x| { x.shape = 1; x.min = c; x.max = c; x.radius = radius })
+}
+pub unsafe fn CBuilderHitBox_SetCapsule(h: usize, a: usize, b: usize, radius: f32) {
+    let (a, b) = unsafe { (phys::vec(*(a as *const S_Vector3)), phys::vec(*(b as *const S_Vector3))) };
+    models::hitbox(h, |x| { x.shape = 2; x.min = a; x.max = b; x.radius = radius })
+}
+
+// MeshGlue's render meshes and their buffers, VertexLayout: rendermesh.rs
+
+use crate::rendermesh as rmesh;
+
+pub unsafe fn VertexLayout_Create(_name: usize, size: i32) -> usize { rmesh::new_layout(size) }
+pub unsafe fn VertexLayout_Add(layout: usize, semantic: usize, index: i32, format: u32, offset: i32) {
+    rmesh::add_field(layout, &unsafe { read(semantic) }, index, format, offset)
+}
+pub unsafe fn VertexLayout_Build(_layout: usize) {}
+pub unsafe fn VertexLayout_Free(_layout: usize) {}
+pub unsafe fn VertexLayout_Destroy(layout: usize) { rmesh::free(layout) }
+
+pub unsafe fn MeshGlue_CreateRenderMesh(material: usize, primitive: i32, name: usize) -> usize {
+    rmesh::new_mesh(material, primitive, &unsafe { read(name) })
+}
+pub unsafe fn MeshGlue_SetMeshMaterial(mesh: usize, material: usize) { rmesh::with_mesh(mesh, |m| m.material = material) }
+pub unsafe fn MeshGlue_SetMeshPrimType(mesh: usize, primitive: i32) { rmesh::with_mesh(mesh, |m| m.primitive = primitive) }
+pub unsafe fn MeshGlue_SetMeshBounds(mesh: usize, mins: usize, maxs: usize) {
+    let (a, b) = unsafe { (phys::vec(*(mins as *const S_Vector3)), phys::vec(*(maxs as *const S_Vector3))) };
+    rmesh::with_mesh(mesh, |m| m.bounds = Some(([a.x, a.y, a.z], [b.x, b.y, b.z])))
+}
+pub unsafe fn MeshGlue_SetMeshUvDensity(mesh: usize, density: f32) { rmesh::with_mesh(mesh, |m| m.uv_density = density) }
+pub unsafe fn MeshGlue_SetMeshVertexRange(mesh: usize, start: i32, count: i32) { rmesh::with_mesh(mesh, |m| m.vertex_range = (start, count)) }
+pub unsafe fn MeshGlue_SetMeshIndexRange(mesh: usize, start: i32, count: i32) { rmesh::with_mesh(mesh, |m| m.index_range = (start, count)) }
+pub unsafe fn MeshGlue_AddMeshDrawCall(mesh: usize, material: usize, primitive: i32, start_index: i32, index_count: i32, start_vertex: i32, vertex_count: i32) -> i32 {
+    let mut n = 0;
+    rmesh::with_mesh(mesh, |m| {
+        m.draws.push(rmesh::DrawCall { material, primitive, start_index, index_count, start_vertex, vertex_count });
+        n = m.draws.len() as i32 - 1;
+    });
+    n
+}
+pub unsafe fn MeshGlue_SetMeshVertexBuffer(mesh: usize, vb: usize, data: usize, count: i32) { unsafe { rmesh::give(mesh, vb, data, count) } }
+pub unsafe fn MeshGlue_SetMeshIndexBuffer(mesh: usize, ib: usize, data: usize, count: i32) { unsafe { rmesh::give(mesh, ib, data, count) } }
+pub unsafe fn MeshGlue_CreateVertexBuffer(stride: i32, count: i32, names: usize, fields: usize, n: i32, data: usize, given: i32) -> usize {
+    unsafe { rmesh::new_vertices_of(stride, count, &read(names), fields, n, data, given) }
+}
+pub unsafe fn MeshGlue_CreateVertexBuffer_1(count: i32, layout: usize, data: usize) -> usize {
+    let Some(l) = rmesh::layout_of(layout) else { return 0 };
+    unsafe { rmesh::new_vertices(count, &l, data) }
+}
+pub unsafe fn MeshGlue_CreateIndexBuffer(count: i32, wide: i32, data: usize, given: i32) -> usize { unsafe { rmesh::new_indices(count, wide != 0, data, given) } }
+pub unsafe fn MeshGlue_LockVertexBuffer(vb: usize, size: i32, offset: i32) -> usize { rmesh::lock(vb, size, offset) }
+pub unsafe fn MeshGlue_UnlockVertexBuffer(vb: usize, _data: usize, _size: i32, _offset: i32) { rmesh::unlock(vb) }
+pub unsafe fn MeshGlue_LockIndexBuffer(ib: usize, size: i32, offset: i32) -> usize { rmesh::lock(ib, size, offset) }
+pub unsafe fn MeshGlue_UnlockIndexBuffer(ib: usize, _data: usize, _size: i32, _offset: i32) { rmesh::unlock(ib) }
+pub unsafe fn MeshGlue_SetVertexBufferData(vb: usize, data: usize, size: i32, offset: i32) { unsafe { rmesh::set_data(vb, data, size, offset) } }
+pub unsafe fn MeshGlue_SetIndexBufferData(ib: usize, data: usize, size: i32, offset: i32) { unsafe { rmesh::set_data(ib, data, size, offset) } }
+pub unsafe fn MeshGlue_SetVertexBufferSize(vb: usize, count: i32) -> usize { rmesh::resize(vb, count) }
+pub unsafe fn MeshGlue_SetIndexBufferSize(ib: usize, count: i32) -> usize { rmesh::resize(ib, count) }
 
 /// A model by name, from its compiled file (models.rs).
 pub unsafe fn Glue_Resources_GetModel(name: usize, _guid: S_System_Guid) -> usize { models::load(&unsafe { read(name) }) }
@@ -2012,6 +2605,15 @@ pub unsafe fn CSceneObject_EnableRendering(obj: usize) { crate::camera::set_show
 pub unsafe fn CSceneObject_DisableRendering(obj: usize) { crate::camera::set_shown(obj, false) }
 pub unsafe fn CSceneObject_IsRenderingEnabled(obj: usize) -> i32 { crate::camera::shown(obj) as i32 }
 
+// what an object shows of its model: body groups (as mesh groups) and its skin
+pub unsafe fn CSceneObject_ResetMeshGroups(obj: usize, mask: u64) { crate::camera::set_mesh_groups(obj, mask) }
+pub unsafe fn CSceneObject_EnableMeshGroups(obj: usize, mask: u64) { crate::camera::set_mesh_groups(obj, crate::camera::mesh_groups(obj) | mask) }
+pub unsafe fn CSceneObject_DisableMeshGroups(obj: usize, mask: u64) { crate::camera::set_mesh_groups(obj, crate::camera::mesh_groups(obj) & !mask) }
+pub unsafe fn CSceneObject_GetCurrentMeshGroupMask(obj: usize) -> u64 { crate::camera::mesh_groups(obj) }
+pub unsafe fn CSceneObject_SetBodyGroup(obj: usize, part: S_Sandbox_StringToken, choice: i32) { crate::camera::set_body_group(obj, part.f_Value, choice) }
+pub unsafe fn CScnnmtblbjct_SetBodyGroup(obj: usize, part: S_Sandbox_StringToken, choice: i32) { crate::camera::set_body_group(obj, part.f_Value, choice) }
+pub unsafe fn CSceneObject_SetMaterialGroup(obj: usize, group: S_Sandbox_StringToken) { crate::camera::set_skin(obj, group.f_Value) }
+
 // ---- materials: one object per name, which remembers it (a client's
 // renderer reads the file by it: camera.rs)
 
@@ -2019,6 +2621,18 @@ pub unsafe fn Glue_Resources_GetMaterial(path: usize, _guid: crate::slots::S_Sys
     crate::camera::material(&unsafe { read(path) })
 }
 pub unsafe fn IMaterial2_GetName(m: usize) -> usize { crate::camera::material_name_ptr(m) }
+/// A material made from a shader (Material.FromShader, a compute shader's).
+pub unsafe fn g_pMtrlSystm2_CreateRawMaterial(name: usize, shader: usize, _anonymous: i32) -> usize {
+    let (name, shader) = unsafe { (read(name), read(shader)) };
+    let m = crate::camera::material(&name);
+    crate::camera::set_material_shader(m, &shader);
+    m
+}
+/// A shader by name (CVfx): one object per name, which answers it.
+pub unsafe fn Glue_Resources_GetShader(name: usize, _guid: crate::slots::S_System_Guid) -> usize { crate::camera::shader(&unsafe { read(name) }) }
+pub unsafe fn CVfx_GetFilename(v: usize) -> usize { crate::camera::shader_name_ptr(v) }
+pub unsafe fn CVfx_IsError(_v: usize) -> i32 { 0 }
+pub unsafe fn CVfx_IsStrongHandleValid(_v: usize) -> i32 { 1 }
 /// A texture: one object per name, which remembers it (a light probe
 /// volume's are read by it).
 pub unsafe fn Glue_Resources_GetTexture(path: usize, _guid: crate::slots::S_System_Guid) -> usize {
@@ -2336,6 +2950,7 @@ mod tests {
 
     static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
     fn seen(s: String) { SEEN.lock().unwrap().push(s) }
+    pub(super) fn seen_lines() -> Vec<String> { SEEN.lock().unwrap().clone() }
 
     extern "C" fn should_accept(_s: Socket, _c: Conn) -> i32 { 1 }
     extern "C" fn on_socket_connection(s: Socket, c: Conn) {
@@ -2352,7 +2967,20 @@ mod tests {
         }
     }
 
-    fn managed() {
+    // Sandbox.Services.ServerList, reading gameserveritem_t as it does
+    extern "C" fn list_started(owner: u32) { seen(format!("list {owner} started")) }
+    extern "C" fn list_responded(owner: u32, item: *const crate::serverlist::Item, id: u64) {
+        let it = unsafe { &*item };
+        let text = |b: &[u8]| String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap()]).into_owned();
+        let ip = std::net::Ipv4Addr::from(it.ip);
+        seen(format!(
+            "list {owner} server {id} {ip}:{} {:?} map={} game={} players={}/{} ping>0={} pw={} tags={}",
+            it.conn_port, text(&it.server_name), text(&it.map), text(&it.game_description), it.players, it.max_players, it.ping > 0, it.password, text(&it.game_tags)
+        ))
+    }
+    extern "C" fn list_finished(owner: u32) { seen(format!("list {owner} finished")) }
+
+    pub(super) fn managed() {
         use crate::slots::*;
         let mut m = vec![0usize; crate::slots::MANAGED];
         m[M_SandboxNetwork_SteamNetwork_ShouldAcceptConnection] = should_accept as extern "C" fn(Socket, Conn) -> i32 as usize;
@@ -2363,6 +2991,9 @@ mod tests {
         m[M_Sandbox_HandleIndex_RegisterHandle] = register_handle as extern "C" fn(usize, u32) -> i32 as usize;
         m[M_Sandbox_HandleIndex_FreeHandle] = free_handle as extern "C" fn(i32) as usize;
         m[M_SandboxPhysics_PhysicsEngine_OnActive] = on_active as extern "C" fn(i32, S_Transform, S_Vector3, S_Vector3, i32, i32) as usize;
+        m[M_SndbxSrvcs_ServerList_OnStarted] = list_started as extern "C" fn(u32) as usize;
+        m[M_SndbxSrvcs_ServerList_OnServerResponded] = list_responded as extern "C" fn(u32, *const crate::serverlist::Item, u64) as usize;
+        m[M_SndbxSrvcs_ServerList_OnFinished] = list_finished as extern "C" fn(u32) as usize;
         let _ = crate::MANAGED.set(m);
     }
 
@@ -2583,6 +3214,96 @@ mod tests {
 }
 
 #[cfg(test)]
+mod server_browser {
+    //! A player finds a server as managed's server browser does
+    //! (Sandbox.Services.ServerList, Networking.QueryServers), and joins it
+    //! by the identity the list gave.
+    use super::*;
+    use super::tests::{managed, seen_lines};
+    use std::io::{BufRead, BufReader, Write};
+
+    /// `status.json` answered once, as elo.rs's responder does.
+    fn status_once(body: &'static str) -> String {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let at = l.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for c in l.incoming().flatten() {
+                let mut line = String::new();
+                let _ = BufReader::new(&c).read_line(&mut line);
+                let _ = write!(&c, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        format!("http://{at}/status.json")
+    }
+
+    fn client_frames(done: impl Fn(&[String]) -> bool) {
+        let t = std::time::Instant::now();
+        loop {
+            unsafe { globalSteam_SteamAPI_RunCallbacks() };
+            if done(&seen_lines()) { return; }
+            assert!(t.elapsed().as_secs() < 10, "timed out: {:?}", seen_lines());
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn a_player_finds_a_server_and_joins_it_by_identity() {
+        managed();
+        unsafe {
+            // a server, listening, and the row it wrote (elo.rs), beside another game's
+            let socket = Glue_Networking_CreateIpBasedSocket(0, 0);
+            let port = read(Glue_Networking_GetSocketAddress(socket)).rsplit(':').next().unwrap().to_string();
+            let status = status_once(r#"{"players":3,"max_players":16,"tick":9}"#);
+            let s = crate::elo::Server { name: "EU one".into(), map: "Sweeper".into(), max_players: 16, game: "Sweeper".into(), tags: "protocol:3,gameident:local.sweeper,hdn:0".into(), password: false };
+            let row = crate::elo::shard_row(&s, &format!("127.0.0.1:{port}"), Some(&status), 0x0110_0001_0000_4242);
+            let dir = std::env::temp_dir().join(format!("engine2-serverlist-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let ours = dir.join("servers.json");
+            std::fs::write(&ours, row).unwrap();
+            let other = dir.join("other.json");
+            std::fs::write(&other, r#"{"servers":[{"id":"x","name":"another game","addr":"127.0.0.1:1","identity":"99","tags":"protocol:3,gameident:someone.else,hdn:0"}]}"#).unwrap();
+            std::env::set_var("ENGINE2_SERVER_LIST", format!("{},{}", ours.display(), other.display()));
+
+            // Networking.QueryServers: protocol, the game, not hidden
+            let list = CServerList_Create(7);
+            for (k, v) in [("gametagsand", "protocol:3"), ("gametagsand", "gameident:local.sweeper"), ("gametagsand", "hdn:0")] {
+                let (k, v) = (CString::new(k).unwrap(), CString::new(v).unwrap());
+                CServerList_AddFilter(list, k.as_ptr() as usize, v.as_ptr() as usize);
+            }
+            CServerList_StartQuery(list);
+            assert!(seen_lines().contains(&"list 7 started".to_string()), "managed hears it start at once (IsQuerying)");
+            client_frames(|s| s.contains(&"list 7 finished".to_string()));
+            let found: Vec<String> = seen_lines().into_iter().filter(|l| l.starts_with("list 7 server")).collect();
+            assert_eq!(found, [format!(
+                "list 7 server {} 127.0.0.1:{port} \"EU one\" map=Sweeper game=Sweeper players=3/16 ping>0=true pw=0 tags=protocol:3,gameident:local.sweeper,hdn:0",
+                0x0110_0001_0000_4242u64
+            )]);
+            CServerList_Destroy(list);
+
+            // a list destroyed before it's answered tells managed nothing more
+            let gone = CServerList_Create(8);
+            CServerList_StartQuery(gone);
+            CServerList_Destroy(gone);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            client_frames(|_| true);
+            assert!(!seen_lines().iter().any(|l| l.starts_with("list 8 server") || l == "list 8 finished"));
+
+            // `connect <identity>`: straight to the address its row gave, no relay
+            let player = Glue_Networking_ConnectToSteamId(0x0110_0001_0000_4242, 77);
+            assert_ne!(player.f_Id, 0);
+            let t = std::time::Instant::now();
+            while !seen_lines().iter().any(|l| l.starts_with(&format!("connected {} ", socket.f_Id))) {
+                globalSteam_SteamGameServer_RunCallbacks();
+                assert!(t.elapsed().as_secs() < 10, "the server never saw them: {:?}", seen_lines());
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            Glue_Networking_CloseSocket(socket);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}
+
+#[cfg(test)]
 mod scene_models {
     //! A model in the scene as managed drives it: placed, posed, merged,
     //! its bones and hitboxes read back.
@@ -2756,5 +3477,118 @@ pub unsafe fn CEntityKeyValues_GetValueString_1(e: usize, key: u32, default: usi
     match world::entity(e).and_then(|e| e.get(key)) {
         Some(v) => returned(v.to_string()),
         None => default,
+    }
+}
+
+#[cfg(test)]
+mod built_models {
+    //! A model made at runtime as managed's ModelBuilder makes one (an
+    //! editor mesh, a procedural prop): its render mesh, bones, attachment,
+    //! body groups and hitboxes, read back as a game reads any model.
+    use super::*;
+    use std::ffi::CString;
+
+    fn cs(s: &str) -> CString { CString::new(s).unwrap() }
+    fn v(x: f32, y: f32, z: f32) -> S_Vector3 { phys::v3(rapier3d::math::Vector::new(x, y, z)) }
+    fn text(p: usize) -> String { unsafe { read(p) } }
+
+    #[test]
+    fn a_built_model_has_what_it_was_given() {
+        unsafe {
+            // PolygonMesh's MeshVertex: position, normal, tangent, texcoord, two colours
+            let layout = VertexLayout_Create(cs("MeshVertex").as_ptr() as usize, 64);
+            for (s, i, f, o) in [("position", 0, 6, 0), ("normal", 0, 6, 12), ("tangent", 0, 2, 24), ("texcoord", 0, 16, 40), ("texcoord", 4, 28, 48), ("texcoord", 5, 28, 52)] {
+                VertexLayout_Add(layout, cs(s).as_ptr() as usize, i, f, o);
+            }
+            VertexLayout_Build(layout);
+            let mut quad = vec![0f32; 4 * 16];
+            for (i, p) in [[0.0, 0.0, 0.0], [32.0, 0.0, 0.0], [32.0, 32.0, 0.0], [0.0, 32.0, 0.0]].iter().enumerate() {
+                quad[i * 16..i * 16 + 3].copy_from_slice(p);
+                quad[i * 16 + 5] = 1.0;
+            }
+            let material = crate::camera::material("materials/dev/reflectivity_30.vmat");
+            let mesh = MeshGlue_CreateRenderMesh(material, crate::rendermesh::TRIANGLES, cs("quad").as_ptr() as usize);
+            let vb = MeshGlue_CreateVertexBuffer_1(4, layout, quad.as_ptr() as usize);
+            MeshGlue_SetMeshVertexBuffer(mesh, vb, quad.as_ptr() as usize, 4);
+            MeshGlue_SetMeshVertexRange(mesh, 0, 4);
+            let idx: [i32; 6] = [0, 1, 2, 0, 2, 3];
+            let ib = MeshGlue_CreateIndexBuffer(6, 1, idx.as_ptr() as usize, 6);
+            MeshGlue_SetMeshIndexBuffer(mesh, ib, idx.as_ptr() as usize, 6);
+            let (lo, hi) = (v(0.0, 0.0, 0.0), v(32.0, 32.0, 0.0));
+            MeshGlue_SetMeshBounds(mesh, &lo as *const _ as usize, &hi as *const _ as usize);
+
+            // ModelBuilder.Create: its meshes, a body group of two choices, bones, an attachment, a hitbox
+            let b = CModelBuilder_Create();
+            assert_eq!(CModelBuilder_AddMeshGroup(b, cs("door_@0").as_ptr() as usize), 0);
+            assert_eq!(CModelBuilder_AddMeshGroup(b, cs("door_@1").as_ptr() as usize), 1);
+            CModelBuilder_AddRunTimeMesh(b, mesh, 1, 255);
+            CModelBuilder_SetDefaultMeshGroupMask(b, 1);
+            let id = phys::rot(rapier3d::math::Rotation::IDENTITY);
+            let (root, arm) = (v(0.0, 0.0, 0.0), v(0.0, 0.0, 10.0));
+            // the child first: its parent is found by name, wherever it comes
+            CModelBuilder_AddRunTimeBone(b, cs("arm").as_ptr() as usize, cs("root").as_ptr() as usize, &arm as *const _ as usize, &id as *const _ as usize, 0);
+            CModelBuilder_AddRunTimeBone(b, cs("root").as_ptr() as usize, cs("").as_ptr() as usize, &root as *const _ as usize, &id as *const _ as usize, 0);
+            let tip = v(0.0, 0.0, 5.0);
+            CModelBuilder_AddRunTimeAttachment(b, cs("hand").as_ptr() as usize, cs("arm").as_ptr() as usize, &tip as *const _ as usize, &id as *const _ as usize);
+            let h = CModelBuilder_AddHitBox(b, cs("default").as_ptr() as usize, cs("arm").as_ptr() as usize);
+            CBuilderHitBox_SetBoneName(h, cs("arm").as_ptr() as usize);
+            CBuilderHitBox_AddTag(h, cs("head").as_ptr() as usize);
+            let (c0, c1) = (v(0.0, 0.0, 0.0), v(0.0, 0.0, 8.0));
+            CBuilderHitBox_SetCapsule(h, &c0 as *const _ as usize, &c1 as *const _ as usize, 2.0);
+            let model = CModelBuilder_CreateRuntimeModel(b, cs("").as_ptr() as usize, 0);
+
+            // as a game reads it
+            assert_eq!(CModel_GetNumMeshes(model), 1);
+            let (mut nv, mut nt, mut nd, mut lod, mut tr) = (0i32, 0i32, 0i32, 0i32, 0i32);
+            let (mut mn, mut mx) = (v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0));
+            CModel_GetMeshInfo(model, 0, &mut nv as *mut _ as usize, &mut nt as *mut _ as usize, &mut nd as *mut _ as usize, &mut lod as *mut _ as usize, &mut tr as *mut _ as usize, &mut mn as *mut _ as usize, &mut mx as *mut _ as usize);
+            assert_eq!((nv, nt, nd, lod), (4, 2, 1, 255));
+            assert_eq!(phys::vec(mx), rapier3d::math::Vector::new(32.0, 32.0, 0.0));
+            assert_eq!(CModel_NumBones(model), 2);
+            assert_eq!(text(CModel_boneName(model, 0)), "arm");
+            assert_eq!(CModel_boneParent(model, 0), 1);
+            assert_eq!(phys::vec(CModel_GetBoneTransform(model, 0).f_Position), rapier3d::math::Vector::new(0.0, 0.0, 10.0));
+            assert_eq!(CModel_HasSkinnedMeshes(model), 1);
+            assert_eq!(CModel_GetNumAttachments(model), 1);
+            assert_eq!(text(CModel_GetAttachmentNameFromIndex(model, 0)), "hand");
+            assert_eq!(CModel_GetNumBodyParts(model), 1);
+            assert_eq!(text(CModel_GetBodyPartName(model, 0)), "door");
+            assert_eq!(CModel_GetNumBodyPartMeshes(model, 0), 2);
+            assert_eq!(CModel_GetDefaultMeshGroupMask(model), 1);
+            assert_eq!(CModel_GetHitboxSetCount(model, 0), 1);
+            let set = CModel_FindHitboxSetByName(model, cs("default").as_ptr() as usize, 0);
+            assert_eq!(CHitBoxSet_numhitboxes(set), 1);
+            let hb = CHitBoxSet_pHitbox(set, 0);
+            assert_eq!(text(Get__CHitBox_m_name(hb)), "arm");
+            assert_eq!(text(CHitBox_GetTag(hb, 0)), "head");
+            assert_eq!(phys::vec(Get__CHitBox_m_vMaxBounds(hb)), rapier3d::math::Vector::new(0.0, 0.0, 8.0));
+
+            // and it draws: its mesh, its material by name
+            let drawn = crate::rendermesh::for_drawing(&models::meshes_of(model).unwrap(), &[], |m| crate::camera::material_name(m).unwrap_or_default());
+            assert_eq!(drawn.len(), 1);
+            assert_eq!(drawn[0].draws[0].material, "materials/dev/reflectivity_30.vmat");
+            assert_eq!(drawn[0].buffers.indices[0].indices(), [0, 1, 2, 0, 2, 3]);
+
+            // a scene object of it shows its default body groups until managed
+            // chooses (ModelRenderer.SetBodyGroup, SceneModel.SetBodyGroup by name)
+            let obj = crate::handles::object();
+            animation::create(obj, model);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 1);
+            let door = S_Sandbox_StringToken { f_Value: crate::string_token("door") };
+            CScnnmtblbjct_SetBodyGroup(obj, door, 1);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 2);
+            CSceneObject_SetBodyGroup(obj, door, 0);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 1);
+            CSceneObject_ResetMeshGroups(obj, 3);
+            CSceneObject_DisableMeshGroups(obj, 1);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 2);
+            CSceneObject_SetBodyGroup(obj, S_Sandbox_StringToken { f_Value: crate::string_token("no such part") }, 0);
+            assert_eq!(CSceneObject_GetCurrentMeshGroupMask(obj), 2, "a part it hasn't: nothing changes");
+
+            // a builder given only collision makes a model as before: no file of its own
+            let bare = CModelBuilder_Create();
+            let m2 = CModelBuilder_CreateRuntimeModel(bare, cs("").as_ptr() as usize, 0);
+            assert!(models::file(m2).is_none() && models::meshes_of(m2).is_none());
+        }
     }
 }

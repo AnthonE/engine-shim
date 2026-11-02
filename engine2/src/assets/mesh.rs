@@ -307,6 +307,8 @@ pub struct Mesh {
     pub buffers: Buffers,
     /// its bones (a vertex's BLENDINDICES) as the model's skeleton numbers them
     pub bones: Vec<u32>,
+    /// the mesh groups it's in: drawn when an object shows any of them
+    pub group_mask: u64,
 }
 
 fn draws(mesh: &Value) -> Vec<Draw> {
@@ -329,13 +331,13 @@ fn draws(mesh: &Value) -> Vec<Draw> {
     out
 }
 
-/// What a model draws up close: its meshes of LOD 0 in its default mesh
-/// groups (each embedded, or a `.vmesh_c` of its own), with their buffers.
+/// What a model draws up close: its meshes of LOD 0 (each embedded, or a
+/// `.vmesh_c` of its own), with their buffers and the mesh groups each is
+/// in (which an object's body groups choose among).
 pub fn model(r: &Resource, read_compiled: impl Fn(&str) -> Option<Vec<u8>>) -> Result<Vec<Mesh>, String> {
     let data = r.kv3("DATA").ok_or("no DATA")?.map_err(|e| e.to_string())?;
     let masks = |k: &str| data.get(k).map(Value::as_array).unwrap_or(&[]).iter().map(|m| m.as_i64().unwrap_or(-1) as u64).collect::<Vec<u64>>();
     let (lods, groups) = (masks("m_refLODGroupMasks"), masks("m_refMeshGroupMasks"));
-    let default = data.get("m_nDefaultMeshGroupMask").and_then(Value::as_i64).map(|m| m as u64).unwrap_or(u64::MAX);
     // each mesh's bones in the skeleton: its run of the remapping table
     let table: Vec<u32> = data.get("m_remappingTable").map(Value::as_array).unwrap_or(&[]).iter().map(|b| b.as_i64().unwrap_or(0).max(0) as u32).collect();
     let starts: Vec<usize> = data.get("m_remappingTableStarts").map(Value::as_array).unwrap_or(&[]).iter().map(|b| b.as_i64().unwrap_or(0).max(0) as usize).collect();
@@ -344,7 +346,8 @@ pub fn model(r: &Resource, read_compiled: impl Fn(&str) -> Option<Vec<u8>>) -> R
         let end = starts.get(i + 1).copied().unwrap_or(table.len()).max(start);
         table.get(start..end.min(table.len())).unwrap_or(&[]).to_vec()
     };
-    let shown = |i: usize| lods.get(i).is_none_or(|m| m & 1 != 0) && groups.get(i).is_none_or(|m| m & default != 0);
+    let shown = |i: usize| lods.get(i).is_none_or(|m| m & 1 != 0);
+    let group = |i: usize| groups.get(i).copied().unwrap_or(u64::MAX);
     let mut out = Vec::new();
     if let Some(Ok(ctrl)) = r.kv3("CTRL") {
         for e in ctrl.get("embedded_meshes").map(Value::as_array).unwrap_or(&[]) {
@@ -353,7 +356,7 @@ pub fn model(r: &Resource, read_compiled: impl Fn(&str) -> Option<Vec<u8>>) -> R
             let block = |k: &str| r.blocks.get(e.i64(k).max(0) as usize).map(|&(_, at, n)| &r.bytes[at..at + n]);
             let (Some(mesh), Some(vbib)) = (block("data_block"), block("vbib_block")) else { continue };
             let mesh = super::kv3::read(mesh).map_err(|e| e.to_string())?;
-            out.push(Mesh { draws: draws(&mesh), buffers: read(vbib)?, bones: bones(index) });
+            out.push(Mesh { draws: draws(&mesh), buffers: read(vbib)?, bones: bones(index), group_mask: group(index) });
         }
     }
     for (i, name) in data.get("m_refMeshes").map(Value::as_array).unwrap_or(&[]).iter().enumerate() {
@@ -361,9 +364,21 @@ pub fn model(r: &Resource, read_compiled: impl Fn(&str) -> Option<Vec<u8>>) -> R
         if !shown(i) { continue; }
         let Some(file) = read_compiled(name).and_then(|b| Resource::parse(b).ok()) else { continue };
         let (Some(Ok(mesh)), Some(vbib)) = (file.kv3("DATA"), file.block("VBIB").or(file.block("MBUF"))) else { continue };
-        out.push(Mesh { draws: draws(&mesh), buffers: read(vbib)?, bones: bones(i) });
+        out.push(Mesh { draws: draws(&mesh), buffers: read(vbib)?, bones: bones(i), group_mask: group(i) });
     }
     Ok(out)
+}
+
+/// A model's default mesh groups, and its material groups (skins): each a
+/// list of materials, the first group's the ones its meshes name, each
+/// other's in their places.
+pub fn skins(r: &Resource) -> (u64, Vec<Vec<String>>) {
+    let Some(Ok(data)) = r.kv3("DATA") else { return (u64::MAX, Vec::new()) };
+    let default = data.get("m_nDefaultMeshGroupMask").and_then(Value::as_i64).map(|m| m as u64).unwrap_or(u64::MAX);
+    let groups = data.get("m_materialGroups").map(Value::as_array).unwrap_or(&[]).iter()
+        .map(|g| g.get("m_materials").map(Value::as_array).unwrap_or(&[]).iter().map(|m| m.as_str().unwrap_or("").to_string()).collect())
+        .collect();
+    (default, groups)
 }
 
 #[cfg(test)]
@@ -416,3 +431,4 @@ mod tests {
         assert!(mean.iter().all(|&m| m > 5.0 && m < 250.0), "a picture, not a blank");
     }
 }
+

@@ -52,6 +52,13 @@ pub struct Server {
     pub name: String,
     pub map: String,
     pub max_players: i32,
+    /// The game's title (`SetGameDescription`).
+    pub game: String,
+    /// What a server browser filters on (`SetGameTags`): `key:value`s,
+    /// commas between, as s&box's `DedicatedServer.SetData` writes them
+    /// (`protocol`, `gameident`, `mapident`, `hdn`...).
+    pub tags: String,
+    pub password: bool,
 }
 
 fn server() -> &'static Mutex<Server> {
@@ -68,7 +75,7 @@ pub fn describe(change: impl FnOnce(&mut Server)) {
         (*s != before).then(|| s.clone())
     };
     if let (Some(s), Some(path), Some(addr)) = (now, env("ENGINE2_SHARDLIST"), env("ENGINE2_PUBLIC_ADDR")) {
-        let doc = shard_row(&s, &addr, env("ENGINE2_STATUS_URL").as_deref());
+        let doc = shard_row(&s, &addr, env("ENGINE2_STATUS_URL").as_deref(), crate::steam::identity());
         // whole or not at all: a reader never sees half a file
         let tmp = format!("{path}.tmp");
         if let Err(e) = std::fs::write(&tmp, doc).and_then(|_| std::fs::rename(&tmp, &path)) {
@@ -92,14 +99,22 @@ fn quote(s: &str) -> String {
 }
 
 /// This server as `elo-shardlist-v1`: one row. No `players`: a count in a
-/// file is stale when written; `status_url` is asked instead.
-pub fn shard_row(s: &Server, addr: &str, status_url: Option<&str>) -> String {
+/// file is stale when written; `status_url` is asked instead. Past the
+/// store's fields, what s&box's server browser shows and filters on
+/// (serverlist.rs reads them back): the server's `identity` (a string: a
+/// u64 is past a JSON reader's exact integers), its `game`, its `tags`, and
+/// `password` when it has one.
+pub fn shard_row(s: &Server, addr: &str, status_url: Option<&str>, identity: u64) -> String {
     let id = env("ENGINE2_SHARD_ID").unwrap_or_else(|| addr.to_string());
     let name = if s.name.is_empty() { addr } else { &s.name };
     let mut row = format!("{{\"id\":{},\"name\":{},\"addr\":{}", quote(&id), quote(name), quote(addr));
     if s.max_players > 0 { row.push_str(&format!(",\"max_players\":{}", s.max_players)); }
     if !s.map.is_empty() { row.push_str(&format!(",\"map\":{}", quote(&s.map))); }
     if let Some(u) = status_url { row.push_str(&format!(",\"status_url\":{}", quote(u))); }
+    row.push_str(&format!(",\"identity\":\"{identity}\""));
+    if !s.game.is_empty() { row.push_str(&format!(",\"game\":{}", quote(&s.game))); }
+    if !s.tags.is_empty() { row.push_str(&format!(",\"tags\":{}", quote(&s.tags))); }
+    if s.password { row.push_str(",\"password\":true"); }
     format!("{{\"servers\":[{row}}}]}}\n")
 }
 
@@ -333,13 +348,19 @@ mod tests {
 
     #[test]
     fn the_row_and_the_status() {
-        let s = Server { name: "EU \"one\"".into(), map: "sweeper".into(), max_players: 16 };
+        let s = Server { name: "EU \"one\"".into(), map: "sweeper".into(), max_players: 16, ..Default::default() };
         assert_eq!(
-            shard_row(&s, "play.example:27015", Some("https://play.example/status.json")),
-            "{\"servers\":[{\"id\":\"play.example:27015\",\"name\":\"EU \\\"one\\\"\",\"addr\":\"play.example:27015\",\"max_players\":16,\"map\":\"sweeper\",\"status_url\":\"https://play.example/status.json\"}]}\n"
+            shard_row(&s, "play.example:27015", Some("https://play.example/status.json"), 7),
+            "{\"servers\":[{\"id\":\"play.example:27015\",\"name\":\"EU \\\"one\\\"\",\"addr\":\"play.example:27015\",\"max_players\":16,\"map\":\"sweeper\",\"status_url\":\"https://play.example/status.json\",\"identity\":\"7\"}]}\n"
         );
         // nothing known: the address names it, and no count is made up
-        assert_eq!(shard_row(&Server::default(), "a:1", None), "{\"servers\":[{\"id\":\"a:1\",\"name\":\"a:1\",\"addr\":\"a:1\"}]}\n");
+        assert_eq!(shard_row(&Server::default(), "a:1", None, 7), "{\"servers\":[{\"id\":\"a:1\",\"name\":\"a:1\",\"addr\":\"a:1\",\"identity\":\"7\"}]}\n");
+        // what s&box's server browser reads
+        let b = Server { game: "Sweeper".into(), tags: "protocol:3,gameident:local.sweeper,hdn:0".into(), password: true, ..Default::default() };
+        assert_eq!(
+            shard_row(&b, "a:1", None, u64::MAX),
+            "{\"servers\":[{\"id\":\"a:1\",\"name\":\"a:1\",\"addr\":\"a:1\",\"identity\":\"18446744073709551615\",\"game\":\"Sweeper\",\"tags\":\"protocol:3,gameident:local.sweeper,hdn:0\",\"password\":true}]}\n"
+        );
         assert_eq!(status(3, &s, 42), r#"{"players":3,"max_players":16,"tick":42}"#);
         assert_eq!(status(0, &Server::default(), 1), r#"{"players":0,"tick":1}"#);
         assert_eq!(online(100, &[(W1.into(), 40), (W2.into(), 90)]), format!(r#"{{"at":100,"online":[{{"wallet":"{W1}","since":40}},{{"wallet":"{W2}","since":90}}]}}"#));
