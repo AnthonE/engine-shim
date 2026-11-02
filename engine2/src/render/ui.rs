@@ -33,6 +33,36 @@ pub struct UiDraw {
     pub opacity: Option<f32>,
 }
 
+/// What a UI layer drew, in order: batches of boxes and glyphs; grabs of
+/// what's been drawn so far (into a texture, by managed's handle); and the
+/// backdrops that read a grab.
+pub enum UiItem {
+    Batch(UiDraw),
+    Grab(usize),
+    Backdrop(Backdrop),
+}
+
+/// A backdrop-filter's quad (ui_backdropfilter.shader), as managed drew it.
+pub struct Backdrop {
+    /// a triangle list: x, y, u, v, then r, g, b, a (as authored, gamma) a vertex
+    pub vertices: Vec<[f32; 8]>,
+    /// TransformMat and LayerMat, as WGSL's columns
+    pub transform: [f32; 16],
+    pub layer: [f32; 16],
+    /// BoxPosition and BoxSize, and how far the quad reaches past it (BoxBloat)
+    pub rect: [f32; 4],
+    pub bloat: f32,
+    pub radii: [f32; 4],
+    pub radii_v: [f32; 4],
+    /// brightness, contrast, saturate, sepia, invert, hue-rotate, blur
+    pub filter: [f32; 7],
+    /// border-shape: kind (1 polygon, 2 circle), point count, eight points, the circle
+    pub shape: (i32, i32, [f32; 16], [f32; 4]),
+    /// FrameBufferCopyTexture: the grab it reads (else the last one)
+    pub texture: usize,
+    pub opacity: f32,
+}
+
 const BOX: usize = 272;
 const SCISSOR: usize = 464;
 const GRADIENT: usize = 200;
@@ -48,6 +78,18 @@ pub struct Ui {
     textures: Mutex<HashMap<usize, (u64, wgpu::TextureView, [u32; 2])>>,
     blank: wgpu::TextureView,
     sampler: wgpu::Sampler,
+    /// backdrops, and the grabs' mip chains they read (backdrop.wgsl)
+    backdrop_shader: wgpu::ShaderModule,
+    backdrop_layout: wgpu::BindGroupLayout,
+    down_layout: wgpu::BindGroupLayout,
+    backdrop_pipelines: Mutex<HashMap<wgpu::TextureFormat, (wgpu::RenderPipeline, wgpu::RenderPipeline)>>,
+}
+
+/// One thing the UI's encoder does, in order.
+enum Step {
+    Draw { pipeline: wgpu::RenderPipeline, group: wgpu::BindGroup, vertices: u32, instances: u32 },
+    /// what's been drawn copied into `texture`'s top level, then each level below drawn from the one above
+    Grab { texture: wgpu::Texture, levels: Vec<(wgpu::TextureView, wgpu::BindGroup)> },
 }
 
 impl Ui {
@@ -77,7 +119,18 @@ impl Ui {
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("ui"), mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::FilterMode::Linear, ..Default::default()
         });
-        Ui { shader, layout, pipelines: Default::default(), textures: Default::default(), blank, sampler }
+        let backdrop_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("ui backdrop"), source: wgpu::ShaderSource::Wgsl(include_str!("backdrop.wgsl").into()) });
+        let tex = |binding| wgpu::BindGroupLayoutEntry {
+            binding, visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None,
+        };
+        let samp = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None };
+        let backdrop_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("ui backdrop"), entries: &[
+            wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::VERTEX_FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            storage(1), tex(2), samp(3),
+        ] });
+        let down_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("ui grab mips"), entries: &[tex(0), samp(1)] });
+        Ui { shader, layout, pipelines: Default::default(), textures: Default::default(), blank, sampler, backdrop_shader, backdrop_layout, down_layout, backdrop_pipelines: Default::default() }
     }
 
     fn pipeline(&self, device: &wgpu::Device, format: wgpu::TextureFormat, blend: u8) -> wgpu::RenderPipeline {
@@ -106,6 +159,22 @@ impl Ui {
             multiview: None,
             cache: None,
         })).clone()
+    }
+
+    /// The backdrop's pipeline and the grab's downsampling one, for a target's format.
+    fn backdrop_pipelines(&self, device: &wgpu::Device, format: wgpu::TextureFormat) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+        let mut all = self.backdrop_pipelines.lock().unwrap();
+        all.entry(format).or_insert_with(|| {
+            let make = |label, layout: &wgpu::BindGroupLayout, vs, fs, blend| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[layout], push_constant_ranges: &[] })),
+                vertex: wgpu::VertexState { module: &self.backdrop_shader, entry_point: Some(vs), compilation_options: Default::default(), buffers: &[] },
+                fragment: Some(wgpu::FragmentState { module: &self.backdrop_shader, entry_point: Some(fs), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })] }),
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                depth_stencil: None, multisample: Default::default(), multiview: None, cache: None,
+            });
+            (make("ui backdrop", &self.backdrop_layout, "vs_backdrop", "fs_backdrop", Some(wgpu::BlendState::ALPHA_BLENDING)), make("ui grab mips", &self.down_layout, "vs_down", "fs_down", None))
+        }).clone()
     }
 
     /// The texture at a bindless index on the GPU, and its size: one managed
@@ -141,14 +210,19 @@ impl Ui {
         Some(out)
     }
 
-    /// Draws over `target` (a gamma-space view of the frame), `width` by `height`.
-    pub fn draw(&self, r: &super::Renderer, target: &wgpu::TextureView, format: wgpu::TextureFormat, width: u32, height: u32, draws: &[UiDraw]) {
-        if draws.is_empty() { return; }
+    /// Draws over `target` (a gamma-space view of the frame), `width` by
+    /// `height`, in order; `texture` is the target's, for grabs to copy from
+    /// (without it a backdrop reads nothing, and isn't drawn).
+    pub fn draw(&self, r: &super::Renderer, target: &wgpu::TextureView, texture: Option<&wgpu::Texture>, format: wgpu::TextureFormat, width: u32, height: u32, items: &[UiItem]) {
+        if items.is_empty() { return; }
         let device = &r.device;
         static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            crate::trace::note(&format!("ui: drawing {} batches over {width}x{height} ({format:?}): {:?}", draws.len(),
-                draws.iter().map(|d| (d.instances, d.instance_offset, d.boxes.len(), d.texts.len(), d.scissors.len() / SCISSOR, d.gradients.len() / GRADIENT, d.blend)).collect::<Vec<_>>()));
+            crate::trace::note(&format!("ui: drawing {} items over {width}x{height} ({format:?}): {:?}", items.len(), items.iter().map(|i| match i {
+                UiItem::Batch(d) => format!("batch {} from {} ({} scissors, {} gradients, blend {})", d.instances, d.instance_offset, d.scissors.len() / SCISSOR, d.gradients.len() / GRADIENT, d.blend),
+                UiItem::Grab(t) => format!("grab {t:#x}"),
+                UiItem::Backdrop(b) => format!("backdrop {:?} blur {}", b.rect, b.filter[6]),
+            }).collect::<Vec<_>>()));
         }
         // the samplers by bindless index: filter and address modes a word, the border colour another
         let samplers: Vec<u8> = crate::gpu::samplers_by_index().iter().flat_map(|s| {
@@ -161,56 +235,135 @@ impl Ui {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("ui table"), contents: &contents, usage: wgpu::BufferUsages::STORAGE })
         };
         let solid = std::env::var("ENGINE2_UI_SOLID").is_ok();
-        let mut passes: Vec<(wgpu::RenderPipeline, wgpu::BindGroup, u32)> = Vec::new();
-        for d in draws {
-            if d.instances == 0 { continue; }
-            let (scissors, gradients) = (&d.scissors[..d.scissors.len() / SCISSOR * SCISSOR], &d.gradients[..d.gradients.len() / GRADIENT * GRADIENT]);
-            let mut extra = Vec::with_capacity(scissors.len() + gradients.len() + samplers.len());
-            extra.extend_from_slice(scissors);
-            extra.extend_from_slice(gradients);
-            extra.extend_from_slice(&samplers);
-            let (scissor_at, gradient_at, sampler_at) = (0u32, (scissors.len() / 4) as u32, ((scissors.len() + gradients.len()) / 4) as u32);
-            let tables = [buffer(&d.boxes), buffer(&d.texts), buffer(&d.glyph_table), buffer(&d.glyph_curves), buffer(&d.glyph_bands), buffer(&d.transforms), buffer(&extra)];
-            let pipeline = self.pipeline(device, format, d.blend.min(3));
-            for (start, count, slots) in runs(d) {
-                let bound: Vec<Option<(wgpu::TextureView, [u32; 2])>> = slots.iter().map(|&i| self.texture(r, i)).collect();
-                let mut params = vec![0.0f32, 0.0, width as f32, height as f32];
-                params.extend_from_slice(&d.layer);
-                let mut bytes: Vec<u8> = bytemuck::cast_slice(&params).to_vec();
-                let flags = solid as u32 | ((d.blend == 3) as u32) << 1 | (d.opacity.is_some() as u32) << 2;
-                for w in [start as u32, flags, d.opacity.unwrap_or(1.0).to_bits(), 0,
-                    scissor_at, (scissors.len() / SCISSOR) as u32, gradient_at, (gradients.len() / GRADIENT) as u32,
-                    sampler_at, (samplers.len() / 8) as u32, 0, 0] {
-                    bytes.extend_from_slice(&w.to_le_bytes());
+        let mut steps: Vec<Step> = Vec::new();
+        // the grabs made so far, by managed's handle, and the last
+        let mut grabs: HashMap<usize, wgpu::TextureView> = HashMap::new();
+        let mut last_grab: Option<wgpu::TextureView> = None;
+        for item in items {
+            match item {
+                UiItem::Batch(d) => {
+                    if d.instances == 0 { continue; }
+                    let (scissors, gradients) = (&d.scissors[..d.scissors.len() / SCISSOR * SCISSOR], &d.gradients[..d.gradients.len() / GRADIENT * GRADIENT]);
+                    let mut extra = Vec::with_capacity(scissors.len() + gradients.len() + samplers.len());
+                    extra.extend_from_slice(scissors);
+                    extra.extend_from_slice(gradients);
+                    extra.extend_from_slice(&samplers);
+                    let (scissor_at, gradient_at, sampler_at) = (0u32, (scissors.len() / 4) as u32, ((scissors.len() + gradients.len()) / 4) as u32);
+                    let tables = [buffer(&d.boxes), buffer(&d.texts), buffer(&d.glyph_table), buffer(&d.glyph_curves), buffer(&d.glyph_bands), buffer(&d.transforms), buffer(&extra)];
+                    let pipeline = self.pipeline(device, format, d.blend.min(3));
+                    for (start, count, slots) in runs(d) {
+                        let bound: Vec<Option<(wgpu::TextureView, [u32; 2])>> = slots.iter().map(|&i| self.texture(r, i)).collect();
+                        let mut params = vec![0.0f32, 0.0, width as f32, height as f32];
+                        params.extend_from_slice(&d.layer);
+                        let mut bytes: Vec<u8> = bytemuck::cast_slice(&params).to_vec();
+                        let flags = solid as u32 | ((d.blend == 3) as u32) << 1 | (d.opacity.is_some() as u32) << 2;
+                        for w in [start as u32, flags, d.opacity.unwrap_or(1.0).to_bits(), 0,
+                            scissor_at, (scissors.len() / SCISSOR) as u32, gradient_at, (gradients.len() / GRADIENT) as u32,
+                            sampler_at, (samplers.len() / 8) as u32, 0, 0] {
+                            bytes.extend_from_slice(&w.to_le_bytes());
+                        }
+                        for k in 0..SLOTS {
+                            let (index, size) = match (slots.get(k), bound.get(k)) { (Some(&i), Some(Some((_, s)))) => (i, *s), _ => (0, [1, 1]) };
+                            for w in [index, size[0] as i32, size[1] as i32, 0] { bytes.extend_from_slice(&w.to_le_bytes()); }
+                        }
+                        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("ui params"), contents: &bytes, usage: wgpu::BufferUsages::UNIFORM });
+                        let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }];
+                        for (k, t) in tables.iter().enumerate() { entries.push(wgpu::BindGroupEntry { binding: k as u32 + 1, resource: t.as_entire_binding() }); }
+                        let views: Vec<&wgpu::TextureView> = (0..SLOTS).map(|k| bound.get(k).and_then(|b| b.as_ref()).map(|b| &b.0).unwrap_or(&self.blank)).collect();
+                        for (k, v) in views.iter().enumerate() { entries.push(wgpu::BindGroupEntry { binding: 8 + k as u32, resource: wgpu::BindingResource::TextureView(v) }); }
+                        entries.push(wgpu::BindGroupEntry { binding: 16, resource: wgpu::BindingResource::Sampler(&self.sampler) });
+                        let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("ui"), layout: &self.layout, entries: &entries });
+                        steps.push(Step::Draw { pipeline: pipeline.clone(), group, vertices: 6, instances: count });
+                    }
                 }
-                for k in 0..SLOTS {
-                    let (index, size) = match (slots.get(k), bound.get(k)) { (Some(&i), Some(Some((_, s)))) => (i, *s), _ => (0, [1, 1]) };
-                    for w in [index, size[0] as i32, size[1] as i32, 0] { bytes.extend_from_slice(&w.to_le_bytes()); }
+                UiItem::Grab(handle) => {
+                    let Some(source) = texture else { continue };
+                    // the frame so far, and a mip chain below it, each level blurred from the one above
+                    let levels = 32 - width.max(height).max(1).leading_zeros();
+                    let grab = device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("ui grab"), size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 }, mip_level_count: levels, sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2, format: source.format(),
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+                    });
+                    let (_, down) = self.backdrop_pipelines(device, source.format());
+                    let level = |l: u32| grab.create_view(&wgpu::TextureViewDescriptor { base_mip_level: l, mip_level_count: Some(1), ..Default::default() });
+                    let chain = (1..levels).map(|l| {
+                        let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("ui grab mip"), layout: &down.get_bind_group_layout(0), entries: &[
+                            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&level(l - 1)) },
+                            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                        ] });
+                        (level(l), group)
+                    }).collect();
+                    let view = grab.create_view(&Default::default());
+                    grabs.insert(*handle, view.clone());
+                    last_grab = Some(view);
+                    steps.push(Step::Grab { texture: grab, levels: chain });
                 }
-                let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("ui params"), contents: &bytes, usage: wgpu::BufferUsages::UNIFORM });
-                let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }];
-                for (k, t) in tables.iter().enumerate() { entries.push(wgpu::BindGroupEntry { binding: k as u32 + 1, resource: t.as_entire_binding() }); }
-                let views: Vec<&wgpu::TextureView> = (0..SLOTS).map(|k| bound.get(k).and_then(|b| b.as_ref()).map(|b| &b.0).unwrap_or(&self.blank)).collect();
-                for (k, v) in views.iter().enumerate() { entries.push(wgpu::BindGroupEntry { binding: 8 + k as u32, resource: wgpu::BindingResource::TextureView(v) }); }
-                entries.push(wgpu::BindGroupEntry { binding: 16, resource: wgpu::BindingResource::Sampler(&self.sampler) });
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("ui"), layout: &self.layout, entries: &entries });
-                passes.push((pipeline.clone(), group, count));
+                UiItem::Backdrop(b) => {
+                    let Some(view) = grabs.get(&b.texture).or(last_grab.as_ref()) else { continue };
+                    if b.vertices.is_empty() { continue; }
+                    let (pipeline, _) = self.backdrop_pipelines(device, format);
+                    let mut u: Vec<f32> = vec![0.0, 0.0, width as f32, height as f32];
+                    u.extend_from_slice(&b.layer);
+                    u.extend_from_slice(&b.transform);
+                    u.extend_from_slice(&b.rect);
+                    u.extend_from_slice(&b.radii);
+                    u.extend_from_slice(&b.radii_v);
+                    u.extend_from_slice(&b.filter[..4]);
+                    let levels = (32 - width.max(height).max(1).leading_zeros()) as f32;
+                    u.extend_from_slice(&[b.filter[4], b.filter[5], b.filter[6], levels]);
+                    u.extend_from_slice(&[b.shape.0 as f32, b.shape.1 as f32, b.bloat, b.opacity]);
+                    u.extend_from_slice(&b.shape.2);
+                    u.extend_from_slice(&b.shape.3);
+                    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("ui backdrop"), contents: bytemuck::cast_slice(&u), usage: wgpu::BufferUsages::UNIFORM });
+                    let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("ui backdrop vertices"), contents: bytemuck::cast_slice(&b.vertices), usage: wgpu::BufferUsages::STORAGE });
+                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("ui backdrop"), layout: &self.backdrop_layout, entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: vertices.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(view) },
+                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    ] });
+                    steps.push(Step::Draw { pipeline, group, vertices: b.vertices.len() as u32, instances: 1 });
+                }
             }
         }
         let mut encoder = device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ui"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: target, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            for (pipeline, group, count) in &passes {
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, group, &[]);
-                pass.draw(0..6, 0..*count);
+        let mut i = 0;
+        while i < steps.len() {
+            // the draws up to the next grab, in one pass over the target
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("ui"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: target, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                while let Some(Step::Draw { pipeline, group, vertices, instances }) = steps.get(i) {
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, group, &[]);
+                    pass.draw(0..*vertices, 0..*instances);
+                    i += 1;
+                }
             }
+            // then the grab: what's been drawn copied, and its levels drawn down
+            if let (Some(Step::Grab { texture: grab, levels }), Some(source)) = (steps.get(i), texture) {
+                encoder.copy_texture_to_texture(source.as_image_copy(), grab.as_image_copy(), wgpu::Extent3d { width, height, depth_or_array_layers: 1 });
+                let (_, down) = self.backdrop_pipelines(device, source.format());
+                for (view, group) in levels {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("ui grab mip"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment { view, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(&down);
+                    pass.set_bind_group(0, group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+            }
+            i += 1;
         }
         r.queue.submit([encoder.finish()]);
     }
@@ -318,7 +471,7 @@ mod tests {
             label: None, size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[],
         });
-        r.ui.draw(r, &target.create_view(&Default::default()), wgpu::TextureFormat::Rgba8Unorm, w, h, &[draw]);
+        r.ui.draw(r, &target.create_view(&Default::default()), Some(&target), wgpu::TextureFormat::Rgba8Unorm, w, h, &[UiItem::Batch(draw)]);
         let row = (w * 4).div_ceil(256) * 256;
         let readback = r.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         let mut encoder = r.device.create_command_encoder(&Default::default());
@@ -332,6 +485,60 @@ mod tests {
         let _ = r.device.poll(wgpu::PollType::Wait);
         let data = readback.slice(..).get_mapped_range();
         (0..h as usize).flat_map(|y| data[y * row as usize..y * row as usize + w as usize * 4].to_vec()).collect()
+    }
+
+    #[test]
+    fn a_backdrop_blurs_and_filters_what_was_drawn_behind_it() {
+        let Ok(r) = crate::render::Renderer::new() else { eprintln!("no adapter: skipped"); return };
+        let (w, h) = (128u32, 64u32);
+        let target = r.device.create_texture(&wgpu::TextureDescriptor {
+            label: None, size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+        });
+        // what's behind: a checkerboard of 4-pixel black and white squares
+        let checker: Vec<u8> = (0..w * h).flat_map(|i| { let (x, y) = (i % w, i / w); let c = if (x / 4 + y / 4) % 2 == 0 { 255 } else { 0 }; [c, c, c, 255] }).collect();
+        r.queue.write_texture(target.as_image_copy(), &checker, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) }, wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 });
+        let identity = [1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+        // a quad over a box, grown a pixel, as DrawQuad strips it
+        let quad = |x: f32, y: f32, s: f32| -> Vec<[f32; 8]> {
+            let v = |px: f32, py: f32, u: f32, vv: f32| [px, py, u, vv, 1.0, 1.0, 1.0, 1.0];
+            let (a, b, c, d) = (v(x - 1.0, y - 1.0, 0.0, 0.0), v(x + s + 1.0, y - 1.0, 1.0, 0.0), v(x - 1.0, y + s + 1.0, 0.0, 1.0), v(x + s + 1.0, y + s + 1.0, 1.0, 1.0));
+            vec![a, b, c, b, c, d]
+        };
+        let backdrop = |x: f32, filter: [f32; 7]| Backdrop {
+            vertices: quad(x, 8.0, 48.0), transform: identity, layer: identity, rect: [x, 8.0, 48.0, 48.0], bloat: 1.0,
+            radii: [12.0; 4], radii_v: [12.0; 4], filter, shape: (0, 0, [0.0; 16], [0.0; 4]), texture: 1, opacity: 1.0,
+        };
+        let items = [
+            UiItem::Grab(1),
+            // blurred 10, at 8..56
+            UiItem::Backdrop(backdrop(8.0, [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 10.0])),
+            // inverted, not blurred, at 72..120
+            UiItem::Backdrop(backdrop(72.0, [1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0])),
+        ];
+        r.ui.draw(&r, &target.create_view(&Default::default()), Some(&target), wgpu::TextureFormat::Rgba8Unorm, w, h, &items);
+        let row = (w * 4).div_ceil(256) * 256;
+        let readback = r.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let mut encoder = r.device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(target.as_image_copy(), wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } }, wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 });
+        r.queue.submit([encoder.finish()]);
+        readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = r.device.poll(wgpu::PollType::Wait);
+        let data = readback.slice(..).get_mapped_range();
+        let px = |x: u32, y: u32| data[(y * row + x * 4) as usize];
+        // inside the blurred one the squares run together, near their mean
+        let inside: Vec<u8> = (20..44).flat_map(|y| (20..44).map(move |x| (x, y))).map(|(x, y)| px(x, y)).collect();
+        let (lo, hi) = (*inside.iter().min().unwrap(), *inside.iter().max().unwrap());
+        assert!(lo > 60 && hi < 195, "blurred: {lo}..{hi}");
+        // outside it, and in its rounded corner, the squares as they were
+        assert_eq!((px(2, 2), px(6, 2)), (255, 0), "left of it");
+        // (pixel centres 16 and 14 away from the corner's centre at 20,20: past its radius of 12 and the pixel of its edge)
+        assert_eq!((px(8, 8), px(8, 12)), (255, 0), "its corner, rounded away");
+        // the inverted one: black where white was, and the other way
+        for (x, y) in [(90, 30), (94, 30), (90, 34), (100, 41)] {
+            let was = checker[((y * w + x) * 4) as usize];
+            assert_eq!(px(x, y), 255 - was, "inverted at {x},{y}");
+        }
     }
 
     #[test]
@@ -415,7 +622,7 @@ mod tests {
             format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[],
         });
         let view = target.create_view(&Default::default());
-        r.ui.draw(&r, &view, wgpu::TextureFormat::Rgba8Unorm, W, 64, &[draw]);
+        r.ui.draw(&r, &view, Some(&target), wgpu::TextureFormat::Rgba8Unorm, W, 64, &[UiItem::Batch(draw)]);
         let row = (W * 4).div_ceil(256) * 256;
         let readback = r.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * 64) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         let mut encoder = r.device.create_command_encoder(&Default::default());
@@ -484,7 +691,7 @@ mod tests {
             label: None, size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[],
         });
-        r.ui.draw(&r, &target.create_view(&Default::default()), wgpu::TextureFormat::Rgba8Unorm, w, h, &[draw]);
+        r.ui.draw(&r, &target.create_view(&Default::default()), Some(&target), wgpu::TextureFormat::Rgba8Unorm, w, h, &[UiItem::Batch(draw)]);
         let row = (w * 4).div_ceil(256) * 256;
         let readback = r.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         let mut encoder = r.device.create_command_encoder(&Default::default());

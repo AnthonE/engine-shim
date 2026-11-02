@@ -74,6 +74,22 @@ pub struct Draw {
     /// the bytes of each buffer its attributes name, as they were when it was
     /// drawn (managed refills its tables between draws, as a GPU would see)
     pub buffers: HashMap<usize, std::sync::Arc<Vec<u8>>>,
+    /// the vertices it carried itself (RenderTools.Draw), if it did
+    pub inline: Option<Inline>,
+    /// not a draw: what's been drawn so far copied into this texture
+    /// (RenderTools.ResolveFrameBuffer: a grab for a backdrop to read)
+    pub grab: Option<usize>,
+}
+
+/// Vertices a draw carried (managed's Graphics.Draw, DrawQuad): in a vertex
+/// layout's fields, as managed wrote them, and the indices if any.
+#[derive(Clone, Debug)]
+pub struct Inline {
+    pub layout: usize,
+    pub stride: usize,
+    pub count: usize,
+    pub bytes: Vec<u8>,
+    pub indices: Vec<u16>,
 }
 
 #[derive(Default)]
@@ -500,8 +516,25 @@ pub fn record(ctx: usize, primitive: i64, first: i32, count: i32, instances: i32
     let (material, scissor) = (c.material, c.scissor);
     let buffers = attrs.values().filter_map(|v| match v { Val::Buffer(b) => d.buffers.get(b).map(|x| (*b, std::sync::Arc::new(x.data.clone()))), _ => None }).collect();
     if let Some(c) = d.contexts.get_mut(&ctx) {
-        c.draws.push(Draw { material, attrs, primitive, index_buffer, first, count, instances, base_vertex, scissor, buffers });
+        c.draws.push(Draw { material, attrs, primitive, index_buffer, first, count, instances, base_vertex, scissor, buffers, inline: None, grab: None });
     }
+}
+
+/// A draw with its own vertices (RenderTools.Draw): recorded as the others
+/// are, the vertices and indices kept with it.
+pub fn record_inline(ctx: usize, primitive: i64, inline: Inline) {
+    let count = inline.indices.len().max(inline.count) as i32;
+    record(ctx, primitive, 0, count, 1, 0, false);
+    with_context(ctx, |c| if let Some(d) = c.draws.last_mut() { d.inline = Some(inline) });
+}
+
+/// What's been drawn so far, to be copied into `texture` here in the order of
+/// things (RenderTools.ResolveFrameBuffer).
+pub fn record_grab(ctx: usize, texture: usize) {
+    with_context(ctx, |c| c.draws.push(Draw {
+        material: 0, attrs: HashMap::new(), primitive: 0, index_buffer: None, first: 0, count: 0, instances: 0, base_vertex: 0,
+        scissor: None, buffers: HashMap::new(), inline: None, grab: Some(texture),
+    }));
 }
 
 #[cfg(test)]

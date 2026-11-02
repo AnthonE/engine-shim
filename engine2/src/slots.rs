@@ -3757,8 +3757,8 @@ unsafe extern "C" fn s2374(_a0: i64) -> i32 { hit(2374); unsafe { core::mem::zer
 unsafe extern "C" fn s2375() -> i64 { hit(2375); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2376() -> i64 { hit(2376); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2377(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize) -> i32 { hit(2377); unsafe { crate::impls::RenderTools_SetRenderState(_a0, _a1, _a2, _a3, _a4) } }
-unsafe extern "C" fn s2378(_a0: usize, _a1: i64, _a2: usize, _a3: usize, _a4: i32, _a5: usize, _a6: i32, _a7: usize) { hit(2378);  }
-unsafe extern "C" fn s2379(_a0: usize, _a1: usize, _a2: usize) { hit(2379);  }
+unsafe extern "C" fn s2378(_a0: usize, _a1: i64, _a2: usize, _a3: usize, _a4: i32, _a5: usize, _a6: i32, _a7: usize) { hit(2378); unsafe { crate::impls::RenderTools_Draw(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7) } }
+unsafe extern "C" fn s2379(_a0: usize, _a1: usize, _a2: usize) { hit(2379); unsafe { crate::impls::RenderTools_ResolveFrameBuffer(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2380(_a0: usize, _a1: usize, _a2: usize) { hit(2380);  }
 unsafe extern "C" fn s2381(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: usize, _a5: usize, _a6: usize) { hit(2381);  }
 unsafe extern "C" fn s2382(_a0: usize, _a1: usize, _a2: S_Sandbox_StringToken, _a3: usize, _a4: usize, _a5: i32, _a6: usize) { hit(2382);  }

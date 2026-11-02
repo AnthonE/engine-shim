@@ -460,7 +460,8 @@ fn surface_for(w: &Win, s: &mut WinState, r: &crate::render::Renderer, width: u3
             return None;
         }
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // copied from too where it can be: a UI backdrop grabs what's been drawn
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT | (caps.usages & wgpu::TextureUsages::COPY_SRC),
             format,
             width,
             height,
@@ -563,15 +564,20 @@ pub fn draw_camera(camera: usize, sc: usize) {
     let ui = if graphics() { ui_draws(camera, width, height) } else { Vec::new() };
     if !ui.is_empty() {
         let t1 = std::time::Instant::now();
-        let batched = to_draw(&ui);
+        let items = to_draw(&ui);
         let t2 = std::time::Instant::now();
         let linear = frame.texture.create_view(&wgpu::TextureViewDescriptor { format: Some(format.remove_srgb_suffix()), ..Default::default() });
-        r.ui.draw(r, &linear, format.remove_srgb_suffix(), width as u32, height as u32, &batched);
+        // grabs copy from the frame, where its surface lets them
+        let copyable = frame.texture.usage().contains(wgpu::TextureUsages::COPY_SRC).then_some(&frame.texture);
+        r.ui.draw(r, &linear, copyable, format.remove_srgb_suffix(), width as u32, height as u32, &items);
+        let batched: Vec<&crate::render::ui::UiDraw> = items.iter().filter_map(|i| match i { crate::render::ui::UiItem::Batch(d) => Some(d), _ => None }).collect();
+        let (grabs, backdrops) = items.iter().fold((0, 0), |(g, b), i| match i { crate::render::ui::UiItem::Grab(_) => (g + 1, b), crate::render::ui::UiItem::Backdrop(_) => (g, b + 1), _ => (g, b) });
         let t3 = std::time::Instant::now();
         // what the HUD is made of, and what it cost, now and then
         static CENSUS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if CENSUS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 10 == 0 {
-            let said: Vec<String> = batched.iter().map(crate::render::ui::census).collect();
+            let mut said: Vec<String> = batched.iter().map(|d| crate::render::ui::census(d)).collect();
+            if backdrops > 0 { said.push(format!("{backdrops} backdrops over {grabs} grabs")); }
             // with ENGINE2_UI_DEBUG, the GPU's part too (waiting for it: a frame's pipelining lost)
             let gpu = std::env::var_os("ENGINE2_UI_DEBUG").map(|_| { let _ = r.device.poll(wgpu::PollType::Wait); t3.elapsed().as_secs_f64() * 1000.0 });
             let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1000.0;
@@ -598,7 +604,75 @@ pub fn draw_camera(camera: usize, sc: usize) {
 
 /// The batched UI box's draws, their tables found by their attributes'
 /// names (the shader's): what render/ui.rs draws.
-fn to_draw(draws: &[crate::gpu::Draw]) -> Vec<crate::render::ui::UiDraw> {
+fn to_draw(draws: &[crate::gpu::Draw]) -> Vec<crate::render::ui::UiItem> {
+    use crate::render::ui::UiItem;
+    draws.iter().filter_map(|d| {
+        if let Some(t) = d.grab { return Some(UiItem::Grab(t)); }
+        let shader = crate::camera::material_shader(d.material)?;
+        if shader.contains("ui_cssbox_batched") { return batch(d).map(UiItem::Batch); }
+        if shader.contains("ui_backdropfilter") { return backdrop(d).map(UiItem::Backdrop); }
+        None
+    }).collect()
+}
+
+/// A backdrop-filter's quad: its vertices (position, texture coordinate and
+/// colour, found in its layout by semantic), as triangles, and the attributes
+/// ui_backdropfilter.shader reads.
+fn backdrop(d: &crate::gpu::Draw) -> Option<crate::render::ui::Backdrop> {
+    use crate::gpu::Val;
+    let inline = d.inline.as_ref()?;
+    let layout = crate::rendermesh::layout_of(inline.layout)?;
+    let field = |name: &str| layout.fields.iter().find(|f| f.name.to_ascii_lowercase().contains(name) && f.index == 0).map(|f| (f.offset, f.format));
+    let (position, uv, color) = (field("position")?, field("texcoord"), field("color"));
+    let float = |b: &[u8], at: usize| b.get(at..at + 4).map(|x| f32::from_le_bytes(x.try_into().unwrap())).unwrap_or(0.0);
+    let vertex = |i: usize| -> [f32; 8] {
+        let b = &inline.bytes[(i * inline.stride).min(inline.bytes.len())..];
+        let (u, v) = uv.map(|(at, _)| (float(b, at), float(b, at + 4))).unwrap_or((0.0, 0.0));
+        // a colour as DXGI's R8G8B8A8 (28) or four floats (2)
+        let c = match color {
+            Some((at, 28)) => b.get(at..at + 4).map(|x| [x[0] as f32 / 255.0, x[1] as f32 / 255.0, x[2] as f32 / 255.0, x[3] as f32 / 255.0]).unwrap_or([1.0; 4]),
+            Some((at, 2)) => [float(b, at), float(b, at + 4), float(b, at + 8), float(b, at + 12)],
+            _ => [1.0; 4],
+        };
+        [float(b, position.0), float(b, position.0 + 4), u, v, c[0], c[1], c[2], c[3]]
+    };
+    // as triangles: given, or a strip's (RENDER_PRIM_TRIANGLES 5, TRIANGLE_STRIP 7)
+    let order: Vec<usize> = if !inline.indices.is_empty() { inline.indices.iter().map(|&i| i as usize).collect() } else { (0..inline.count).collect() };
+    let triangles: Vec<usize> = match d.primitive {
+        7 => (2..order.len()).flat_map(|k| [order[k - 2], order[k - 1], order[k]]).collect(),
+        _ => order[..order.len() / 3 * 3].to_vec(),
+    };
+    let get = |n: &str| d.attrs.get(&crate::string_token(n));
+    let f = |n: &str, dflt: f32| match get(n) { Some(Val::Float(x)) => *x, Some(Val::Int(x)) => *x as f32, _ => dflt };
+    let v4 = |n: &str| match get(n) { Some(Val::Vec4(x)) => *x, _ => [0.0; 4] };
+    let v2 = |n: &str| match get(n) { Some(Val::Vec2(x)) => *x, Some(Val::Vec4(x)) => [x[0], x[1]], _ => [0.0; 2] };
+    let m = |n: &str| match get(n) { Some(Val::Matrix(x)) => *x, _ => [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0] };
+    let i = |n: &str| match get(n) { Some(Val::Int(x)) => *x, Some(Val::Combo(x)) => *x as i32, _ => 0 };
+    let (pos, size) = (v2("BoxPosition"), v2("BoxSize"));
+    let mut points = [0.0f32; 16];
+    for (k, n) in ["BackdropShape01", "BackdropShape23", "BackdropShape45", "BackdropShape67"].iter().enumerate() { points[k * 4..k * 4 + 4].copy_from_slice(&v4(n)); }
+    let texture = match get("FrameBufferCopyTexture") { Some(Val::Texture(t)) => *t, _ => 0 };
+    Some(crate::render::ui::Backdrop {
+        vertices: triangles.into_iter().map(vertex).collect(),
+        transform: m("TransformMat"),
+        layer: m("LayerMat"),
+        rect: [pos[0], pos[1], size[0], size[1]],
+        bloat: f("BoxBloat", 0.0),
+        radii: v4("BorderRadius"),
+        radii_v: v4("BorderRadiusV"),
+        filter: [f("Brightness", 1.0), f("Contrast", 1.0), f("Saturate", 1.0), f("Sepia", 0.0), f("Invert", 0.0), f("HueRotate", 0.0), f("BlurScale", 10.0)],
+        shape: (i("BackdropShapeKind"), i("BackdropShapeCount"), points, v4("BackdropShapeCircle")),
+        texture,
+        opacity: if i("D_PANEL_OPACITY") != 0 { f("UIPanelOpacity", 1.0) } else { 1.0 },
+    })
+}
+
+/// A batched UI box draw, its tables found by their attributes' names (the shader's).
+fn batch(d: &crate::gpu::Draw) -> Option<crate::render::ui::UiDraw> {
+    to_batches(std::slice::from_ref(d)).pop()
+}
+
+fn to_batches(draws: &[crate::gpu::Draw]) -> Vec<crate::render::ui::UiDraw> {
     use crate::gpu::Val;
     // each table as it was when the draw was made
     let bytes = |d: &crate::gpu::Draw, name: &str| match d.attrs.get(&crate::string_token(name)) {

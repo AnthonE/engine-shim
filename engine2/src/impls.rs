@@ -469,6 +469,16 @@ pub unsafe fn IRenderContext_SetScissorRect(ctx: usize, rect: usize) {
     gpu::with_context(ctx, |c| c.scissor = r)
 }
 pub unsafe fn IRenderContext_Draw(ctx: usize, prim: i64, first: i32, count: i32) { gpu::record(ctx, prim, first, count, 1, 0, false) }
+/// A draw with its vertices given (Graphics.Draw, DrawQuad), in a vertex layout managed made.
+pub unsafe fn RenderTools_Draw(ctx: usize, prim: i64, layout: usize, vertices: usize, count: i32, indices: usize, index_count: i32, _stats: usize) {
+    let Some(l) = crate::rendermesh::layout_of(layout) else { return };
+    if vertices == 0 || count <= 0 || l.size == 0 { return; }
+    let bytes = unsafe { core::slice::from_raw_parts(vertices as *const u8, count as usize * l.size) }.to_vec();
+    let indices = if indices != 0 && index_count > 0 { unsafe { core::slice::from_raw_parts(indices as *const u16, index_count as usize) }.to_vec() } else { Vec::new() };
+    gpu::record_inline(ctx, prim, gpu::Inline { layout, stride: l.size, count: count as usize, bytes, indices })
+}
+/// What's been drawn so far copied into a texture (Graphics.GrabFrameTexture: a backdrop's).
+pub unsafe fn RenderTools_ResolveFrameBuffer(ctx: usize, texture: usize, _viewport: usize) { gpu::record_grab(ctx, texture) }
 pub unsafe fn IRenderContext_DrawInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32) { gpu::record(ctx, prim, first, count, instances, 0, false) }
 pub unsafe fn IRenderContext_DrawIndexed(ctx: usize, prim: i64, first: i32, count: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, 1, base, true) }
 pub unsafe fn IRenderContext_DrawIndexedInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, instances, base, true) }
