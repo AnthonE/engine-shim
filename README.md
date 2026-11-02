@@ -893,7 +893,15 @@ images), every one under the root's clip: its tabs, the spawnlists down
 the left, the grid of tiles cut off at the bottom of its scroll panel, the
 tool list with its blue section headers, the Elastic tool's sliders and
 its checkbox. Tab shows the scoreboard: the server's name, its blue
-header, the player's row with kills, deaths and ping.
+header, the player's row with kills, deaths and ping. Clicking the
+Weapons tab (the mouse reaches the menu too) shows its categories with
+their icons, a tile a weapon and the community items below: 58 images
+managed made reach the GPU (51 of them 256 square, 4 of 512), 29 in a
+frame. The weapons' thumbnails are rendered by this library's own camera
+(`RenderToBitmap`, a scene of one object, 512 square, 26 of them), read
+back into managed's bitmaps, resized, made textures and drawn by the UI:
+the whole round trip works, though each comes back the empty scene's grey
+for now, the weapon not in it.
 
 Not yet: `border-shape`'s shapes and paths (ShapeIndex; drawn as the
 rounded rect), world panels (a nameplate in the world), backdrop filters
