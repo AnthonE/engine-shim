@@ -1463,7 +1463,7 @@ unsafe extern "C" fn s80(_a0: usize, _a1: i32) -> usize { hit(80); crate::trace:
 unsafe extern "C" fn s81(_a0: usize) { hit(81); unsafe { crate::impls::CCameraRenderer_ClearSceneWorlds(_a0) } }
 unsafe extern "C" fn s82(_a0: usize, _a1: usize) { hit(82); unsafe { crate::impls::CCameraRenderer_AddSceneWorld(_a0, _a1) } }
 unsafe extern "C" fn s83(_a0: usize, _a1: usize) { hit(83);  }
-unsafe extern "C" fn s84(_a0: usize, _a1: usize) { hit(84);  }
+unsafe extern "C" fn s84(_a0: usize, _a1: usize) { hit(84); unsafe { crate::impls::CCameraRenderer_Render(_a0, _a1) } }
 unsafe extern "C" fn s85(_a0: usize, _a1: usize, _a2: usize, _a3: usize) -> i32 { hit(85); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s86(_a0: usize, _a1: usize, _a2: i32) { hit(86);  }
 unsafe extern "C" fn s87(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: i32) { hit(87); unsafe { crate::impls::CCameraRenderer_RenderToBitmap(_a0, _a1, _a2, _a3, _a4) } }
@@ -4285,7 +4285,7 @@ unsafe extern "C" fn s2902(_a0: usize) -> usize { hit(2902); crate::trace::objec
 unsafe extern "C" fn s2903(_a0: usize) { hit(2903); unsafe { crate::impls::g_pPhysicsSystem_UpdateSurfaceProperties(_a0) } }
 unsafe extern "C" fn s2904(_a0: usize) -> usize { hit(2904); crate::trace::object(2904) }
 unsafe extern "C" fn s2905(_a0: usize) -> i32 { hit(2905); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2906(_a0: usize) -> S_RenderDeviceInfo_t { hit(2906); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2906(_a0: usize) -> S_RenderDeviceInfo_t { hit(2906); unsafe { crate::impls::g_pRenderDevice_GetSwapChainInfo(_a0) } }
 unsafe extern "C" fn s2907(_a0: usize, _a1: i64) -> usize { hit(2907); crate::trace::object(2907) }
 unsafe extern "C" fn s2908(_a0: usize, _a1: i32, _a2: usize, _a3: usize, _a4: i32) -> usize { hit(2908); crate::trace::object(2908) }
 unsafe extern "C" fn s2909(_a0: usize, _a1: S_Color32) { hit(2909);  }
@@ -4302,16 +4302,16 @@ unsafe extern "C" fn s2919(_a0: usize) { hit(2919);  }
 unsafe extern "C" fn s2920() { hit(2920);  }
 unsafe extern "C" fn s2921(_a0: usize) { hit(2921);  }
 unsafe extern "C" fn s2922(_a0: usize, _a1: usize, _a2: i32, _a3: i32, _a4: usize, _a5: usize, _a6: i64, _a7: i32) -> i32 { hit(2922); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2923(_a0: usize, _a1: usize, _a2: usize) -> usize { hit(2923); crate::trace::object(2923) }
-unsafe extern "C" fn s2924(_a0: usize, _a1: usize) -> i32 { hit(2924); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2925(_a0: usize) { hit(2925);  }
+unsafe extern "C" fn s2923(_a0: usize, _a1: usize, _a2: usize) -> usize { hit(2923); unsafe { crate::impls::g_pRenderDevice_CreateSwapChain(_a0, _a1, _a2) } }
+unsafe extern "C" fn s2924(_a0: usize, _a1: usize) -> i32 { hit(2924); unsafe { crate::impls::g_pRenderDevice_UpdateSwapChain(_a0, _a1) } }
+unsafe extern "C" fn s2925(_a0: usize) { hit(2925); unsafe { crate::impls::g_pRenderDevice_DestroySwapChain(_a0) } }
 unsafe extern "C" fn s2926() -> usize { hit(2926); crate::trace::object(2926) }
 unsafe extern "C" fn s2927(_a0: usize, _a1: usize, _a2: usize) { hit(2927);  }
-unsafe extern "C" fn s2928(_a0: usize) -> i32 { hit(2928); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2928(_a0: usize) -> i32 { hit(2928); unsafe { crate::impls::g_pRenderDevice_Present(_a0) } }
 unsafe extern "C" fn s2929() { hit(2929);  }
 unsafe extern "C" fn s2930() { hit(2930);  }
 unsafe extern "C" fn s2931(_a0: usize) { hit(2931);  }
-unsafe extern "C" fn s2932(_a0: usize) -> i32 { hit(2932); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2932(_a0: usize) -> i32 { hit(2932); unsafe { crate::impls::g_pRenderDevice_CanRenderToSwapChain(_a0) } }
 unsafe extern "C" fn s2933(_a0: usize, _a1: i32) { hit(2933);  }
 unsafe extern "C" fn s2934() -> i32 { hit(2934); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2935(_a0: usize) -> S_Vector2 { hit(2935); unsafe { core::mem::zeroed() } }
@@ -4356,7 +4356,7 @@ unsafe extern "C" fn s2973(_a0: usize) { hit(2973);  }
 unsafe extern "C" fn s2974(_a0: usize, _a1: usize) -> i32 { hit(2974); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2975(_a0: usize) -> i32 { hit(2975); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2976() { hit(2976);  }
-unsafe extern "C" fn s2977(_a0: usize) { hit(2977);  }
+unsafe extern "C" fn s2977(_a0: usize) { hit(2977); unsafe { crate::impls::g_pSceneSystem_SetMainSwapChain(_a0) } }
 unsafe extern "C" fn s2978() -> i64 { hit(2978); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2979(_a0: usize) { hit(2979); unsafe { crate::impls::g_pSceneSystem_DeleteSceneObject(_a0) } }
 unsafe extern "C" fn s2980(_a0: usize) { hit(2980); unsafe { crate::impls::g_pSceneSystem_DeleteSceneObjectAtFrameEnd(_a0) } }
@@ -4450,7 +4450,7 @@ unsafe extern "C" fn s3067(_a0: i32) { hit(3067); unsafe { crate::impls::global_
 unsafe extern "C" fn s3068() -> usize { hit(3068); unsafe { crate::impls::global_GetGameRootFolder() } }
 unsafe extern "C" fn s3069() -> usize { hit(3069); crate::trace::object(3069) }
 unsafe extern "C" fn s3070() -> i32 { hit(3070); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3071(_a0: usize) -> i32 { hit(3071); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3071(_a0: usize) -> i32 { hit(3071); unsafe { crate::impls::global_SourceEngineInitStartupWindow(_a0) } }
 unsafe extern "C" fn s3072(_a0: usize, _a1: usize) -> i32 { hit(3072); unsafe { crate::impls::global_SourceEnginePreInit(_a0, _a1) } }
 unsafe extern "C" fn s3073(_a0: usize) -> i32 { hit(3073); unsafe { crate::impls::global_SourceEngineInit(_a0) } }
 unsafe extern "C" fn s3074(_a0: usize, _a1: i32) -> i32 { hit(3074); unsafe { core::mem::zeroed() } }
@@ -4813,23 +4813,23 @@ unsafe extern "C" fn s3430(_a0: usize, _a1: i64) -> i64 { hit(3430); unsafe { co
 unsafe extern "C" fn s3431(_a0: usize, _a1: i64, _a2: i32, _a3: i32) -> i64 { hit(3431); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3432(_a0: u32, _a1: i64, _a2: i32, _a3: i32) -> i64 { hit(3432); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3433(_a0: u32, _a1: usize, _a2: i32, _a3: i64, _a4: usize) -> i64 { hit(3433); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3434(_a0: u64) { hit(3434);  }
+unsafe extern "C" fn s3434(_a0: u64) { hit(3434); unsafe { crate::impls::globalSdl_DelayPrecise(_a0) } }
 unsafe extern "C" fn s3435() -> i32 { hit(3435); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3436(_a0: usize) -> i32 { hit(3436); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3437() -> usize { hit(3437); crate::trace::object(3437) }
-unsafe extern "C" fn s3438(_a0: usize) { hit(3438);  }
-unsafe extern "C" fn s3439() -> usize { hit(3439); crate::trace::object(3439) }
-unsafe extern "C" fn s3440(_a0: usize) -> usize { hit(3440); crate::trace::object(3440) }
-unsafe extern "C" fn s3441() -> u32 { hit(3441); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3442(_a0: usize) -> u32 { hit(3442); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3443(_a0: u32) -> f32 { hit(3443); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3444(_a0: u32, _a1: usize) -> i32 { hit(3444); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3445(_a0: u32, _a1: usize) -> i32 { hit(3445); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3446(_a0: u32) -> usize { hit(3446); crate::trace::object(3446) }
-unsafe extern "C" fn s3447(_a0: u32) -> usize { hit(3447); crate::trace::object(3447) }
+unsafe extern "C" fn s3438(_a0: usize) { hit(3438); unsafe { crate::impls::globalSdl_Free(_a0) } }
+unsafe extern "C" fn s3439() -> usize { hit(3439); unsafe { crate::impls::globalSdl_GetError() } }
+unsafe extern "C" fn s3440(_a0: usize) -> usize { hit(3440); unsafe { crate::impls::globalSdl_GetDisplays(_a0) } }
+unsafe extern "C" fn s3441() -> u32 { hit(3441); unsafe { crate::impls::globalSdl_GetPrimaryDisplay() } }
+unsafe extern "C" fn s3442(_a0: usize) -> u32 { hit(3442); unsafe { crate::impls::globalSdl_GetDisplayForPoint(_a0) } }
+unsafe extern "C" fn s3443(_a0: u32) -> f32 { hit(3443); unsafe { crate::impls::globalSdl_GetDisplayContentScale(_a0) } }
+unsafe extern "C" fn s3444(_a0: u32, _a1: usize) -> i32 { hit(3444); unsafe { crate::impls::globalSdl_GetDisplayBounds(_a0, _a1) } }
+unsafe extern "C" fn s3445(_a0: u32, _a1: usize) -> i32 { hit(3445); unsafe { crate::impls::globalSdl_GetDisplayUsableBounds(_a0, _a1) } }
+unsafe extern "C" fn s3446(_a0: u32) -> usize { hit(3446); unsafe { crate::impls::globalSdl_GetDesktopDisplayMode(_a0) } }
+unsafe extern "C" fn s3447(_a0: u32) -> usize { hit(3447); unsafe { crate::impls::globalSdl_GetCurrentDisplayMode(_a0) } }
 unsafe extern "C" fn s3448(_a0: u32, _a1: usize) -> usize { hit(3448); crate::trace::object(3448) }
 unsafe extern "C" fn s3449(_a0: u32, _a1: i32, _a2: i32, _a3: f32, _a4: i32, _a5: usize) -> i32 { hit(3449); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3450() -> usize { hit(3450); crate::trace::object(3450) }
+unsafe extern "C" fn s3450() -> usize { hit(3450); unsafe { crate::impls::globalSdl_GetCurrentVideoDriver() } }
 unsafe extern "C" fn s3451() -> u32 { hit(3451); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3452(_a0: u32) { hit(3452);  }
 unsafe extern "C" fn s3453(_a0: usize) -> u32 { hit(3453); unsafe { core::mem::zeroed() } }
@@ -4839,23 +4839,23 @@ unsafe extern "C" fn s3456(_a0: u32, _a1: usize, _a2: i64) -> i32 { hit(3456); u
 unsafe extern "C" fn s3457(_a0: u32, _a1: usize, _a2: i32) -> i32 { hit(3457); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3458(_a0: u32, _a1: usize, _a2: i32) -> i32 { hit(3458); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3459(_a0: u32) -> usize { hit(3459); crate::trace::object(3459) }
-unsafe extern "C" fn s3460(_a0: usize) -> u32 { hit(3460); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3461(_a0: usize, _a1: usize) -> i32 { hit(3461); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3462(_a0: usize, _a1: i32, _a2: i32, _a3: i64) -> usize { hit(3462); crate::trace::object(3462) }
-unsafe extern "C" fn s3463(_a0: usize, _a1: i32, _a2: i32, _a3: i64) -> usize { hit(3463); crate::trace::object(3463) }
-unsafe extern "C" fn s3464(_a0: usize) { hit(3464);  }
-unsafe extern "C" fn s3465(_a0: usize, _a1: usize) -> i32 { hit(3465); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3466(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(3466); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3467(_a0: usize, _a1: usize) -> i32 { hit(3467); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3468(_a0: usize) -> i32 { hit(3468); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3469(_a0: usize) -> i32 { hit(3469); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3460(_a0: usize) -> u32 { hit(3460); unsafe { crate::impls::globalSdl_GetDisplayForWindow(_a0) } }
+unsafe extern "C" fn s3461(_a0: usize, _a1: usize) -> i32 { hit(3461); unsafe { crate::impls::globalSdl_SetWindowFullscreenMode(_a0, _a1) } }
+unsafe extern "C" fn s3462(_a0: usize, _a1: i32, _a2: i32, _a3: i64) -> usize { hit(3462); unsafe { crate::impls::globalSdl_CreateWindow(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s3463(_a0: usize, _a1: i32, _a2: i32, _a3: i64) -> usize { hit(3463); unsafe { crate::impls::globalSdl_CreateStartupWindow(_a0, _a1, _a2, _a3) } }
+unsafe extern "C" fn s3464(_a0: usize) { hit(3464); unsafe { crate::impls::globalSdl_DestroyWindow(_a0) } }
+unsafe extern "C" fn s3465(_a0: usize, _a1: usize) -> i32 { hit(3465); unsafe { crate::impls::globalSdl_SetHint(_a0, _a1) } }
+unsafe extern "C" fn s3466(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(3466); unsafe { crate::impls::globalSdl_GetWindowPosition(_a0, _a1, _a2) } }
+unsafe extern "C" fn s3467(_a0: usize, _a1: usize) -> i32 { hit(3467); unsafe { crate::impls::globalSdl_SetWindowTitle(_a0, _a1) } }
+unsafe extern "C" fn s3468(_a0: usize) -> i32 { hit(3468); unsafe { crate::impls::globalSdl_ShowWindow(_a0) } }
+unsafe extern "C" fn s3469(_a0: usize) -> i32 { hit(3469); unsafe { crate::impls::globalSdl_HideWindow(_a0) } }
 unsafe extern "C" fn s3470(_a0: usize) -> i32 { hit(3470); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3471(_a0: usize) -> i32 { hit(3471); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3472(_a0: usize) -> i32 { hit(3472); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3473(_a0: usize) -> i32 { hit(3473); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3474(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(3474); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3475(_a0: usize) -> f32 { hit(3475); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3476(_a0: usize, _a1: i32, _a2: i32) -> i32 { hit(3476); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3472(_a0: usize) -> i32 { hit(3472); unsafe { crate::impls::globalSdl_RestoreWindow(_a0) } }
+unsafe extern "C" fn s3473(_a0: usize) -> i32 { hit(3473); unsafe { crate::impls::globalSdl_RaiseWindow(_a0) } }
+unsafe extern "C" fn s3474(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(3474); unsafe { crate::impls::globalSdl_GetWindowSize(_a0, _a1, _a2) } }
+unsafe extern "C" fn s3475(_a0: usize) -> f32 { hit(3475); unsafe { crate::impls::globalSdl_GetWindowPixelDensity(_a0) } }
+unsafe extern "C" fn s3476(_a0: usize, _a1: i32, _a2: i32) -> i32 { hit(3476); unsafe { crate::impls::globalSdl_SetWindowMinimumSize(_a0, _a1, _a2) } }
 unsafe extern "C" fn s3477(_a0: usize, _a1: i32, _a2: i32) -> i32 { hit(3477); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3478(_a0: usize, _a1: i32) -> i32 { hit(3478); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3479(_a0: usize, _a1: f32) -> i32 { hit(3479); unsafe { core::mem::zeroed() } }
@@ -4863,29 +4863,29 @@ unsafe extern "C" fn s3480(_a0: usize, _a1: f32, _a2: f32) -> i32 { hit(3480); u
 unsafe extern "C" fn s3481(_a0: usize, _a1: usize) -> i32 { hit(3481); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3482(_a0: usize, _a1: i32) -> i32 { hit(3482); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3483(_a0: usize, _a1: i64) -> i32 { hit(3483); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3484(_a0: usize, _a1: i32, _a2: i32) -> i32 { hit(3484); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3485(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(3485); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3486(_a0: usize) -> i64 { hit(3486); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3487(_a0: usize) -> f32 { hit(3487); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3488(_a0: usize, _a1: i32, _a2: i32) -> i32 { hit(3488); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3489(_a0: usize, _a1: i32) -> i32 { hit(3489); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3490(_a0: usize, _a1: i32) -> i32 { hit(3490); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3491(_a0: usize, _a1: i32) -> i32 { hit(3491); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3492(_a0: usize) -> i32 { hit(3492); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3484(_a0: usize, _a1: i32, _a2: i32) -> i32 { hit(3484); unsafe { crate::impls::globalSdl_SetWindowSize(_a0, _a1, _a2) } }
+unsafe extern "C" fn s3485(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(3485); unsafe { crate::impls::globalSdl_GetWindowSizeInPixels(_a0, _a1, _a2) } }
+unsafe extern "C" fn s3486(_a0: usize) -> i64 { hit(3486); unsafe { crate::impls::globalSdl_GetWindowFlags(_a0) } }
+unsafe extern "C" fn s3487(_a0: usize) -> f32 { hit(3487); unsafe { crate::impls::globalSdl_GetWindowDisplayScale(_a0) } }
+unsafe extern "C" fn s3488(_a0: usize, _a1: i32, _a2: i32) -> i32 { hit(3488); unsafe { crate::impls::globalSdl_SetWindowPosition(_a0, _a1, _a2) } }
+unsafe extern "C" fn s3489(_a0: usize, _a1: i32) -> i32 { hit(3489); unsafe { crate::impls::globalSdl_SetWindowBordered(_a0, _a1) } }
+unsafe extern "C" fn s3490(_a0: usize, _a1: i32) -> i32 { hit(3490); unsafe { crate::impls::globalSdl_SetWindowResizable(_a0, _a1) } }
+unsafe extern "C" fn s3491(_a0: usize, _a1: i32) -> i32 { hit(3491); unsafe { crate::impls::globalSdl_SetWindowFullscreen(_a0, _a1) } }
+unsafe extern "C" fn s3492(_a0: usize) -> i32 { hit(3492); unsafe { crate::impls::globalSdl_SyncWindow(_a0) } }
 unsafe extern "C" fn s3493(_a0: usize, _a1: i32, _a2: i32, _a3: i32, _a4: i32, _a5: i64) -> usize { hit(3493); crate::trace::object(3493) }
-unsafe extern "C" fn s3494(_a0: i64) -> i32 { hit(3494); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3494(_a0: i64) -> i32 { hit(3494); unsafe { crate::impls::globalSdl_InitSubSystem(_a0) } }
 unsafe extern "C" fn s3495(_a0: i64) { hit(3495);  }
 unsafe extern "C" fn s3496(_a0: usize) -> i32 { hit(3496); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3497(_a0: i32) { hit(3497);  }
 unsafe extern "C" fn s3498(_a0: i32) { hit(3498);  }
-unsafe extern "C" fn s3499() -> i32 { hit(3499); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3499() -> i32 { hit(3499); unsafe { crate::impls::globalSdl_DisableScreenSaver() } }
 unsafe extern "C" fn s3500() -> i32 { hit(3500); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3501(_a0: i64) -> usize { hit(3501); crate::trace::object(3501) }
+unsafe extern "C" fn s3501(_a0: i64) -> usize { hit(3501); unsafe { crate::impls::globalSdl_CreateSystemCursor(_a0) } }
 unsafe extern "C" fn s3502(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(3502); crate::trace::object(3502) }
 unsafe extern "C" fn s3503(_a0: usize) { hit(3503);  }
-unsafe extern "C" fn s3504(_a0: usize) -> i32 { hit(3504); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3505() -> i32 { hit(3505); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3506() -> i32 { hit(3506); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3504(_a0: usize) -> i32 { hit(3504); unsafe { crate::impls::globalSdl_SetCursor(_a0) } }
+unsafe extern "C" fn s3505() -> i32 { hit(3505); unsafe { crate::impls::globalSdl_ShowCursor() } }
+unsafe extern "C" fn s3506() -> i32 { hit(3506); unsafe { crate::impls::globalSdl_HideCursor() } }
 unsafe extern "C" fn s3507(_a0: u32) -> usize { hit(3507); crate::trace::object(3507) }
 unsafe extern "C" fn s3508(_a0: u32) -> usize { hit(3508); crate::trace::object(3508) }
 unsafe extern "C" fn s3509(_a0: usize) { hit(3509);  }
@@ -4897,34 +4897,34 @@ unsafe extern "C" fn s3514(_a0: usize, _a1: u16, _a2: u16, _a3: u32) -> i32 { hi
 unsafe extern "C" fn s3515(_a0: usize, _a1: u16, _a2: u16, _a3: u32) -> i32 { hit(3515); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3516(_a0: usize, _a1: i64) -> i32 { hit(3516); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3517(_a0: usize, _a1: i64, _a2: usize, _a3: i32) -> i32 { hit(3517); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3518(_a0: usize) -> i32 { hit(3518); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3518(_a0: usize) -> i32 { hit(3518); unsafe { crate::impls::globalSdl_PollEvent(_a0) } }
 unsafe extern "C" fn s3519(_a0: usize, _a1: usize) -> i32 { hit(3519); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3520(_a0: usize, _a1: usize) { hit(3520);  }
-unsafe extern "C" fn s3521(_a0: usize) -> usize { hit(3521); crate::trace::object(3521) }
+unsafe extern "C" fn s3521(_a0: usize) -> usize { hit(3521); unsafe { crate::impls::globalSdl_GetWindowFromEvent(_a0) } }
 unsafe extern "C" fn s3522(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(3522); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3523(_a0: usize, _a1: usize) -> u32 { hit(3523); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3524(_a0: usize, _a1: usize) -> u32 { hit(3524); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3525(_a0: i32) -> i32 { hit(3525); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3526() -> usize { hit(3526); crate::trace::object(3526) }
-unsafe extern "C" fn s3527() -> usize { hit(3527); crate::trace::object(3527) }
-unsafe extern "C" fn s3528(_a0: usize, _a1: i32) -> i32 { hit(3528); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3529(_a0: usize, _a1: f32, _a2: f32) { hit(3529);  }
-unsafe extern "C" fn s3530() -> u32 { hit(3530); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3531(_a0: i32, _a1: u32, _a2: i32) -> u32 { hit(3531); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3532(_a0: u32) -> usize { hit(3532); crate::trace::object(3532) }
+unsafe extern "C" fn s3523(_a0: usize, _a1: usize) -> u32 { hit(3523); unsafe { crate::impls::globalSdl_GetMouseState(_a0, _a1) } }
+unsafe extern "C" fn s3524(_a0: usize, _a1: usize) -> u32 { hit(3524); unsafe { crate::impls::globalSdl_GetGlobalMouseState(_a0, _a1) } }
+unsafe extern "C" fn s3525(_a0: i32) -> i32 { hit(3525); unsafe { crate::impls::globalSdl_CaptureMouse(_a0) } }
+unsafe extern "C" fn s3526() -> usize { hit(3526); unsafe { crate::impls::globalSdl_GetMouseFocus() } }
+unsafe extern "C" fn s3527() -> usize { hit(3527); unsafe { crate::impls::globalSdl_GetKeyboardFocus() } }
+unsafe extern "C" fn s3528(_a0: usize, _a1: i32) -> i32 { hit(3528); unsafe { crate::impls::globalSdl_SetWindowRelativeMouseMode(_a0, _a1) } }
+unsafe extern "C" fn s3529(_a0: usize, _a1: f32, _a2: f32) { hit(3529); unsafe { crate::impls::globalSdl_WarpMouseInWindow(_a0, _a1, _a2) } }
+unsafe extern "C" fn s3530() -> u32 { hit(3530); unsafe { crate::impls::globalSdl_GetModState() } }
+unsafe extern "C" fn s3531(_a0: i32, _a1: u32, _a2: i32) -> u32 { hit(3531); unsafe { crate::impls::globalSdl_GetKeyFromScancode(_a0, _a1, _a2) } }
+unsafe extern "C" fn s3532(_a0: u32) -> usize { hit(3532); unsafe { crate::impls::globalSdl_GetKeyName(_a0) } }
 unsafe extern "C" fn s3533(_a0: u32) { hit(3533);  }
-unsafe extern "C" fn s3534(_a0: usize) -> i32 { hit(3534); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3535(_a0: usize) -> i32 { hit(3535); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3534(_a0: usize) -> i32 { hit(3534); unsafe { crate::impls::globalSdl_GetWindowRelativeMouseMode(_a0) } }
+unsafe extern "C" fn s3535(_a0: usize) -> i32 { hit(3535); unsafe { crate::impls::globalSdl_StopTextInput(_a0) } }
 unsafe extern "C" fn s3536(_a0: usize) -> i32 { hit(3536); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s3537(_a0: usize, _a1: usize, _a2: i32) -> i32 { hit(3537); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3538(_a0: usize) -> i32 { hit(3538); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3538(_a0: usize) -> i32 { hit(3538); unsafe { crate::impls::globalSdl_StartTextInput(_a0) } }
 unsafe extern "C" fn s3539(_a0: i32, _a1: i32, _a2: u32, _a3: usize, _a4: i32) -> usize { hit(3539); crate::trace::object(3539) }
 unsafe extern "C" fn s3540(_a0: usize) { hit(3540);  }
 unsafe extern "C" fn s3541(_a0: usize, _a1: usize) -> i32 { hit(3541); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3542(_a0: usize) -> i32 { hit(3542); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3543(_a0: usize) -> i32 { hit(3543); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3544(_a0: usize, _a1: u8, _a2: u8, _a3: u8, _a4: u8) -> i32 { hit(3544); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s3545(_a0: usize, _a1: i32, _a2: i32, _a3: usize, _a4: i32) -> i32 { hit(3545); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s3542(_a0: usize) -> i32 { hit(3542); unsafe { crate::impls::globalSdl_WindowHasSurface(_a0) } }
+unsafe extern "C" fn s3543(_a0: usize) -> i32 { hit(3543); unsafe { crate::impls::globalSdl_DestroyWindowSurface(_a0) } }
+unsafe extern "C" fn s3544(_a0: usize, _a1: u8, _a2: u8, _a3: u8, _a4: u8) -> i32 { hit(3544); unsafe { crate::impls::globalSdl_FillWindowColor(_a0, _a1, _a2, _a3, _a4) } }
+unsafe extern "C" fn s3545(_a0: usize, _a1: i32, _a2: i32, _a3: usize, _a4: i32) -> i32 { hit(3545); unsafe { crate::impls::globalSdl_PresentWindowPixels(_a0, _a1, _a2, _a3, _a4) } }
 unsafe extern "C" fn s3546(_a0: usize, _a1: usize, _a2: usize, _a3: usize) { hit(3546);  }
 unsafe extern "C" fn s3547(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: i32, _a5: usize, _a6: i32) { hit(3547);  }
 unsafe extern "C" fn s3548(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: i32, _a5: usize) { hit(3548);  }

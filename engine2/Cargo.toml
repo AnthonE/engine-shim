@@ -13,7 +13,7 @@ path = "src/lib.rs"
 # What a client draws (render/): wgpu and what it brings. A server can
 # build without it.
 default = ["render"]
-render = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:glam"]
+render = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:glam", "dep:winit"]
 
 [dependencies]
 # Sign-In With Ethereum: recover a signer (secp256k1) from a keccak digest.
@@ -50,3 +50,6 @@ wgpu = { version = "25", optional = true }
 pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1", features = ["derive"], optional = true }
 glam = { version = "0.30", optional = true }
+# A client's window and its input (feature "render"): X11 and Wayland
+# loaded at run time, Windows, macOS; what SDL is to s&box.
+winit = { version = "0.30", optional = true }

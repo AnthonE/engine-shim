@@ -309,7 +309,20 @@ mod draw {
     /// Camera `camera`'s view, `width` by `height`, into managed's pixels.
     pub fn to_bitmap(camera: usize, pixels: usize, width: i32, height: i32, bpp: i32) {
         if pixels == 0 || width <= 1 || height <= 1 || bpp != 4 { return; }
-        let Some(r) = renderer() else { return };
+        let Some((image, said)) = frame(camera, width, height) else { return };
+        let out = unsafe { std::slice::from_raw_parts_mut(pixels as *mut u8, (width * height * 4) as usize) };
+        out.copy_from_slice(&image);
+        crate::trace::note(&said);
+    }
+
+    /// The renderer the cameras draw with (a window's surface shares its device).
+    pub fn shared_renderer() -> Option<&'static Renderer> { renderer() }
+
+    /// Camera `camera`'s view, `width` by `height`, as RGBA (top row first),
+    /// and a line saying what was in it.
+    pub fn frame(camera: usize, width: i32, height: i32) -> Option<(Vec<u8>, String)> {
+        if width <= 1 || height <= 1 { return None; }
+        let r = renderer()?;
         let get = |prop| crate::state::get::<f32>(camera, prop);
         let angles = crate::state::get::<S_Angles>(camera, PROP__CCameraRenderer_CameraRotation);
         let (fov, near, far) = (get(PROP__CCameraRenderer_FieldOfView), get(PROP__CCameraRenderer_ZNear), get(PROP__CCameraRenderer_ZFar));
@@ -405,14 +418,13 @@ mod draw {
         }
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
         let image = r.draw(&instances, &view, width as u32, height as u32);
-        let out = unsafe { std::slice::from_raw_parts_mut(pixels as *mut u8, (width * height * 4) as usize) };
-        out.copy_from_slice(&image);
-        crate::trace::note(&format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes)", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len()));
+        let said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes)", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
+        Some((image, said))
     }
 }
 
 #[cfg(feature = "render")]
-pub use draw::to_bitmap;
+pub use draw::{frame, shared_renderer, to_bitmap};
 #[cfg(feature = "render")]
 #[allow(unused_imports)]
 pub use draw::probe_volumes;

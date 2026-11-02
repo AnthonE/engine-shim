@@ -781,6 +781,39 @@ fetches a map's materials and textures (outside the project: a project's
 files are sent to its players). `RENDER_DEBUG` shows what the shader read (1 base colour, 2 normal, 3
 occlusion, 4 roughness, 5 the light that bounced, 6 the direct light).
 
+## Playing, in a window
+
+`engine2/src/window.rs`. Run as a game with a window (`+shimwindow`: no
+console app), the engine makes its window and draws to it as s&box's own
+client does, and this library answers it:
+
+- **SDL3's window**: the startup splash and the game's window are
+  winit's, made on a thread of their own (X11, Wayland and Windows allow
+  it; macOS doesn't yet), shown, sized, placed, focused, the splash's
+  pixels shown as managed draws them.
+- **Its input**: keys (as SDL's scancodes and a US layout's keycodes),
+  text, the mouse's position, buttons and wheel, focus and closing, as
+  SDL3's 128-byte events for managed to poll; mouse look (relative mode)
+  holds and hides the cursor and sends the mouse's own motion.
+- **Each frame**: native's frame asks managed for its output
+  (`EngineLoop.OnClientOutput`): the main camera renders to the window's
+  swap chain (`CCameraRenderer::Render`), drawn by `render/`, and is
+  shown at `Present`, through a wgpu surface on the renderer's device.
+
+Measured, under a virtual display (Xvfb) with xdotool at the keys: the
+player of Sandbox's zoo opens a window and draws its first-person view in
+it each frame (0.5 s a frame at 640x360 on lavapipe, which is a CPU);
+holding W walks it 197 forward, which the server sees (`at 197,-0,2`);
+moving the mouse turns the view.
+
+```sh
+sh tools/play.sh            # the zoo; or: sh tools/play.sh flatgrass 1920 1080
+```
+
+What isn't there yet: a sound card (the mix still goes to
+`ENGINE2_AUDIO_CAPTURE`), the UI and HUD, and speed: each frame is drawn,
+read back and copied to the window, where it could be drawn into it.
+
 ## What a player hears
 
 `engine2/src/audio.rs`. s&box mixes in C# (`Sandbox.Audio.MixingThread`);
@@ -872,6 +905,11 @@ first.
   game app, not a dedicated server) and runs `connect <address>`.
 - `+shimrun <command>` runs a console command on that player before it
   connects (the server browser's `servers`, say).
+- `+shimwindow` makes that player a game with a window, as s&box's client
+  is (no console app). Its splash closes rather than handing over to the
+  startup screen when there is no menu to show it in, and a camera with
+  tonemapping on but no tonemapper (no graphics device) sets none rather
+  than throwing. An app that fails to start prints where.
 - A dedicated server running a local project counts as a developer host
   (`NetworkSystem.IsDeveloperHost`). It already sends such a game's code
   to its players (`GameInstanceDll`'s code archives), but told them it was
@@ -913,6 +951,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation; what a builder is given (bones, attachments, mesh groups, hitboxes) as a file's model |
+| `engine2/src/window.rs` | a client's window: SDL3's windows and events on winit, its swap chain a wgpu surface the main camera draws to |
 | `engine2/src/audio.rs` | sound: the device and its pace, sounds read and decoded, voices' mixers, mix buffers, Steam Audio's effects |
 | `engine2/src/rendermesh.rs` | meshes made at runtime: MeshGlue's render meshes, their vertex and index buffers, managed's vertex layouts |
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
@@ -937,6 +976,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/map.sh` | a map package's paks from sbox.game, into a project |
 | `tools/package.sh` | a package's files from sbox.game, at their game paths, for development (never committed) |
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
+| `tools/play.sh` | Sandbox hosted here and joined in a window: play it |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next

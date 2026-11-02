@@ -164,8 +164,11 @@ pub struct Model {
 }
 
 pub struct Renderer {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    /// what made the device: a window's surface is made with them (window.rs)
+    pub instance: wgpu::Instance,
+    pub gpu: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     /// translucent, glass and cheap glass, and what glass's view and
     /// material groups hold (what's been drawn; its three textures)
@@ -356,7 +359,7 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&none, &none, &none, &none], &[BakedLight::default()]);
-        Ok(Renderer { tonemap_pipeline, tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
+        Ok(Renderer { instance, gpu: adapter, tonemap_pipeline, tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?})", info.name, info.backend) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.

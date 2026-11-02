@@ -5,7 +5,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{CStr, CString};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// A string for managed to read: native keeps it (leaked, as the engine's
@@ -78,9 +78,28 @@ pub unsafe fn CMtrlSystm2ppSys_GetContentPath(_self: usize) -> usize { global_Ge
 /// stub at 60 Hz, as a dedicated server's default tick would.
 pub unsafe fn global_SourceEngineFrame(_app_system: usize, _time: f64, _previous: f64) -> i32 {
     crate::elo::TICK.fetch_add(1, Ordering::Relaxed);
+    // a client with a window: its output, as native's frame asks for it
+    // (EngineLoop.OnClientOutput: every view drawn to its swap chain), then shown
+    if win::window_of_swap_chain(MAIN_SWAP_CHAIN.load(Ordering::Relaxed) as usize) != 0 {
+        let began = std::time::Instant::now();
+        for slot in [crate::slots::M_Sandbox_EngineLoop_OnClientOutput, crate::slots::M_SandboxEngine_GameWindow_Present] {
+            let f = crate::managed(slot);
+            if f != 0 {
+                let f: extern "C" fn() -> i32 = unsafe { std::mem::transmute(f) };
+                f();
+            }
+        }
+        // what's left of the frame's 60th of a second
+        if let Some(rest) = std::time::Duration::from_micros(16_667).checked_sub(began.elapsed()) { std::thread::sleep(rest) }
+        return 1;
+    }
     std::thread::sleep(std::time::Duration::from_micros(16_667));
     1
 }
+
+/// The swap chain the scene system draws its main views to (SetMainSwapChain).
+static MAIN_SWAP_CHAIN: AtomicU64 = AtomicU64::new(0);
+pub unsafe fn g_pSceneSystem_SetMainSwapChain(sc: usize) { MAIN_SWAP_CHAIN.store(sc as u64, Ordering::Relaxed) }
 
 // ---- images
 
@@ -122,6 +141,185 @@ pub unsafe fn ImageLoader_GetMemRequired(w: i32, h: i32, d: i32, format: i64, mi
 pub unsafe fn ImageLoader_GetMemRequired_1(w: i32, h: i32, d: i32, mips: i32, format: i64) -> i32 {
     mem_required(w, h, d, mips, format)
 }
+
+// ---- a client's window: window.rs, as SDL3 answers s&box (and, built
+// without a renderer, no window at all)
+
+#[cfg(feature = "render")]
+use crate::window as win;
+#[cfg(not(feature = "render"))]
+mod win {
+    pub fn create(_: &str, _: i32, _: i32, _: i64, _: bool) -> usize { set_error("built without a renderer: no windows"); 0 }
+    pub fn destroy(_: usize) {}
+    pub fn poll(_: usize) -> bool { false }
+    pub fn window_of_event(_: usize) -> usize { 0 }
+    pub fn size(_: usize) -> (i32, i32) { (0, 0) }
+    pub fn flags(_: usize) -> i64 { 0 }
+    pub fn keyboard_focus() -> usize { 0 }
+    pub fn mouse_focus() -> usize { 0 }
+    pub fn show(_: usize, _: bool) -> bool { false }
+    pub fn set_relative(_: usize, _: bool) -> bool { false }
+    pub fn relative(_: usize) -> bool { false }
+    pub fn show_pixels(_: usize, _: &[u8], _: u32, _: u32) -> bool { false }
+    pub fn create_swap_chain(_: usize) -> usize { 0 }
+    pub fn window_of_swap_chain(_: usize) -> usize { 0 }
+    pub fn draw_camera(_: usize, _: usize) {}
+    pub fn present(_: usize) -> bool { true }
+    pub fn set_error(_: &str) {}
+    pub fn error_ptr() -> usize { c"".as_ptr() as usize }
+    pub fn key_name(_: u32) -> String { String::new() }
+    pub fn keycode(s: u32) -> u32 { s | (1 << 30) }
+    pub fn modifiers() -> u16 { 0 }
+    pub fn set_title(_: usize, _: &str) -> bool { false }
+    pub fn set_size(_: usize, _: i32, _: i32) -> bool { false }
+    pub fn position(_: usize) -> (i32, i32) { (0, 0) }
+    pub fn set_position(_: usize, _: i32, _: i32) -> bool { false }
+    pub fn set_fullscreen(_: usize, _: bool) -> bool { false }
+    pub fn set_bordered(_: usize, _: bool) -> bool { false }
+    pub fn set_resizable(_: usize, _: bool) -> bool { false }
+    pub fn raise(_: usize) -> bool { false }
+    pub fn warp_mouse(_: usize, _: f32, _: f32) {}
+    pub fn mouse_state() -> (u32, f32, f32) { (0, 0.0, 0.0) }
+    pub fn has_software_surface(_: usize) -> bool { false }
+    pub fn release_software_surface(_: usize) -> bool { false }
+    pub fn set_text_input(_: usize, _: bool) -> bool { false }
+    pub fn set_cursor_visible(_: bool) {}
+    pub fn monitor() -> (i32, i32, u32) { (1920, 1080, 60_000) }
+}
+
+unsafe fn put<T>(p: usize, v: T) { if p != 0 { unsafe { *(p as *mut T) = v } } }
+
+/// The startup window comes first: true, there's a way to make windows.
+pub unsafe fn global_SourceEngineInitStartupWindow(_app: usize) -> i32 { 1 }
+pub unsafe fn globalSdl_InitSubSystem(_flags: i64) -> i32 { 1 }
+pub unsafe fn globalSdl_SetHint(_name: usize, _value: usize) -> i32 { 1 }
+pub unsafe fn globalSdl_GetError() -> usize { win::error_ptr() }
+pub unsafe fn globalSdl_GetCurrentVideoDriver() -> usize { cstr(if std::env::var("WAYLAND_DISPLAY").is_ok() { "wayland" } else { "x11" }) }
+pub unsafe fn globalSdl_DelayPrecise(ns: u64) { std::thread::sleep(std::time::Duration::from_nanos(ns)) }
+
+pub unsafe fn globalSdl_CreateWindow(title: usize, w: i32, h: i32, flags: i64) -> usize { win::create(&unsafe { read(title) }, w, h, flags, false) }
+/// The splash: a window whose software surface managed draws into first.
+pub unsafe fn globalSdl_CreateStartupWindow(title: usize, w: i32, h: i32, flags: i64) -> usize { win::create(&unsafe { read(title) }, w, h, flags, true) }
+pub unsafe fn globalSdl_DestroyWindow(w: usize) { win::destroy(w) }
+pub unsafe fn globalSdl_SetWindowTitle(w: usize, title: usize) -> i32 { win::set_title(w, &unsafe { read(title) }) as i32 }
+pub unsafe fn globalSdl_ShowWindow(w: usize) -> i32 { win::show(w, true) as i32 }
+pub unsafe fn globalSdl_HideWindow(w: usize) -> i32 { win::show(w, false) as i32 }
+pub unsafe fn globalSdl_RaiseWindow(w: usize) -> i32 { win::raise(w) as i32 }
+pub unsafe fn globalSdl_RestoreWindow(w: usize) -> i32 { (win::flags(w) != 0) as i32 }
+pub unsafe fn globalSdl_SyncWindow(w: usize) -> i32 { (win::flags(w) != 0) as i32 }
+pub unsafe fn globalSdl_GetWindowFlags(w: usize) -> i64 { win::flags(w) }
+pub unsafe fn globalSdl_GetWindowSize(w: usize, x: usize, y: usize) -> i32 {
+    let (a, b) = win::size(w);
+    unsafe { put(x, a); put(y, b) };
+    (a > 0) as i32
+}
+pub unsafe fn globalSdl_GetWindowSizeInPixels(w: usize, x: usize, y: usize) -> i32 { unsafe { globalSdl_GetWindowSize(w, x, y) } }
+pub unsafe fn globalSdl_SetWindowSize(w: usize, x: i32, y: i32) -> i32 { win::set_size(w, x, y) as i32 }
+pub unsafe fn globalSdl_GetWindowPosition(w: usize, x: usize, y: usize) -> i32 {
+    let (a, b) = win::position(w);
+    unsafe { put(x, a); put(y, b) };
+    (win::flags(w) != 0) as i32
+}
+pub unsafe fn globalSdl_SetWindowPosition(w: usize, x: i32, y: i32) -> i32 { win::set_position(w, x, y) as i32 }
+pub unsafe fn globalSdl_SetWindowBordered(w: usize, on: i32) -> i32 { win::set_bordered(w, on != 0) as i32 }
+pub unsafe fn globalSdl_SetWindowResizable(w: usize, on: i32) -> i32 { win::set_resizable(w, on != 0) as i32 }
+pub unsafe fn globalSdl_SetWindowFullscreen(w: usize, on: i32) -> i32 { win::set_fullscreen(w, on != 0) as i32 }
+pub unsafe fn globalSdl_SetWindowFullscreenMode(w: usize, _mode: usize) -> i32 { (win::flags(w) != 0) as i32 }
+pub unsafe fn globalSdl_SetWindowMinimumSize(w: usize, _x: i32, _y: i32) -> i32 { (win::flags(w) != 0) as i32 }
+pub unsafe fn globalSdl_GetWindowPixelDensity(_w: usize) -> f32 { 1.0 }
+pub unsafe fn globalSdl_GetWindowDisplayScale(_w: usize) -> f32 { 1.0 }
+pub unsafe fn globalSdl_GetDisplayContentScale(_d: u32) -> f32 { 1.0 }
+pub unsafe fn globalSdl_GetDisplayForWindow(_w: usize) -> u32 { 1 }
+pub unsafe fn globalSdl_GetPrimaryDisplay() -> u32 { 1 }
+pub unsafe fn globalSdl_GetDisplayForPoint(_p: usize) -> u32 { 1 }
+/// One display, its id 1, in a list that ends with 0 (SDL_free's to free: never).
+pub unsafe fn globalSdl_GetDisplays(count: usize) -> usize {
+    static ONE: [u32; 2] = [1, 0];
+    unsafe { put(count, 1i32) };
+    ONE.as_ptr() as usize
+}
+pub unsafe fn globalSdl_Free(_p: usize) {}
+pub unsafe fn globalSdl_GetDisplayBounds(_d: u32, rect: usize) -> i32 {
+    let (w, h, _) = win::monitor();
+    unsafe { put(rect, [0i32, 0, w, h]) };
+    1
+}
+pub unsafe fn globalSdl_GetDisplayUsableBounds(d: u32, rect: usize) -> i32 { unsafe { globalSdl_GetDisplayBounds(d, rect) } }
+/// SDL_DisplayMode: display, format, w, h, density, refresh, its fraction, internal.
+fn display_mode() -> usize {
+    #[repr(C)]
+    struct Mode { display: u32, format: u32, w: i32, h: i32, density: f32, refresh: f32, num: i32, den: i32, internal: usize }
+    static M: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *M.get_or_init(|| {
+        let (w, h, mhz) = win::monitor();
+        Box::into_raw(Box::new(Mode { display: 1, format: 0x16362004, w, h, density: 1.0, refresh: mhz as f32 / 1000.0, num: mhz as i32, den: 1000, internal: 0 })) as usize
+    })
+}
+pub unsafe fn globalSdl_GetDesktopDisplayMode(_d: u32) -> usize { display_mode() }
+pub unsafe fn globalSdl_GetCurrentDisplayMode(_d: u32) -> usize { display_mode() }
+
+pub unsafe fn globalSdl_PollEvent(out: usize) -> i32 { win::poll(out) as i32 }
+pub unsafe fn globalSdl_GetWindowFromEvent(e: usize) -> usize { win::window_of_event(e) }
+pub unsafe fn globalSdl_GetKeyboardFocus() -> usize { win::keyboard_focus() }
+pub unsafe fn globalSdl_GetMouseFocus() -> usize { win::mouse_focus() }
+pub unsafe fn globalSdl_GetMouseState(x: usize, y: usize) -> u32 {
+    let (b, a, c) = win::mouse_state();
+    unsafe { put(x, a); put(y, c) };
+    b
+}
+pub unsafe fn globalSdl_GetGlobalMouseState(x: usize, y: usize) -> u32 { unsafe { globalSdl_GetMouseState(x, y) } }
+pub unsafe fn globalSdl_SetWindowRelativeMouseMode(w: usize, on: i32) -> i32 { win::set_relative(w, on != 0) as i32 }
+pub unsafe fn globalSdl_GetWindowRelativeMouseMode(w: usize) -> i32 { win::relative(w) as i32 }
+pub unsafe fn globalSdl_WarpMouseInWindow(w: usize, x: f32, y: f32) { win::warp_mouse(w, x, y) }
+pub unsafe fn globalSdl_CaptureMouse(_on: i32) -> i32 { 1 }
+pub unsafe fn globalSdl_ShowCursor() -> i32 { win::set_cursor_visible(true); 1 }
+pub unsafe fn globalSdl_HideCursor() -> i32 { win::set_cursor_visible(false); 1 }
+pub unsafe fn globalSdl_CreateSystemCursor(_kind: i64) -> usize { crate::handles::object() }
+pub unsafe fn globalSdl_SetCursor(_cursor: usize) -> i32 { 1 }
+pub unsafe fn globalSdl_GetModState() -> u32 { win::modifiers() as u32 }
+pub unsafe fn globalSdl_GetKeyFromScancode(scancode: i32, _mods: u32, _event: i32) -> u32 { win::keycode(scancode.max(0) as u32) }
+pub unsafe fn globalSdl_GetKeyName(key: u32) -> usize { cstr(&win::key_name(key)) }
+pub unsafe fn globalSdl_StartTextInput(w: usize) -> i32 { win::set_text_input(w, true) as i32 }
+pub unsafe fn globalSdl_StopTextInput(w: usize) -> i32 { win::set_text_input(w, false) as i32 }
+pub unsafe fn globalSdl_DisableScreenSaver() -> i32 { 1 }
+
+/// The splash's software surface: managed fills it, then hands the window
+/// to Vulkan (here, a swap chain on the same window).
+pub unsafe fn globalSdl_WindowHasSurface(w: usize) -> i32 { win::has_software_surface(w) as i32 }
+pub unsafe fn globalSdl_DestroyWindowSurface(w: usize) -> i32 { win::release_software_surface(w) as i32 }
+pub unsafe fn globalSdl_FillWindowColor(w: usize, r: u8, g: u8, b: u8, a: u8) -> i32 {
+    let (x, y) = win::size(w);
+    if x <= 0 || y <= 0 { return 0; }
+    let px: Vec<u8> = [r, g, b, a].repeat((x * y) as usize);
+    win::show_pixels(w, &px, x as u32, y as u32) as i32
+}
+pub unsafe fn globalSdl_PresentWindowPixels(w: usize, width: i32, height: i32, pixels: usize, pitch: i32) -> i32 {
+    if pixels == 0 || width <= 0 || height <= 0 { return 0; }
+    // rows of `pitch` bytes, 32-bit pixels (SDL's ARGB8888 as managed writes it: B, G, R, A in memory)
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..height as usize {
+        let line = unsafe { core::slice::from_raw_parts((pixels + row * pitch as usize) as *const u8, (width * 4) as usize) };
+        for p in line.chunks_exact(4) { rgba.extend_from_slice(&[p[2], p[1], p[0], 255]); }
+    }
+    win::show_pixels(w, &rgba, width as u32, height as u32) as i32
+}
+
+// the swap chain: a window the main camera draws to (window.rs)
+pub unsafe fn g_pRenderDevice_CreateSwapChain(window: usize, _mode: usize, _name: usize) -> usize { win::create_swap_chain(window) }
+pub unsafe fn g_pRenderDevice_DestroySwapChain(_sc: usize) {}
+pub unsafe fn g_pRenderDevice_CanRenderToSwapChain(sc: usize) -> i32 { (win::window_of_swap_chain(sc) != 0) as i32 }
+pub unsafe fn g_pRenderDevice_UpdateSwapChain(sc: usize, _mode: usize) -> i32 { (win::window_of_swap_chain(sc) != 0) as i32 }
+pub unsafe fn g_pRenderDevice_GetSwapChainInfo(sc: usize) -> crate::slots::S_RenderDeviceInfo_t {
+    use crate::slots::{S_RenderDeviceInfo_t, S_RenderDisplayMode_t};
+    let (w, h) = win::size(win::window_of_swap_chain(sc));
+    S_RenderDeviceInfo_t {
+        f_m_DisplayMode: S_RenderDisplayMode_t { f_m_nWidth: w, f_m_nHeight: h, f_m_Format: 0, f_m_nRefreshRateNumerator: 60, f_m_nRefreshRateDenominator: 1 },
+        f_m_nMultisampleType: 0, f_m_nModeUsage: 0, f_m_bWaitForVSync: 1, f_m_bIsMainWindow: 1,
+    }
+}
+pub unsafe fn g_pRenderDevice_Present(sc: usize) -> i32 { win::present(sc) as i32 }
+/// The main camera's view, drawn for a swap chain (SceneCamera.Render).
+pub unsafe fn CCameraRenderer_Render(camera: usize, sc: usize) { win::draw_camera(camera, sc) }
 
 // ---- sound: audio.rs. Managed mixes; native reads its sounds, keeps its
 // buffers, paces it and takes the mix.
