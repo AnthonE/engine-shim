@@ -821,11 +821,19 @@ renders to the surface's sRGB view), nothing read back but what auto
 exposure measures. On lavapipe that took a 1280x720 frame from 1.2 s to
 1.05 s; on a GPU the round trip it saves is most of a frame.
 
-What isn't there yet: the UI and HUD. s&box draws all of it with one
-bindless shader (`ui_cssbox_batched.shader`, public, about 3,000 lines
-with its includes) over GPU tables, and text through a compute shader:
-that needs the render device's buffers, textures and bindless indices
-answered (`Graphics.IsAvailable`) and the shaders ported to WGSL.
+What isn't there yet: the UI and HUD, under way (`engine2/src/gpu.rs`).
+s&box draws all of it with one bindless shader (`ui_cssbox_batched.shader`,
+public, about 3,000 lines with its includes) over GPU tables, text
+included: glyph outlines in buffers, covered analytically per pixel. With
+`ENGINE2_GRAPHICS=1` a windowed client says it has a device: render
+attributes keep their values, GPU buffers their bytes, materials made from
+a shader their shader, textures and samplers have bindless indices; and
+each frame the camera's view gets managed's UI hook (`AddUIHook`), whose
+layers run with a render context that records what they draw. Measured:
+Sandbox's HUD arrives as one instanced draw of `ui_cssbox_batched` a
+frame, 33 boxes (272 bytes each, as the shader declares them): a line of
+text, 16 green glyphs over 16 shadows, in its box. Next: the shader in
+WGSL, to draw them.
 
 ## What a player hears
 
@@ -966,6 +974,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/physics/joints.rs` | joints: s&box's nine kinds as Rapier's generic joint, and when they break |
 | `engine2/src/animgraph.rs` | animation graphs: read from their KV3, and run per scene object |
 | `engine2/src/models.rs` | models, built at runtime or read from their files: their bodies, hulls and meshes, the physics container managed reads back, polygon triangulation; what a builder is given (bones, attachments, mesh groups, hitboxes) as a file's model |
+| `engine2/src/gpu.rs` | the render device as data: render attributes, GPU buffers, bindless indices, scene views and managed layers, render contexts that record draws |
 | `engine2/src/window.rs` | a client's window: SDL3's windows and events on winit, its swap chain a wgpu surface the main camera draws to |
 | `engine2/src/audio.rs` | sound: the device and its pace, sounds read and decoded, voices' mixers, mix buffers, Steam Audio's effects |
 | `engine2/src/rendermesh.rs` | meshes made at runtime: MeshGlue's render meshes, their vertex and index buffers, managed's vertex layouts |

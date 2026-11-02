@@ -24,6 +24,7 @@ mod net;
 mod physics;
 pub mod relay;
 mod audio;
+mod gpu;
 #[cfg(feature = "render")]
 mod window;
 mod rendermesh;

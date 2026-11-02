@@ -185,6 +185,7 @@ mod win {
     pub fn set_text_input(_: usize, _: bool) -> bool { false }
     pub fn set_cursor_visible(_: bool) {}
     pub fn monitor() -> (i32, i32, u32) { (1920, 1080, 60_000) }
+    pub fn any() -> bool { false }
 }
 
 unsafe fn put<T>(p: usize, v: T) { if p != 0 { unsafe { *(p as *mut T) = v } } }
@@ -320,6 +321,129 @@ pub unsafe fn g_pRenderDevice_GetSwapChainInfo(sc: usize) -> crate::slots::S_Ren
 pub unsafe fn g_pRenderDevice_Present(sc: usize) -> i32 { win::present(sc) as i32 }
 /// The main camera's view, drawn for a swap chain (SceneCamera.Render).
 pub unsafe fn CCameraRenderer_Render(camera: usize, sc: usize) { win::draw_camera(camera, sc) }
+
+// ---- the render device's data (gpu.rs): render attributes, GPU buffers,
+// bindless indices, scene views and managed layers, render contexts
+
+use crate::gpu::{self, Val};
+use crate::slots::{S_Matrix, S_Vector2, S_Vector4};
+
+unsafe fn rd<T: Copy>(p: usize) -> Option<T> { if p == 0 { None } else { Some(unsafe { std::ptr::read_unaligned(p as *const T) }) } }
+
+pub unsafe fn CRndrttrbts_Create() -> usize { gpu::new_attrs() }
+pub unsafe fn CRndrttrbts_DeleteThis(a: usize) { gpu::device().attrs.remove(&a); }
+pub unsafe fn CRndrttrbts_Clear(a: usize, _b: i32, _c: i32) { gpu::clear(a) }
+pub unsafe fn CRndrttrbts_IsEmpty(a: usize) -> i32 { gpu::device().attrs.get(&a).is_none_or(|x| x.values.is_empty()) as i32 }
+pub unsafe fn CRndrttrbts_SetParent(a: usize, parent: usize) { gpu::set_parent(a, parent) }
+pub unsafe fn CRndrttrbts_MergeToPtr(a: usize, into: usize) { gpu::merge(a, into) }
+pub unsafe fn CRndrttrbts_AreEqual(a: usize, b: usize, _x: i32) -> i32 {
+    let d = gpu::device();
+    (gpu::flatten(&d, a) == gpu::flatten(&d, b)) as i32
+}
+pub unsafe fn CRndrttrbts_SetFloatValue(a: usize, k: S_Sandbox_StringToken, v: f32) { gpu::set(a, k.f_Value, Val::Float(v)) }
+pub unsafe fn CRndrttrbts_GetFloatValue(a: usize, k: S_Sandbox_StringToken, d: f32) -> f32 { match gpu::get(a, k.f_Value) { Some(Val::Float(v)) => v, _ => d } }
+pub unsafe fn CRndrttrbts_SetIntValue(a: usize, k: S_Sandbox_StringToken, v: i32) { gpu::set(a, k.f_Value, Val::Int(v)) }
+pub unsafe fn CRndrttrbts_GetIntValue(a: usize, k: S_Sandbox_StringToken, d: i32) -> i32 { match gpu::get(a, k.f_Value) { Some(Val::Int(v)) => v, _ => d } }
+pub unsafe fn CRndrttrbts_SetComboValue(a: usize, k: S_Sandbox_StringToken, v: u8) { gpu::set(a, k.f_Value, Val::Combo(v)) }
+pub unsafe fn CRndrttrbts_GetComboValue(a: usize, k: S_Sandbox_StringToken, d: u8) -> u8 { match gpu::get(a, k.f_Value) { Some(Val::Combo(v)) => v, _ => d } }
+pub unsafe fn CRndrttrbts_SetBoolValue(a: usize, k: S_Sandbox_StringToken, v: i32) { gpu::set(a, k.f_Value, Val::Bool(v != 0)) }
+pub unsafe fn CRndrttrbts_GetBoolValue(a: usize, k: S_Sandbox_StringToken, d: i32) -> i32 { match gpu::get(a, k.f_Value) { Some(Val::Bool(v)) => v as i32, _ => d } }
+pub unsafe fn CRndrttrbts_SetVector2DValue(a: usize, k: S_Sandbox_StringToken, v: usize) {
+    if let Some(v) = unsafe { rd::<[f32; 2]>(v) } { gpu::set(a, k.f_Value, Val::Vec2(v)) }
+}
+pub unsafe fn CRndrttrbts_GetVector2DValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> S_Vector2 {
+    let v = match gpu::get(a, k.f_Value) { Some(Val::Vec2(v)) => v, _ => unsafe { rd::<[f32; 2]>(d) }.unwrap_or_default() };
+    unsafe { std::mem::transmute(v) }
+}
+pub unsafe fn CRndrttrbts_SetVectorValue(a: usize, k: S_Sandbox_StringToken, v: usize) {
+    if let Some(v) = unsafe { rd::<[f32; 3]>(v) } { gpu::set(a, k.f_Value, Val::Vec3(v)) }
+}
+pub unsafe fn CRndrttrbts_GetVectorValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> S_Vector3 {
+    let v = match gpu::get(a, k.f_Value) { Some(Val::Vec3(v)) => v, _ => unsafe { rd::<[f32; 3]>(d) }.unwrap_or_default() };
+    unsafe { std::mem::transmute(v) }
+}
+pub unsafe fn CRndrttrbts_SetVector4DValue(a: usize, k: S_Sandbox_StringToken, v: usize) {
+    if let Some(v) = unsafe { rd::<[f32; 4]>(v) } { gpu::set(a, k.f_Value, Val::Vec4(v)) }
+}
+pub unsafe fn CRndrttrbts_GetVector4DValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> S_Vector4 {
+    let v = match gpu::get(a, k.f_Value) { Some(Val::Vec4(v)) => v, _ => unsafe { rd::<[f32; 4]>(d) }.unwrap_or_default() };
+    unsafe { std::mem::transmute(v) }
+}
+pub unsafe fn CRndrttrbts_SetVMatrixValue(a: usize, k: S_Sandbox_StringToken, v: usize) {
+    if let Some(v) = unsafe { rd::<[f32; 16]>(v) } { gpu::set(a, k.f_Value, Val::Matrix(v)) }
+}
+pub unsafe fn CRndrttrbts_GetVMatrixValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> S_Matrix {
+    let v = match gpu::get(a, k.f_Value) { Some(Val::Matrix(v)) => v, _ => unsafe { rd::<[f32; 16]>(d) }.unwrap_or_default() };
+    unsafe { std::mem::transmute(v) }
+}
+pub unsafe fn CRndrttrbts_SetIntVector4DValue(a: usize, k: S_Sandbox_StringToken, x: i32, y: i32, z: i32, w: i32) { gpu::set(a, k.f_Value, Val::IntVec4([x, y, z, w])) }
+pub unsafe fn CRndrttrbts_SetStringValue(a: usize, k: S_Sandbox_StringToken, v: usize) { gpu::set(a, k.f_Value, Val::String(unsafe { read(v) })) }
+pub unsafe fn CRndrttrbts_SetTextureValue(a: usize, k: S_Sandbox_StringToken, t: usize, _mip: i32) { gpu::set(a, k.f_Value, Val::Texture(t)) }
+pub unsafe fn CRndrttrbts_GetTextureValue(a: usize, k: S_Sandbox_StringToken, d: usize) -> usize { match gpu::get(a, k.f_Value) { Some(Val::Texture(t)) => t, _ => d } }
+pub unsafe fn CRndrttrbts_SetSamplerValue(a: usize, k: S_Sandbox_StringToken, v: usize) { gpu::set(a, k.f_Value, Val::Sampler(v)) }
+pub unsafe fn CRndrttrbts_SetBufferValue(a: usize, k: S_Sandbox_StringToken, v: usize) { gpu::set(a, k.f_Value, Val::Buffer(v)) }
+pub unsafe fn CRndrttrbts_SetPtrValue(a: usize, k: S_Sandbox_StringToken, v: usize) { gpu::set(a, k.f_Value, Val::Ptr(v)) }
+pub unsafe fn CRndrttrbts_DeleteFloatValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteIntValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteComboValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteBoolValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteVector2DValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteVectorValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteVector4DValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteVMatrixValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteStringValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeleteTextureValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+pub unsafe fn CRndrttrbts_DeletePtrValue(a: usize, k: S_Sandbox_StringToken) { gpu::delete(a, k.f_Value) }
+
+/// BufferDesc_t: elements, each's size, its debug name.
+pub unsafe fn g_pRenderDevice_CreateGPUBuffer(kind: i64, desc: usize, _usage: i64, name: usize) -> usize {
+    #[repr(C)] #[derive(Clone, Copy)] struct Desc { elements: i32, size: i32, name: usize, budget: usize }
+    let Some(d) = (unsafe { rd::<Desc>(desc) }) else { return 0 };
+    gpu::new_buffer(kind, d.elements, d.size, &unsafe { read(name) })
+}
+pub unsafe fn g_pRenderDevice_DestroyGPUBuffer(b: usize) { gpu::free_buffer(b) }
+pub unsafe fn RenderTools_SetGPUBufferData(_ctx: usize, b: usize, data: usize, size: u32, offset: u32) {
+    if data == 0 || size == 0 { return; }
+    gpu::write_buffer(b, unsafe { core::slice::from_raw_parts(data as *const u8, size as usize) }, offset as usize)
+}
+pub unsafe fn g_pRenderDevice_GetTextureViewIndex(t: usize, _color_space: u8, _dim: i64) -> i32 { gpu::texture_index(t) }
+pub unsafe fn g_pRenderDevice_FindOrCreateSamplerState(_desc: usize) -> usize { crate::handles::object() }
+pub unsafe fn g_pRenderDevice_GetSamplerIndex(s: usize) -> i32 { gpu::sampler_index(s) }
+/// A material's mode for a layer: here, the material itself.
+pub unsafe fn IMaterial2_GetMode(m: usize, _mode: S_Sandbox_StringToken) -> usize { m }
+pub unsafe fn IMaterial2_GetMode_1(m: usize) -> usize { m }
+pub unsafe fn IMaterial2_GetMode_2(m: usize, _layer: usize) -> usize { m }
+
+/// A camera renderer, made for managed's camera (its id: the view's m_ManagedCameraId).
+pub unsafe fn CCameraRenderer_Create(_name: usize, camera_id: i32) -> usize {
+    let p = crate::handles::object();
+    CAMERA_IDS.lock().unwrap().insert(p, camera_id);
+    p
+}
+pub static CAMERA_IDS: Mutex<std::collections::BTreeMap<usize, i32>> = Mutex::new(std::collections::BTreeMap::new());
+pub fn camera_id(camera: usize) -> i32 { CAMERA_IDS.lock().unwrap().get(&camera).copied().unwrap_or(0) }
+
+pub unsafe fn ISceneView_GetRenderAttributesPtr(v: usize) -> usize { gpu::device().views.get(&v).map(|v| v.attrs).unwrap_or(0) }
+pub unsafe fn ISceneView_AddManagedProceduralLayer(v: usize, name: usize, _viewport: usize, callback: usize, _before: usize, _delete: i32) -> usize {
+    gpu::add_layer(v, &unsafe { read(name) }, callback)
+}
+pub unsafe fn ISceneLayer_GetRenderAttributesPtr(l: usize) -> usize { gpu::device().layers.get(&l).map(|l| l.attrs).unwrap_or(0) }
+pub unsafe fn RndrPplnTls_TargetSupportsSrgbWrite(_v: usize, _target: usize) -> i32 { 1 }
+pub unsafe fn RndrPplnTls_GetTargetWidth(v: usize, _target: usize) -> i32 { gpu::device().views.get(&v).map(|v| v.width).unwrap_or(0) }
+pub unsafe fn RndrPplnTls_GetTargetHeight(v: usize, _target: usize) -> i32 { gpu::device().views.get(&v).map(|v| v.height).unwrap_or(0) }
+
+pub unsafe fn RenderTools_SetRenderState(ctx: usize, attrs: usize, mode: usize, _layout: usize, _stats: usize) -> i32 { gpu::set_state(ctx, attrs, mode) as i32 }
+pub unsafe fn IRenderContext_GetAttributesPtrForModify(_ctx: usize) -> usize { gpu::new_attrs() }
+pub unsafe fn IRenderContext_BindIndexBuffer(ctx: usize, b: usize, offset: i32) -> i32 { gpu::with_context(ctx, |c| c.index_buffer = Some((b, 2, offset))); 1 }
+pub unsafe fn IRenderContext_BindIndexBuffer_1(ctx: usize, b: usize, size: i32, offset: i32) -> i32 { gpu::with_context(ctx, |c| c.index_buffer = Some((b, size, offset))); 1 }
+pub unsafe fn IRenderContext_SetScissorRect(ctx: usize, rect: usize) {
+    let r = unsafe { rd::<[i32; 4]>(rect) };
+    gpu::with_context(ctx, |c| c.scissor = r)
+}
+pub unsafe fn IRenderContext_Draw(ctx: usize, prim: i64, first: i32, count: i32) { gpu::record(ctx, prim, first, count, 1, 0, false) }
+pub unsafe fn IRenderContext_DrawInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32) { gpu::record(ctx, prim, first, count, instances, 0, false) }
+pub unsafe fn IRenderContext_DrawIndexed(ctx: usize, prim: i64, first: i32, count: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, 1, base, true) }
+pub unsafe fn IRenderContext_DrawIndexedInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, instances, base, true) }
 
 // ---- sound: audio.rs. Managed mixes; native reads its sounds, keeps its
 // buffers, paces it and takes the mix.
@@ -482,7 +606,15 @@ pub unsafe fn global_Plat_ExitProcess(code: i32) {
 // server on (Graphics.Initialize skips the GPU's work for it)
 
 const RENDER_DEVICE_API_EMPTY: i64 = 2;
-pub unsafe fn g_pRenderDevice_GetRenderDeviceAPI() -> i64 { RENDER_DEVICE_API_EMPTY }
+const RENDER_DEVICE_API_VULKAN: i64 = 1;
+/// A client with a window draws (Vulkan, as far as managed need know); a
+/// server or a headless player has the empty device.
+/// (`ENGINE2_GRAPHICS=1` while the device is built out: managed's GPU paths,
+/// the UI among them, wake with it.)
+pub unsafe fn g_pRenderDevice_GetRenderDeviceAPI() -> i64 {
+    let graphics = std::env::var("ENGINE2_GRAPHICS").is_ok_and(|v| v == "1");
+    if graphics && win::any() { RENDER_DEVICE_API_VULKAN } else { RENDER_DEVICE_API_EMPTY }
+}
 
 // ---- compiled resources: a game's JSON resources (scenes, prefabs, its own
 // GameResource types) are read as `<name>_c`. Ours is the JSON itself, as
@@ -2489,6 +2621,18 @@ pub unsafe fn Glue_Resources_GetMaterial(path: usize, _guid: crate::slots::S_Sys
     crate::camera::material(&unsafe { read(path) })
 }
 pub unsafe fn IMaterial2_GetName(m: usize) -> usize { crate::camera::material_name_ptr(m) }
+/// A material made from a shader (Material.FromShader, a compute shader's).
+pub unsafe fn g_pMtrlSystm2_CreateRawMaterial(name: usize, shader: usize, _anonymous: i32) -> usize {
+    let (name, shader) = unsafe { (read(name), read(shader)) };
+    let m = crate::camera::material(&name);
+    crate::camera::set_material_shader(m, &shader);
+    m
+}
+/// A shader by name (CVfx): one object per name, which answers it.
+pub unsafe fn Glue_Resources_GetShader(name: usize, _guid: crate::slots::S_System_Guid) -> usize { crate::camera::shader(&unsafe { read(name) }) }
+pub unsafe fn CVfx_GetFilename(v: usize) -> usize { crate::camera::shader_name_ptr(v) }
+pub unsafe fn CVfx_IsError(_v: usize) -> i32 { 0 }
+pub unsafe fn CVfx_IsStrongHandleValid(_v: usize) -> i32 { 1 }
 /// A texture: one object per name, which remembers it (a light probe
 /// volume's are read by it).
 pub unsafe fn Glue_Resources_GetTexture(path: usize, _guid: crate::slots::S_System_Guid) -> usize {

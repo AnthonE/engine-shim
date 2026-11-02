@@ -116,8 +116,36 @@ pub fn material_name(m: usize) -> Option<String> {
     MATERIALS.lock().unwrap().as_ref()?.1.get(&m).map(|n| n.to_string_lossy().into_owned())
 }
 
-/// A material's shader, from its file (read once).
+/// Materials made from a shader (CreateRawMaterial: managed's
+/// Material.FromShader, a compute shader's): the shader each was made with.
+static RAW_SHADERS: Mutex<Option<HashMap<usize, String>>> = Mutex::new(None);
+
+pub fn set_material_shader(m: usize, shader: &str) {
+    RAW_SHADERS.lock().unwrap().get_or_insert_with(Default::default).insert(m, shader.to_string());
+}
+
+/// Shaders by name, each one object (CVfx), and its name to give back.
+static SHADERS_BY_NAME: Mutex<Option<(HashMap<String, usize>, HashMap<usize, std::ffi::CString>)>> = Mutex::new(None);
+
+pub fn shader(name: &str) -> usize {
+    let key = crate::fs::normal(name);
+    let mut m = SHADERS_BY_NAME.lock().unwrap();
+    let (by_name, names) = m.get_or_insert_with(Default::default);
+    *by_name.entry(key).or_insert_with(|| {
+        let p = crate::handles::object();
+        names.insert(p, std::ffi::CString::new(name.replace('\0', "")).unwrap_or_default());
+        p
+    })
+}
+
+pub fn shader_name_ptr(v: usize) -> usize {
+    static EMPTY: &std::ffi::CStr = c"";
+    SHADERS_BY_NAME.lock().unwrap().as_ref().and_then(|x| x.1.get(&v).map(|n| n.as_ptr() as usize)).unwrap_or(EMPTY.as_ptr() as usize)
+}
+
+/// A material's shader: the one it was made from, else its file's (read once).
 pub fn material_shader(m: usize) -> Option<String> {
+    if let Some(s) = RAW_SHADERS.lock().unwrap().as_ref().and_then(|r| r.get(&m)) { return Some(s.clone()); }
     static SHADERS: Mutex<Option<HashMap<usize, Option<String>>>> = Mutex::new(None);
     if let Some(s) = SHADERS.lock().unwrap().as_ref().and_then(|s| s.get(&m)) { return s.clone(); }
     let shader = material_name(m)

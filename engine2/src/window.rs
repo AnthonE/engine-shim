@@ -119,6 +119,11 @@ fn windows() -> MutexGuard<'static, Windows> {
     W.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Whether this process has made a window (a client that draws).
+pub fn any() -> bool {
+    windows().next > 0
+}
+
 pub fn get(p: usize) -> Option<Arc<Win>> {
     windows().by_ptr.get(&p).cloned()
 }
@@ -538,7 +543,75 @@ pub fn draw_camera(camera: usize, sc: usize) {
     static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if n % 30 == 0 { crate::trace::note(&format!("window frame {n} ({} ms): {said}", began.elapsed().as_millis())); }
+    // the UI, while the device it needs is built out (ENGINE2_GRAPHICS=1): recorded, not yet drawn
+    let graphics = std::env::var("ENGINE2_GRAPHICS").is_ok_and(|v| v == "1");
+    let ui = if graphics { ui_draws(camera, width, height) } else { Vec::new() };
+    static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if !ui.is_empty() && (SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 || n % 60 == 0) {
+        let mut by: std::collections::BTreeMap<String, (usize, i32)> = Default::default();
+        for d in &ui {
+            let e = by.entry(crate::camera::material_shader(d.material).unwrap_or_else(|| format!("{:#x}", d.material))).or_default();
+            e.0 += 1;
+            e.1 += d.instances;
+        }
+        crate::trace::note(&format!("window frame {n}: the UI drew {by:?}"));
+        if std::env::var("ENGINE2_UI_DEBUG").is_ok() { ui_dump(&ui[0]); }
+    }
     with(window, |_, s| s.frame = Some(frame));
+}
+
+/// What a UI draw holds (ENGINE2_UI_DEBUG): its attributes by the shader's
+/// names, and its boxes.
+fn ui_dump(d: &crate::gpu::Draw) {
+    let names = "BorderShapeBuffer BoxInstances BoxPosition BoxSize GlyphBands GlyphCurves GlyphTable GradientBuffer HasScissor InstanceOffset LayerMat PainterScreenViewport PainterTextInstances PathBuffer PathNodeBuffer PolygonPointBuffer ScissorBuffer ScissorCount TextHeight TextInstanceOffset TextInstances TextTileOffset TextTiles TextTilesX TextWidth TransformBuffer TransformMat UIFrameGrabEncoded UIGammaOutput UIInPanelLayer UIPanelOpacity WorldMat WorldPanelLighting D_BLENDMODE D_JOIN D_NO_ZTEST D_PAINTER_SCREENPIXELS D_PANEL_OPACITY D_POLYGON_POINTS D_WORLDPANEL";
+    let dev = crate::gpu::device();
+    for n in names.split(' ') {
+        if let Some(v) = d.attrs.get(&crate::string_token(n)) {
+            let extra = match v { crate::gpu::Val::Buffer(b) => dev.buffers.get(b).map(|b| format!(" ({} x {} bytes, {:?})", b.elements, b.element_size, b.name)).unwrap_or_default(), _ => String::new() };
+            crate::trace::note(&format!("ui attr {n} = {v:?}{extra}"));
+        }
+    }
+    let Some(crate::gpu::Val::Buffer(b)) = d.attrs.get(&crate::string_token("BoxInstances")) else { return };
+    let Some(buf) = dev.buffers.get(b) else { return };
+    let f = |i: usize, at: usize| f32::from_le_bytes(buf.data[i * buf.element_size + at..][..4].try_into().unwrap());
+    let u = |i: usize, at: usize| u32::from_le_bytes(buf.data[i * buf.element_size + at..][..4].try_into().unwrap());
+    let offset = match d.attrs.get(&crate::string_token("InstanceOffset")) { Some(crate::gpu::Val::Int(o)) => *o as usize, _ => 0 };
+    for i in offset..(offset + d.instances as usize).min(buf.elements).min(offset + 40) {
+        crate::trace::note(&format!("ui box {i}: rect {:.0} {:.0} {:.0} {:.0} color {:.2} {:.2} {:.2} {:.2} radius {:.0} border {:.0} tex {} flags {:#x} textmask {} shape {}",
+            f(i, 0), f(i, 4), f(i, 8), f(i, 12), f(i, 16), f(i, 20), f(i, 24), f(i, 28), f(i, 32), f(i, 64), u(i, 144) as i32, u(i, 228), u(i, 244) as i32, u(i, 268) as i32));
+    }
+}
+
+/// The camera's UI, as the engine's pipeline asks for it: a view of the
+/// camera, managed's UI hook added to it (RenderPipeline.AddUIHook), each
+/// layer it made run with a render context that records what it draws.
+fn ui_draws(camera: usize, width: i32, height: i32) -> Vec<crate::gpu::Draw> {
+    use crate::gpu;
+    let add = crate::managed(crate::slots::M_SndbxRndrng_RenderPipeline_AddUIHook);
+    if add == 0 { return Vec::new(); }
+    #[repr(C)]
+    struct Viewport { version: i32, x: i32, y: i32, w: i32, h: i32, min_z: f32, max_z: f32 }
+    #[repr(C)]
+    struct Setup { context: usize, view: usize, layer: usize, format: i32, msaa: i32, stats: usize }
+    let view = gpu::new_view(crate::impls::camera_id(camera), width, height);
+    let add: extern "C" fn(*const core::ffi::c_char, i64, usize, Viewport, usize) -> usize = unsafe { std::mem::transmute(add) };
+    const UI: i64 = 7500;
+    add(c"UI".as_ptr(), UI, view, Viewport { version: 0, x: 0, y: 0, w: width, h: height, min_z: 0.0, max_z: 1.0 }, 0);
+    let layers: Vec<(usize, usize)> = {
+        let d = gpu::device();
+        d.views.get(&view).map(|v| v.layers.iter().filter_map(|l| d.layers.get(l).map(|x| (*l, x.callback))).collect()).unwrap_or_default()
+    };
+    let mut draws = Vec::new();
+    for (layer, callback) in layers {
+        if callback == 0 { continue; }
+        let context = gpu::new_context();
+        let run: extern "C" fn(Setup) = unsafe { std::mem::transmute(callback) };
+        // ImageFormat RGBA8888 (0), no multisampling (0)
+        run(Setup { context, view, layer, format: 0, msaa: 0, stats: 0 });
+        if let Some(c) = gpu::take_context(context) { draws.extend(c.draws); }
+    }
+    gpu::free_view(view);
+    draws
 }
 
 pub fn present(sc: usize) -> bool {
