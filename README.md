@@ -893,24 +893,48 @@ images), every one under the root's clip: its tabs, the spawnlists down
 the left, the grid of tiles cut off at the bottom of its scroll panel, the
 tool list with its blue section headers, the Elastic tool's sliders and
 its checkbox. Tab shows the scoreboard: the server's name, its blue
-header, the player's row with kills, deaths and ping. Clicking the
-Weapons tab (the mouse reaches the menu too) shows its categories with
-their icons, a tile a weapon and the community items below: 58 images
-managed made reach the GPU (51 of them 256 square, 4 of 512), 29 in a
-frame. The weapons' thumbnails are rendered by this library's own camera
-(`RenderToBitmap`, a scene of one object, 512 square, 26 of them), read
-back into managed's bitmaps, resized, made textures and drawn by the UI:
-the whole round trip works, though each comes back the empty scene's grey
-for now, the weapon not in it.
+header, the player's row with kills, deaths and ping.
+
+**The spawn menu's pictures.** Its tiles are images: a spawnlist's props
+are cloud packages, each tile the package's thumbnail from sbox.game
+(fetched by managed, decoded, made a texture); a weapon's is rendered
+here, Sandbox's `ThumbnailCamera` framing its prefab in a scene of its own
+with studio lights, through this library's camera (`RenderToBitmap`, 512
+square), read back into managed's bitmap, resized and made a texture.
+Three things stood between them and the screen:
+
+- a texture's size is read through `GetOnDiskTextureDesc` (managed's
+  `Texture.Width`), which gave nothing: every texture was 0 by 0, so an
+  image's `background-size: contain` worked out to NaN (its aspect 0 / 0)
+  and each tile showed one texel of its image all over;
+- a camera's background colour never reached the renderer
+  (`SetRenderAttributes`, its `clearColor`): a thumbnail's backdrop, which
+  `ThumbnailCamera` asks to be transparent so its fit can find the weapon
+  in it, came back the renderer's opaque grey;
+- managed sizes and centres its first window by the display's bounds,
+  asked before there's a window to ask the monitor of: they were a
+  1920x1080 guess, and under a smaller display the window could stay off
+  centre. The primary monitor is asked now.
+
+Measured, in the same game: the construction props' tiles show their
+props (the pipe valves and lever, the metal doors, the blue barrel, the
+gas bottles, the extinguisher); the weapons' thumbnails are the USP, the
+physgun, the shotgun, the MP5 and the rest, each framed and lit as its
+prefab's camera says, on transparency. `ENGINE2_FRAME_DUMP=<folder>`
+writes the first frames a camera rendered to a bitmap and lists what each
+placed; `ENGINE2_UI_DEBUG` lists the HUD's image instances.
+
+Material Icons, the icon font s&box's UI names (each icon a ligature of its
+name), isn't in sbox-public: it comes with Facepunch's download. It's
+Google's (Apache 2.0), and `tools/setup.sh` fetches it into the
+checkout's `core/fonts`, where the game loads fonts from; the spawn menu's
+lists show their icons where each showed its name ("construction",
+"person").
 
 Not yet: `border-shape`'s shapes and paths (ShapeIndex; drawn as the
 rounded rect), world panels (a nameplate in the world), backdrop filters
-and panel layers. Material Icons, the icon font Sandbox's menus use, isn't
-in sbox-public (it comes with Facepunch's download; Google publishes it,
-Apache 2.0), so each icon shows as its name ("construction", "person").
-A spawnlist's tiles are cloud packages, whose thumbnails come from
-sbox.game's package API; here they stay empty. And the device only answers
-with `ENGINE2_GRAPHICS=1` while the rest of what it wakes is filled in.
+and panel layers. And the device only answers with `ENGINE2_GRAPHICS=1`
+while the rest of what it wakes is filled in.
 
 ## What a player hears
 

@@ -148,6 +148,8 @@ pub fn error_ptr() -> usize {
 
 enum Request {
     Create { title: String, width: u32, height: u32, hidden: bool, borderless: bool, reply: mpsc::Sender<Result<Arc<Window>, String>> },
+    /// the primary monitor's size and refresh, before there's a window to ask
+    Monitor { reply: mpsc::Sender<Option<(i32, i32, u32)>> },
 }
 
 struct App;
@@ -186,6 +188,10 @@ impl ApplicationHandler<Request> for App {
                     .with_visible(!hidden)
                     .with_decorations(!borderless);
                 let _ = reply.send(el.create_window(attrs).map(Arc::new).map_err(|e| e.to_string()));
+            }
+            Request::Monitor { reply } => {
+                let m = el.primary_monitor().or_else(|| el.available_monitors().next());
+                let _ = reply.send(m.map(|m| (m.size().width as i32, m.size().height as i32, m.refresh_rate_millihertz().unwrap_or(60_000))));
             }
         }
     }
@@ -805,10 +811,16 @@ pub fn set_cursor_visible(on: bool) {
     for w in windows().by_ptr.values() { w.window.set_cursor_visible(on); }
 }
 
-/// The monitor the window's on: its size (or a 1920x1080 guess), and its refresh in mHz.
+/// The monitor the window's on (before there's a window, the primary one:
+/// managed sizes and centres its first window by it): its size (or a
+/// 1920x1080 guess), and its refresh in mHz.
 pub fn monitor() -> (i32, i32, u32) {
     let w = windows().by_ptr.values().next().cloned();
-    w.and_then(|w| w.window.current_monitor())
-        .map(|m| (m.size().width as i32, m.size().height as i32, m.refresh_rate_millihertz().unwrap_or(60_000)))
-        .unwrap_or((1920, 1080, 60_000))
+    let on_window = w.and_then(|w| w.window.current_monitor())
+        .map(|m| (m.size().width as i32, m.size().height as i32, m.refresh_rate_millihertz().unwrap_or(60_000)));
+    on_window.or_else(|| {
+        let (tx, rx) = mpsc::channel();
+        proxy().ok()?.send_event(Request::Monitor { reply: tx }).ok()?;
+        rx.recv_timeout(std::time::Duration::from_secs(5)).ok().flatten()
+    }).unwrap_or((1920, 1080, 60_000))
 }
