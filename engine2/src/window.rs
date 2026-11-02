@@ -124,6 +124,13 @@ pub fn any() -> bool {
     windows().next > 0
 }
 
+/// Whether this client has a graphics device for managed: it has a window,
+/// unless `ENGINE2_GRAPHICS=0` says to run it on the empty device (no UI,
+/// none of managed's GPU work).
+pub fn graphics() -> bool {
+    any() && std::env::var("ENGINE2_GRAPHICS").map_or(true, |v| v != "0")
+}
+
 pub fn get(p: usize) -> Option<Arc<Win>> {
     windows().by_ptr.get(&p).cloned()
 }
@@ -549,18 +556,27 @@ pub fn draw_camera(camera: usize, sc: usize) {
     static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if n % 30 == 0 { crate::trace::note(&format!("window frame {n} ({} ms): {said}", began.elapsed().as_millis())); }
-    // the UI, while the device it needs is built out (ENGINE2_GRAPHICS=1): recorded, not yet drawn
-    let graphics = std::env::var("ENGINE2_GRAPHICS").is_ok_and(|v| v == "1");
-    let ui = if graphics { ui_draws(camera, width, height) } else { Vec::new() };
+    // the UI: managed's layers run with a render context that records them, then drawn
+    // ENGINE2_UI_DEBUG: the frame's own GPU work finished first, so what's timed after is the UI's
+    if std::env::var_os("ENGINE2_UI_DEBUG").is_some() { let _ = r.device.poll(wgpu::PollType::Wait); }
+    let t0 = std::time::Instant::now();
+    let ui = if graphics() { ui_draws(camera, width, height) } else { Vec::new() };
     if !ui.is_empty() {
+        let t1 = std::time::Instant::now();
         let batched = to_draw(&ui);
+        let t2 = std::time::Instant::now();
         let linear = frame.texture.create_view(&wgpu::TextureViewDescriptor { format: Some(format.remove_srgb_suffix()), ..Default::default() });
         r.ui.draw(r, &linear, format.remove_srgb_suffix(), width as u32, height as u32, &batched);
-        // what the HUD is made of, now and then
+        let t3 = std::time::Instant::now();
+        // what the HUD is made of, and what it cost, now and then
         static CENSUS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if CENSUS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 10 == 0 {
             let said: Vec<String> = batched.iter().map(crate::render::ui::census).collect();
-            crate::trace::note(&format!("window frame {n}: the UI's {} batches: {}", batched.len(), said.join(" | ")));
+            // with ENGINE2_UI_DEBUG, the GPU's part too (waiting for it: a frame's pipelining lost)
+            let gpu = std::env::var_os("ENGINE2_UI_DEBUG").map(|_| { let _ = r.device.poll(wgpu::PollType::Wait); t3.elapsed().as_secs_f64() * 1000.0 });
+            let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1000.0;
+            crate::trace::note(&format!("window frame {n}: the UI's {} batches: {}; {:.1} ms recording, {:.1} converting, {:.1} encoding{}", batched.len(), said.join(" | "),
+                ms(t0, t1), ms(t1, t2), ms(t2, t3), gpu.map(|g| format!(", {g:.1} on the GPU after")).unwrap_or_default()));
             if std::env::var_os("ENGINE2_UI_DEBUG").is_some() {
                 for d in &batched { for line in crate::render::ui::images(d, 6) { crate::trace::note(&format!("ui {line}")); } }
             }

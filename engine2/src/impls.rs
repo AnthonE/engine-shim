@@ -186,6 +186,7 @@ mod win {
     pub fn set_cursor_visible(_: bool) {}
     pub fn monitor() -> (i32, i32, u32) { (1920, 1080, 60_000) }
     pub fn any() -> bool { false }
+    pub fn graphics() -> bool { false }
 }
 
 unsafe fn put<T>(p: usize, v: T) { if p != 0 { unsafe { *(p as *mut T) = v } } }
@@ -634,13 +635,12 @@ pub unsafe fn global_Plat_ExitProcess(code: i32) {
 
 const RENDER_DEVICE_API_EMPTY: i64 = 2;
 const RENDER_DEVICE_API_VULKAN: i64 = 1;
-/// A client with a window draws (Vulkan, as far as managed need know); a
-/// server or a headless player has the empty device.
-/// (`ENGINE2_GRAPHICS=1` while the device is built out: managed's GPU paths,
-/// the UI among them, wake with it.)
+/// A client with a window draws (Vulkan, as far as managed need know), and
+/// managed's GPU paths wake with it, the UI among them; a server or a
+/// headless player has the empty device (and `ENGINE2_GRAPHICS=0` gives a
+/// windowed client the empty one too).
 pub unsafe fn g_pRenderDevice_GetRenderDeviceAPI() -> i64 {
-    let graphics = std::env::var("ENGINE2_GRAPHICS").is_ok_and(|v| v == "1");
-    if graphics && win::any() { RENDER_DEVICE_API_VULKAN } else { RENDER_DEVICE_API_EMPTY }
+    if win::graphics() { RENDER_DEVICE_API_VULKAN } else { RENDER_DEVICE_API_EMPTY }
 }
 
 // ---- compiled resources: a game's JSON resources (scenes, prefabs, its own
