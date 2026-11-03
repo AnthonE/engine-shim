@@ -474,6 +474,12 @@ pub unsafe fn IRenderContext_SetScissorRect(ctx: usize, rect: usize) {
     let r = unsafe { rd::<[i32; 4]>(rect) };
     gpu::with_context(ctx, |c| c.scissor = r)
 }
+/// A GPU buffer bound to draw vertices from (Graphics.Draw with a vertex
+/// buffer: a line's); slot 0 is the one kept.
+pub unsafe fn IRenderContext_BindVertexBuffer_2(ctx: usize, slot: i32, b: usize, offset: i32) -> i32 {
+    if slot == 0 { gpu::with_context(ctx, |c| c.vertex_buffer = Some((b, offset))); }
+    1
+}
 pub unsafe fn IRenderContext_Draw(ctx: usize, prim: i64, first: i32, count: i32) { gpu::record(ctx, prim, first, count, 1, 0, false) }
 /// What a render context draws into: the UI layer's, the view it was made for.
 pub unsafe fn IRenderContext_GetViewport(ctx: usize) -> crate::slots::S_NativeEngine_RenderViewport {
@@ -532,6 +538,24 @@ pub unsafe fn RenderTools_ResolveFrameBuffer(ctx: usize, texture: usize, _viewpo
         crate::trace::note(&format!("RenderTools.ResolveFrameBuffer: into {texture:#x}, {} context", if gpu::device().contexts.contains_key(&ctx) { "a recording" } else { "an unknown" }));
     }
     gpu::record_grab(ctx, texture)
+}
+/// A compute shader dispatched (ComputeShader.DispatchWithAttributes): its
+/// material's mode (the material, here) names the shader; the sprite
+/// batch's run on the CPU (sprites.rs).
+pub unsafe fn RenderTools_Compute(_ctx: usize, attrs: usize, mode: usize, x: i32, y: i32, z: i32) {
+    let shader = crate::camera::material_shader(mode).unwrap_or_default();
+    crate::sprites::dispatch(&shader, attrs, [x, y, z])
+}
+/// A view's frustum is the view: what Graphics asks of it while a custom
+/// object renders is where its camera is (sprites.rs keeps it).
+pub unsafe fn ISceneView_GetFrustum(v: usize) -> usize { v }
+pub unsafe fn CFrustum_GetCameraPosition(_f: usize) -> S_Vector3 {
+    let p = crate::sprites::eye().map(|e| e.position).unwrap_or_default();
+    S_Vector3 { f__vec: crate::slots::S_System_Numerics_Vector3 { f_X: p[0], f_Y: p[1], f_Z: p[2] } }
+}
+pub unsafe fn CFrustum_GetCameraAngles(_f: usize) -> crate::slots::S_Angles {
+    let [pitch, yaw, roll] = crate::sprites::eye().map(|e| e.angles).unwrap_or_default();
+    crate::slots::S_Angles { f_pitch: pitch, f_yaw: yaw, f_roll: roll }
 }
 pub unsafe fn IRenderContext_DrawInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32) { gpu::record(ctx, prim, first, count, instances, 0, false) }
 pub unsafe fn IRenderContext_DrawIndexed(ctx: usize, prim: i64, first: i32, count: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, 1, base, true) }
@@ -2691,6 +2715,62 @@ pub unsafe fn g_pSceneSystem_DeleteSceneObject(obj: usize) {
     crate::handles::free(obj);
 }
 pub unsafe fn g_pSceneSystem_DeleteSceneObjectAtFrameEnd(obj: usize) { unsafe { g_pSceneSystem_DeleteSceneObject(obj) } }
+// ---- tags: each scene object's (StringToken values), which a camera's
+// render and exclude tags choose by (camera.rs). Each class has its own copy of the slots.
+
+pub unsafe fn CSceneObject_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CSceneObject_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CSceneObject_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CSceneObject_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CSceneObject_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CSceneObject_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CScnnmtblbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CScnnmtblbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CScnnmtblbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CScnnmtblbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CScnnmtblbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CScnnmtblbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CMngdScnbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CMngdScnbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CMngdScnbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CMngdScnbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CMngdScnbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CMngdScnbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CDynmcScnbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CDynmcScnbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CDynmcScnbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CDynmcScnbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CDynmcScnbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CDynmcScnbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CDclScnbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CDclScnbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CDclScnbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CDclScnbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CDclScnbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CDclScnbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CScnLghtbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CScnLghtbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CScnLghtbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CScnLghtbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CScnLghtbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CScnLghtbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CScnLghtPrbVlmbj_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CScnLghtPrbVlmbj_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CScnLghtPrbVlmbj_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CScnLghtPrbVlmbj_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CScnLghtPrbVlmbj_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CScnLghtPrbVlmbj_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CScnSkyBxbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CScnSkyBxbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CScnSkyBxbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CScnSkyBxbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CScnSkyBxbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CScnSkyBxbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CCameraRenderer_AddRenderTag(camera: usize, tag: u32) { crate::camera::camera_tag(camera, false, Some(tag)) }
+pub unsafe fn CCameraRenderer_AddExcludeTag(camera: usize, tag: u32) { crate::camera::camera_tag(camera, true, Some(tag)) }
+pub unsafe fn CCameraRenderer_ClearRenderTags(camera: usize) { crate::camera::camera_tag(camera, false, None) }
+pub unsafe fn CCameraRenderer_ClearExcludeTags(camera: usize) { crate::camera::camera_tag(camera, true, None) }
+
 pub unsafe fn CSceneObject_SetRenderingEnabled(obj: usize, on: i32) { crate::camera::set_shown(obj, on != 0) }
 pub unsafe fn CSceneObject_EnableRendering(obj: usize) { crate::camera::set_shown(obj, true) }
 pub unsafe fn CSceneObject_DisableRendering(obj: usize) { crate::camera::set_shown(obj, false) }
@@ -2718,6 +2798,16 @@ pub unsafe fn g_pMtrlSystm2_CreateRawMaterial(name: usize, shader: usize, _anony
     let m = crate::camera::material(&name);
     crate::camera::set_material_shader(m, &shader);
     m
+}
+/// A material copied (Material.CreateCopy: a line's default material).
+pub unsafe fn g_pMtrlSystm2_CreateProceduralMaterialCopy(src: usize, _flags: i32, _anonymous: i32) -> usize { crate::camera::copy_material(src) }
+/// A texture set on a material by its parameter's name (Material.Set).
+pub unsafe fn IMaterial2_Set_2(m: usize, name: usize, t: usize) { crate::camera::set_material_texture(m, &unsafe { read(name) }, t) }
+/// A texture a material was given by name; one it wasn't is still a texture
+/// (managed's SkyBox2D asks its material for one and throws on none), an
+/// object of its own as the stub's answer was.
+pub unsafe fn IMaterial2_GetTexture(m: usize, name: usize) -> usize {
+    crate::camera::material_texture(m, &unsafe { read(name) }).unwrap_or_else(|| crate::trace::object(1712))
 }
 /// A shader by name (CVfx): one object per name, which answers it.
 pub unsafe fn Glue_Resources_GetShader(name: usize, _guid: crate::slots::S_System_Guid) -> usize { crate::camera::shader(&unsafe { read(name) }) }

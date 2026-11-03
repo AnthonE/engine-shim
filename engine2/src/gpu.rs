@@ -66,6 +66,8 @@ pub struct Draw {
     pub attrs: HashMap<u32, Val>,
     pub primitive: i64,
     pub index_buffer: Option<(usize, i32, i32)>,
+    /// the GPU buffer it drew vertices from, and the byte offset into it
+    pub vertex_buffer: Option<(usize, i32)>,
     pub first: i32,
     pub count: i32,
     pub instances: i32,
@@ -104,6 +106,7 @@ pub struct Context {
     pub material: usize,
     pub attrs: HashMap<u32, Val>,
     pub index_buffer: Option<(usize, i32, i32)>,
+    pub vertex_buffer: Option<(usize, i32)>,
     pub scissor: Option<[i32; 4]>,
     /// the render target bound (BindRenderTargets), or none: the layer's
     pub target: Option<usize>,
@@ -251,6 +254,7 @@ pub fn new_buffer(kind: i64, elements: i32, element_size: i32, name: &str) -> us
 
 pub fn free_buffer(p: usize) {
     device().buffers.remove(&p);
+    crate::lines::forget(p);
 }
 
 /// Bytes into a buffer at a byte offset, as far as it reaches.
@@ -542,10 +546,13 @@ pub fn record(ctx: usize, primitive: i64, first: i32, count: i32, instances: i32
     let Some(c) = d.contexts.get(&ctx) else { return };
     let attrs = c.attrs.clone();
     let index_buffer = if indexed { c.index_buffer } else { None };
-    let (material, scissor, target) = (c.material, c.scissor, c.target);
-    let buffers = attrs.values().filter_map(|v| match v { Val::Buffer(b) => d.buffers.get(b).map(|x| (*b, std::sync::Arc::new(x.data.clone()))), _ => None }).collect();
+    let (material, scissor, target, vertex_buffer) = (c.material, c.scissor, c.target, c.vertex_buffer);
+    // what its attributes name, and the vertex and index buffers it reads
+    let named = attrs.values().filter_map(|v| match v { Val::Buffer(b) => Some(*b), _ => None });
+    let bound = vertex_buffer.map(|v| v.0).into_iter().chain(index_buffer.map(|i| i.0));
+    let buffers = named.chain(bound).filter_map(|b| d.buffers.get(&b).map(|x| (b, std::sync::Arc::new(x.data.clone())))).collect();
     if let Some(c) = d.contexts.get_mut(&ctx) {
-        c.draws.push(Draw { material, attrs, primitive, index_buffer, first, count, instances, base_vertex, scissor, buffers, inline: None, grab: None, clear: None, target });
+        c.draws.push(Draw { material, attrs, primitive, index_buffer, vertex_buffer, first, count, instances, base_vertex, scissor, buffers, inline: None, grab: None, clear: None, target });
     }
 }
 
@@ -563,7 +570,7 @@ fn record_step(ctx: usize, grab: Option<usize>, clear: Option<[f32; 4]>) {
     with_context(ctx, |c| {
         let target = c.target;
         c.draws.push(Draw {
-            material: 0, attrs: HashMap::new(), primitive: 0, index_buffer: None, first: 0, count: 0, instances: 0, base_vertex: 0,
+            material: 0, attrs: HashMap::new(), primitive: 0, index_buffer: None, vertex_buffer: None, first: 0, count: 0, instances: 0, base_vertex: 0,
             scissor: None, buffers: HashMap::new(), inline: None, grab, clear, target,
         })
     });
