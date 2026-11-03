@@ -117,9 +117,15 @@ impl Sprites {
     /// A texture by its object, as `texture` puts it on the GPU (none: white).
     pub(super) fn texture_of(&self, r: &super::Renderer, t: Option<usize>) -> wgpu::TextureView {
         let Some(t) = t else { return self.white.clone() };
+        self.try_texture_of(r, t).unwrap_or_else(|| self.glow.clone())
+    }
+
+    /// A texture by its object as sRGB on the GPU, or none where it can't be
+    /// read (and isn't looked for again until managed writes to it).
+    pub fn try_texture_of(&self, r: &super::Renderer, t: usize) -> Option<wgpu::TextureView> {
         let version = crate::gpu::texture_version(t);
         if let Some((v, view)) = self.textures.lock().unwrap().get(&t) {
-            if *v == version { return view.clone().unwrap_or_else(|| self.glow.clone()); }
+            if *v == version { return view.clone(); }
         }
         let view = if version.is_some() {
             crate::gpu::texture_rgba(t).map(|(w, h, _, px)| r.device.create_texture_with_data(&r.queue, &wgpu::TextureDescriptor {
@@ -128,10 +134,10 @@ impl Sprites {
             }, wgpu::util::TextureDataOrder::LayerMajor, &px).create_view(&Default::default()))
         } else {
             crate::camera::texture_name(t).and_then(|name| r.texture(&super::EngineFiles, &name, true)
-                .map_err(|e| crate::trace::note(&format!("sprites: {e}; a glow in its place"))).ok())
+                .map_err(|e| crate::trace::note(&format!("textures: {e}; a stand-in in its place"))).ok())
         };
         self.textures.lock().unwrap().insert(t, (version, view.clone()));
-        view.unwrap_or_else(|| self.glow.clone())
+        view
     }
 
     /// Draws `batches` in `pass`, which draws into the scene's colour and depth.

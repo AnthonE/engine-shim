@@ -85,6 +85,18 @@ struct Material {
 @group(0) @binding(1) var scene: texture_2d<f32>;
 @group(0) @binding(2) var shadow_map: texture_depth_2d;
 @group(0) @binding(3) var shadow_compare: sampler_comparison;
+// the view's decals (decals.rs): each a box, its colour texture a layer of one array
+struct DecalGpu {
+    to_decal: mat4x4<f32>,
+    // xyz: the axis it projects along; w: how much a surface turned from it fades it
+    axis: vec4<f32>,
+    tint: vec4<f32>,
+    // x: its layer, y: its colour mix, z: its blend mode, w: 1 (0: none)
+    params: vec4<f32>,
+};
+@group(0) @binding(4) var<storage, read> decals: array<DecalGpu>;
+@group(0) @binding(5) var decal_array: texture_2d_array<f32>;
+@group(0) @binding(6) var decal_sampler: sampler;
 @group(1) @binding(0) var<uniform> material: Material;
 @group(1) @binding(1) var color_a: texture_2d<f32>;
 @group(1) @binding(2) var occlusion_a: texture_2d<f32>;
@@ -430,6 +442,39 @@ fn debug_view(s: Surface, n: vec3<f32>, l: Lit) -> vec4<f32> {
     return vec4<f32>(0.0);
 }
 
+// Each decal whose box the pixel is in, laid into its surface before it's
+// lit, as s&box's Decals::Resolve does: its texture times its tint, faded as
+// the surface turns from its axis, then over the albedo, multiplied into it,
+// or added as glow, as much as its colour mix and alpha say.
+struct Decaled { base: vec3<f32>, glow: vec3<f32> };
+fn resolve_decals(world: vec3<f32>, dp1: vec3<f32>, dp2: vec3<f32>, n: vec3<f32>, base: vec3<f32>, glow: vec3<f32>) -> Decaled {
+    var o = Decaled(base, glow);
+    for (var k = 0u; k < arrayLength(&decals); k = k + 1u) {
+        let d = decals[k];
+        if (d.params.w < 0.5) { continue; }
+        let p = (d.to_decal * vec4<f32>(world, 1.0)).xyz;
+        if (any(abs(p) > vec3<f32>(0.5))) { continue; }
+        let uv = vec2<f32>(0.5) - p.yz;
+        let gx = -(d.to_decal * vec4<f32>(dp1, 0.0)).yz;
+        let gy = -(d.to_decal * vec4<f32>(dp2, 0.0)).yz;
+        var c = textureSampleGrad(decal_array, decal_sampler, uv, i32(d.params.x), gx, gy) * d.tint;
+        let facing = smoothstep(0.55, 1.0, clamp(dot(n, -d.axis.xyz), 0.55, 1.0));
+        let att = mix(1.0, facing, d.axis.w);
+        let mode = u32(d.params.z + 0.5);
+        if (mode == 0u) { c = vec4<f32>(c.rgb * att, c.a); }
+        c.a = c.a * att;
+        let k_mix = d.params.y * c.a;
+        if (mode == 1u) {
+            o.base = o.base * mix(vec3<f32>(1.0), c.rgb, k_mix);
+        } else if (mode == 2u) {
+            o.glow = o.glow + c.rgb * k_mix;
+        } else {
+            o.base = mix(o.base, c.rgb, k_mix);
+        }
+    }
+    return o;
+}
+
 @fragment
 fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let layers = material.mode.x;
@@ -508,6 +553,9 @@ fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32>
     }
     s.rough = pow(s.rough, material.blend.z);
     let n = frame(i, front, s.ts, material.params.w > 0.5, dp1, dp2, du1, du2);
+    let decaled = resolve_decals(i.world, dp1, dp2, n, s.base, glow);
+    s.base = decaled.base;
+    glow = decaled.glow;
     let l = light(i, n, s);
     let d = debug_view(s, n, l);
     if (d.a > 0.0) { return d; }

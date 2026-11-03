@@ -6,6 +6,7 @@
 //! every material s&box's content has is one of). The engine draws its
 //! scene with it when managed asks a camera for pixels (impls.rs,
 //! CCameraRenderer_RenderToBitmap); `render` draws one model.
+pub mod decals;
 pub mod lines;
 pub mod sprites;
 pub mod ui;
@@ -182,6 +183,8 @@ pub struct Renderer {
     pub sprites: sprites::Sprites,
     /// lines drawn into the scene (lines.rs)
     pub lines: lines::Lines,
+    /// decals laid into what's opaque (decals.rs)
+    pub decals: decals::Decals,
     pub gpu: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -278,7 +281,10 @@ impl Renderer {
         // the view, and the sun's shadow map, compared with
         let shadow_map = wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None };
         let compare = wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None };
-        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), shadow_map, compare] });
+        // and its decals: their boxes, the array their textures are layers of, its sampler
+        let decal_list = wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None };
+        let decal_sampler = wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None };
+        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), shadow_map, compare, decal_list, array(5), decal_sampler] });
         // the shadow map's own pass: the view alone
         let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("shadow view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)] });
         let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &[] });
@@ -390,7 +396,8 @@ impl Renderer {
         let ui = ui::Ui::new(&device, &queue);
         let sprites = sprites::Sprites::new(&device, &queue);
         let lines = lines::Lines::new(&device, &queue);
-        Ok(Renderer { instance, ui, sprites, lines, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
+        let decals = decals::Decals::new(&device, &queue);
+        Ok(Renderer { instance, ui, sprites, lines, decals, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -796,10 +803,14 @@ impl Renderer {
             label: Some("shadow"), size: wgpu::Extent3d { width: shadow_size, height: shadow_size, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
             dimension: wgpu::TextureDimension::D2, format: DEPTH, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }).create_view(&Default::default());
+        let decal_buffer = self.decals.buffer(self, &view.decals);
         let view_group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("view"), layout: &self.view_layout, entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() },
             at(2, &shadow_map),
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.compare_sampler) },
+            wgpu::BindGroupEntry { binding: 4, resource: decal_buffer.as_entire_binding() },
+            at(5, &self.decals.array_view),
+            wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.decals.sampler) },
         ] });
         // how each object is lit: by the view's lightmaps (1), the probe
         // volume that's chosen for it (2), or neither
@@ -1154,6 +1165,8 @@ pub struct View {
     pub sprites: Vec<crate::sprites::Batch>,
     /// lines (beams, trails), drawn before the sprites
     pub lines: Vec<crate::lines::Line>,
+    /// decals, laid into what's opaque
+    pub decals: Vec<decals::Decal>,
 }
 
 /// A light a map's lightmaps name by its bake index (managed's
@@ -1398,6 +1411,7 @@ impl View {
             exposure: Exposure::default(),
             sprites: Vec::new(),
             lines: Vec::new(),
+            decals: Vec::new(),
         }
     }
 
@@ -1409,7 +1423,7 @@ impl View {
         let fov = 30f32.to_radians();
         let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
         let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default(), sprites: Vec::new(), lines: Vec::new() }
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default(), sprites: Vec::new(), lines: Vec::new(), decals: Vec::new() }
     }
 }
 

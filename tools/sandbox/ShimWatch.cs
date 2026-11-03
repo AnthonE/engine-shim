@@ -9,6 +9,8 @@
 /// </summary>
 public sealed class ShimWatch : Component
 {
+	const string Give = "";
+
 	TimeSince _last;
 	int _ticks;
 	Prop _broken, _bomb;
@@ -81,6 +83,50 @@ public sealed class ShimWatch : Component
 			// and its key values: a prop's health, what it breaks into
 			foreach ( var p in Scene.GetAllComponents<Prop>() )
 				Log.Info( $"shimwatch: prop {p.GameObject.Name} health {p.Health:0} explosive {p.IsExplosive} gibs {p.Model?.GetData<Sandbox.ModelEditor.Nodes.ModelBreakPiece[]>()?.Length ?? 0}" );
+		}
+
+		// a weapon's prefab to give (tools/sandbox.sh writes ENGINE2_WATCH_GIVE
+		// here): the host gives it to each player there is, every ten seconds
+		// (one who's just joined gets it too)
+		if ( Networking.IsHost && _ticks % 10 == 5 && Give is { Length: > 0 } give )
+		{
+			var name = System.IO.Path.GetFileNameWithoutExtension( give );
+			foreach ( var inventory in Scene.GetAllComponents<PlayerInventory>() )
+			{
+				var have = inventory.Weapons.FirstOrDefault( w => w.GameObject.Name.Contains( name, StringComparison.OrdinalIgnoreCase ) );
+				if ( have is null )
+				{
+					Log.Info( $"shimwatch: giving {give}: {inventory.Pickup( give, false )}" );
+					have = inventory.Weapons.FirstOrDefault( w => w.GameObject.Name.Contains( name, StringComparison.OrdinalIgnoreCase ) );
+				}
+				// and in their hands
+				if ( have.IsValid() && inventory.ActiveWeapon != have )
+				{
+					inventory.Switch( have );
+					Log.Info( $"shimwatch: {name} out: {inventory.ActiveWeapon == have}" );
+				}
+			}
+		}
+
+		// once, with a weapon to give: what a shot at the floor would hit, and what it leaves there
+		if ( _ticks == 12 && Give is { Length: > 0 } )
+		{
+			foreach ( var p in Scene.GetAllComponents<PlayerController>() )
+			{
+				var tr = Scene.Trace.Ray( p.WorldPosition + Vector3.Up * 64, p.WorldPosition + Vector3.Up * 64 + new Vector3( 100, 0, -100 ) ).IgnoreGameObjectHierarchy( p.GameObject ).Run();
+				var s = tr.Surface;
+				// as a gun traces it (BaseBulletWeapon.BulletTrace)
+				var gun = Scene.Trace.Ray( p.WorldPosition + Vector3.Up * 64, p.WorldPosition + Vector3.Up * 64 + new Vector3( 100, 0, -100 ) ).IgnoreGameObjectHierarchy( p.GameObject ).WithCollisionRules( "bullet" ).WithoutTags( "playercontroller" ).Radius( 0 ).UseHitboxes().Run();
+				Log.Info( $"shimwatch gun trace: hit {gun.Hit} {gun.GameObject?.Name} surface {gun.Surface?.ResourceName} at {gun.EndPosition} normal {gun.Normal}" );
+				Log.Info( $"shimwatch shot: hit {tr.Hit} {tr.GameObject?.Name} surface {s?.ResourceName} base {s?.GetBaseSurface()?.ResourceName} impact {(s?.PrefabCollection.BulletImpact ?? s?.GetBaseSurface()?.PrefabCollection.BulletImpact)?.Name} decal {(s?.PrefabCollection.BulletImpactDecal ?? s?.GetBaseSurface()?.PrefabCollection.BulletImpactDecal)?.Name}" );
+			}
+		}
+
+		// with a weapon to give: the decals there are (a shot's leaves one)
+		if ( Give is { Length: > 0 } && _ticks % 5 == 0 )
+		{
+			var decals = Scene.GetAllComponents<Decal>().ToList();
+			Log.Info( $"shimwatch decals: {decals.Count} ({string.Join( ", ", decals.Take( 4 ).Select( d => $"{d.GameObject.Name} at {d.WorldPosition} enabled {d.Active} defs {d.Decals?.Count}" ) )})" );
 		}
 
 		// once: break the first prop that has gibs, and follow them

@@ -10,10 +10,14 @@
 #   sh tools/map.sh facepunch.flatgrass ../sandbox/Assets && sh tools/sandbox.sh ../sandbox scenes/sandbox.scene
 #   SBOX=../sbox-public sh spike.sh 120 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
 #   grep shimwatch target/spike/server.log
+# ENGINE2_WATCH_GIVE names a weapon's prefab the watcher gives each player.
 set -e
 dir=${1:?a Sandbox checkout}; scene=${2:-scenes/zoo.scene}
 here=$(cd "$(dirname "$0")" && pwd)
 cp "$here/sandbox/ShimWatch.cs" "$dir/Code/ShimWatch.cs"
+# ENGINE2_WATCH_GIVE=weapons/glock/glock.prefab: the watcher gives each player that weapon
+# (game code can't read the environment, so it's written into the copy)
+[ -n "$ENGINE2_WATCH_GIVE" ] && sed -i "s|const string Give = \"\";|const string Give = \"$ENGINE2_WATCH_GIVE\";|" "$dir/Code/ShimWatch.cs"
 python3 - "$dir" "$scene" <<'PY'
 import json, os, sys, uuid
 dir, scene = sys.argv[1], sys.argv[2]

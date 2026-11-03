@@ -346,11 +346,32 @@ impl Rules {
 
 // ---- the objects
 
+impl Shape {
+    /// Its tags as traces, collision rules and managed see them: its own, and
+    /// `solid` if it was made to carry it.
+    pub fn tags_now(&self) -> std::borrow::Cow<'_, [u32]> {
+        static SOLID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let solid = *SOLID.get_or_init(|| murmur2("solid"));
+        if self.default_solid && !self.tags.contains(&solid) {
+            let mut t = self.tags.clone();
+            t.push(solid);
+            std::borrow::Cow::Owned(t)
+        } else {
+            std::borrow::Cow::Borrowed(&self.tags)
+        }
+    }
+}
+
 pub struct Shape {
     pub body: usize,
     pub collider: ColliderHandle,
     pub kind: i64,
     pub tags: Vec<u32>,
+    /// made with SHAPE_DEFAULT_SOLID_TAG: it's `solid` as well as whatever
+    /// tags managed gives it (native 3D shapes carry it even when their
+    /// GameObject has no tags; PhysicsWorld2d.Trace.cs matches them so:
+    /// `tag == SolidTag || tokens.Contains( tag )`)
+    pub default_solid: bool,
     pub mask: u8,
     pub trigger: bool,
     pub ignore_traces: bool,
@@ -454,12 +475,12 @@ impl PhysicsHooks for Meta {
             return Some(SolverFlags::COMPUTE_RIGID_IMPULSES);
         };
         if a.body == b.body || a.mask & SOLID_CONTACT == 0 || b.mask & SOLID_CONTACT == 0 { return None; }
-        (self.rules.between(&a.tags, &b.tags) == RULE_COLLIDE).then_some(SolverFlags::COMPUTE_RIGID_IMPULSES)
+        (self.rules.between(&a.tags_now(), &b.tags_now()) == RULE_COLLIDE).then_some(SolverFlags::COMPUTE_RIGID_IMPULSES)
     }
 
     fn filter_intersection_pair(&self, cx: &PairFilterContext) -> bool {
         let (Some(a), Some(b)) = (self.shape(cx.collider1), self.shape(cx.collider2)) else { return true };
-        a.body != b.body && !(a.trigger && b.trigger) && self.rules.between(&a.tags, &b.tags) != RULE_IGNORE
+        a.body != b.body && !(a.trigger && b.trigger) && self.rules.between(&a.tags_now(), &b.tags_now()) != RULE_IGNORE
     }
 
     /// A contact's friction and elasticity: the touching triangle's, where a
@@ -1331,8 +1352,7 @@ pub fn add_shape(body: usize, ptr: usize, g: &Geometry, s: &ShapeSettings, mater
         .sensor(trigger)
         .active_collision_types(if trigger { ActiveCollisionTypes::all() } else { ActiveCollisionTypes::default() })
         .build();
-    let mut tags: Vec<u32> = if flags & SHAPE_TAGS != 0 { s.tags.iter().copied().filter(|&t| t != 0).collect() } else { Vec::new() };
-    if flags & SHAPE_DEFAULT_SOLID_TAG != 0 && tags.is_empty() { tags.push(murmur2("solid")); }
+    let tags: Vec<u32> = if flags & SHAPE_TAGS != 0 { s.tags.iter().copied().filter(|&t| t != 0).collect() } else { Vec::new() };
     let parts = if s.surface_indices != 0 && s.surface_count > 0 {
         unsafe { core::slice::from_raw_parts(s.surface_indices as *const i32, s.surface_count as usize) }.to_vec()
     } else {
@@ -1344,6 +1364,7 @@ pub fn add_shape(body: usize, ptr: usize, g: &Geometry, s: &ShapeSettings, mater
         collider: ColliderHandle::invalid(),
         kind: g.kind(),
         tags,
+        default_solid: flags & SHAPE_DEFAULT_SOLID_TAG != 0,
         mask: s.collision_function_mask as u8,
         trigger,
         ignore_traces: flags & SHAPE_IGNORE_TRACES != 0,
@@ -1431,7 +1452,7 @@ pub fn shape_kind(ptr: usize) -> i64 {
 }
 
 pub fn shape_tags(ptr: usize) -> Vec<u32> {
-    with_shape(ptr, |s, _| s.tags.clone()).unwrap_or_default()
+    with_shape(ptr, |s, _| s.tags_now().into_owned()).unwrap_or_default()
 }
 
 /// Changes a shape's tags: whether they changed. Contacts are found again
@@ -1682,7 +1703,7 @@ fn hit_result(w: &World, r: &TraceRequest, shape: usize, fraction: f32, point: V
         out.f_PhysicsShapeHandle = crate::handles::of(shape);
         out.f_PhysicsBodyHandle = crate::handles::of(s.body);
         out.f_SurfaceProperty = s.surface_at(triangle).max(0);
-        for (i, t) in s.tags.iter().take(16).enumerate() { out.f_Tags[i] = *t; }
+        for (i, t) in s.tags_now().iter().take(16).enumerate() { out.f_Tags[i] = *t; }
     }
     out
 }
@@ -1756,7 +1777,7 @@ fn sweep(w: &mut World, r: &TraceRequest, many: bool) -> Vec<(i32, S_PhysicsTrac
             2 if !trigger => return false,
             _ => {}
         }
-        tags_pass(&s.tags, r)
+        tags_pass(&s.tags_now(), r)
     };
     let filter = QueryFilter { flags: set_flags(r.object_set_mask), exclude_rigid_body: own, predicate: Some(&pass), ..Default::default() };
     let swept: Option<(SharedShape, Pose)> = if r.body != 0 {
@@ -1970,6 +1991,34 @@ mod tests {
         own.body = ball;
         let hit = trace(&own, false)[0];
         assert!((vec(hit.f_EndPos).z - 18.0).abs() < 0.1, "{}", vec(hit.f_EndPos).z);
+    }
+
+    #[test]
+    fn a_shape_made_solid_by_default_stays_solid_whatever_its_tags() {
+        // a floor made with the default solid tag, then given its GameObject's
+        // tags (none: Collider's Tags.SetFrom), as an editor mesh's is
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let w = ptr();
+        create_world(w);
+        let ground = ptr();
+        add_body(w, ground, &BodySettings::default());
+        let floor = ptr();
+        let settings = ShapeSettings { flags: SHAPE_DEFAULT_SOLID_TAG | 16, ..Default::default() };
+        assert!(add_shape(ground, floor, &Geometry::Box(Pose::IDENTITY, Vector::new(500.0, 500.0, 10.0)), &settings, &[]));
+        edit_tags(floor, |t| { t.clear(); true });
+        assert_eq!(shape_tags(floor), vec![murmur2("solid")], "solid, though its tags were cleared");
+        // a bullet's trace: any of the tags that collide with "bullet" (WithCollisionRules)
+        let mut r = ray(w, Vector::new(0.0, 0.0, 100.0), Vector::new(0.0, 0.0, -100.0));
+        r.tag_any = [murmur2("solid"), murmur2("world"), 0, 0, 0, 0, 0, 0];
+        assert!(trace(&r, false)[0].f_Fraction < 1.0, "a bullet hits it");
+        // given its GameObject's tag ("world", say), it keeps solid too: a bullet's trace
+        // names eight tags at most, and Sandbox's rules leave "world" ninth
+        edit_tags(floor, |t| { t.push(murmur2("world")); true });
+        assert_eq!(shape_tags(floor), vec![murmur2("world"), murmur2("solid")]);
+        r.tag_any = [murmur2("solid"), murmur2("ragdoll"), 0, 0, 0, 0, 0, 0];
+        assert!(trace(&r, false)[0].f_Fraction < 1.0, "hit as solid");
+        r.tag_exclude[0] = murmur2("solid");
+        assert_eq!(trace(&r, false)[0].f_Fraction, 1.0, "and missed by what excludes solid");
     }
 
     #[test]

@@ -2715,6 +2715,29 @@ pub unsafe fn g_pSceneSystem_DeleteSceneObject(obj: usize) {
     crate::handles::free(obj);
 }
 pub unsafe fn g_pSceneSystem_DeleteSceneObjectAtFrameEnd(obj: usize) { unsafe { g_pSceneSystem_DeleteSceneObject(obj) } }
+// ---- decals: their textures (camera.rs keeps them; the frame projects them)
+
+pub unsafe fn Set__CDclScnbjct_m_hColor(d: usize, t: usize) { crate::camera::set_decal_texture(d, 0, t) }
+pub unsafe fn Get__CDclScnbjct_m_hColor(d: usize) -> usize { crate::camera::decal_texture(d, 0) }
+pub unsafe fn Set__CDclScnbjct_m_hNormal(d: usize, t: usize) { crate::camera::set_decal_texture(d, 1, t) }
+pub unsafe fn Get__CDclScnbjct_m_hNormal(d: usize) -> usize { crate::camera::decal_texture(d, 1) }
+pub unsafe fn Set__CDclScnbjct_m_hRMO(d: usize, t: usize) { crate::camera::set_decal_texture(d, 2, t) }
+pub unsafe fn Get__CDclScnbjct_m_hRMO(d: usize) -> usize { crate::camera::decal_texture(d, 2) }
+pub unsafe fn Set__CDclScnbjct_m_hHeight(d: usize, t: usize) { crate::camera::set_decal_texture(d, 3, t) }
+pub unsafe fn Get__CDclScnbjct_m_hHeight(d: usize) -> usize { crate::camera::decal_texture(d, 3) }
+pub unsafe fn Set__CDclScnbjct_m_hEmission(d: usize, t: usize) { crate::camera::set_decal_texture(d, 4, t) }
+pub unsafe fn Get__CDclScnbjct_m_hEmission(d: usize) -> usize { crate::camera::decal_texture(d, 4) }
+
+/// A scene object's own render attributes, one set each.
+pub unsafe fn CSceneObject_GetAttributesPtrForModify(obj: usize) -> usize { crate::camera::object_attrs(obj) }
+pub unsafe fn CScnnmtblbjct_GetAttributesPtrForModify(obj: usize) -> usize { crate::camera::object_attrs(obj) }
+pub unsafe fn CMngdScnbjct_GetAttributesPtrForModify(obj: usize) -> usize { crate::camera::object_attrs(obj) }
+pub unsafe fn CDynmcScnbjct_GetAttributesPtrForModify(obj: usize) -> usize { crate::camera::object_attrs(obj) }
+pub unsafe fn CDclScnbjct_GetAttributesPtrForModify(obj: usize) -> usize { crate::camera::object_attrs(obj) }
+pub unsafe fn CScnLghtbjct_GetAttributesPtrForModify(obj: usize) -> usize { crate::camera::object_attrs(obj) }
+pub unsafe fn CScnLghtPrbVlmbj_GetAttributesPtrForModify(obj: usize) -> usize { crate::camera::object_attrs(obj) }
+pub unsafe fn CScnSkyBxbjct_GetAttributesPtrForModify(obj: usize) -> usize { crate::camera::object_attrs(obj) }
+
 // ---- tags: each scene object's (StringToken values), which a camera's
 // render and exclude tags choose by (camera.rs). Each class has its own copy of the slots.
 

@@ -800,6 +800,47 @@ only its source in Sandbox's repository and its texture
 band across the line stands in for it, opaque in its middle and fading
 at its edges: a beam's shape, not its crackle.
 
+**Decals** (`render/decals.rs`, `shader.wgsl`): a `Decal` component's
+`CDecalSceneObject`, which native, not managed, draws. Each is a box: its
+transform places, turns and sizes it (depth along its forward axis,
+width and height across), and managed sets its colour texture
+(`m_hColor`, kept now with the others), tint, colour mix, attenuation and
+sort order, and its blend mode in its render attributes (each scene
+object has its own now: `GetAttributesPtrForModify` gave managed a
+block no one could find again). As s&box's own forward shaders do
+(`Decals::Resolve`, public in `common/classes/Decals.hlsl`), every pixel
+of `complex` and `blendable` inside a decal's box takes it into its
+surface before it's lit: its texture times its tint, faded as the
+surface turns from its axis, mixed over the albedo, multiplied into it,
+or added as glow. So a decal is lit as what it lies on is, the map's
+lightmaps included. Each decal's colour texture is copied into a layer
+of one sRGB texture array, 256 square with its mips (as native keeps its
+decals in an atlas), read with the gradients the pixel's position gives.
+Not yet: normal, roughness/metalness/occlusion and height maps
+(parallax), sheets of frames, emission textures, the exclusion mask,
+and decals on what isn't `complex` or `blendable` (glass, sprites).
+Measured (`cargo test`, lavapipe): a red decal 32 square projected down
+onto a floor seen from 100 with a 60° view covers 324 pixels (17.8
+square predicted), as lit as the floor around it (179 in red where the
+floor is 179); multiplied, the same square; 40 above the floor, its box
+reaches nothing.
+
+In the game (the zoo, a pistol given by the watcher, five shots at the
+floor): five bullet decals where they landed, and the scorch the
+watcher's explosive prop leaves. s&box's decal textures are made from
+PNGs that are only their settings in sbox-public: the scorch's came out
+as the image generator's own error texture (magenta, as s&box shows a
+missing image), a bullet's not at all, and a dark soft-edged mark
+stands in for it, where it lands and how large, not its look.
+
+Shots had left nothing at all: a gun's trace (`WithCollisionRules(
+"bullet" )`) names at most eight tags a shape may have one of, and under
+Sandbox's rules `world`, the floor's tag, is ninth. Facepunch's engine
+gives every 3D shape `solid` as well as its own tags (s&box's 2D traces
+match them the same way: `tag == SolidTag || tokens.Contains( tag )`),
+and `solid` is first. Shapes made to carry it do here now, whatever
+managed sets on them, in traces and collision rules both.
+
 `render map` draws a map from its pak alone, its sun and sky as its
 entities name them, lit by its lightmaps and probes (`RENDER_LIGHTMAPS=0`:
 without), from any camera: the same renderer without a game.
@@ -1248,6 +1289,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
 | `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
 | `engine2/src/sprites.rs`, `render/sprites.rs`, `sprites.wgsl` | sprite batches (particles): their compute shaders run on the CPU, their draw read back in order and drawn as s&box's `sprite_ps` |
+| `engine2/src/render/decals.rs` | decals: their boxes, their colour textures as layers of one array, laid into surfaces by `shader.wgsl` |
 | `engine2/src/lines.rs`, `render/lines.rs`, `lines.wgsl` | lines (beams, trails): `line_cs` run on the CPU, their triangles drawn as s&box's `line.shader` |
 | `engine2/src/camera.rs` | cameras managed asks for pixels: their worlds, what's shown, the view drawn into managed's bitmap |
 | `render/` | the renderer from the command line: a model, or a map from its pak, drawn into a PNG |
@@ -1270,7 +1312,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/package.sh` | a package's files from sbox.game, at their game paths, for development (never committed) |
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/play.sh` | Sandbox hosted here and joined in a window: play it |
-| `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
+| `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world (`ENGINE2_WATCH_GIVE=weapons/glock/glock.prefab`: it gives each player that weapon, in their hands) |
 
 ## Next
 
@@ -1287,8 +1329,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    Materials, textures and shaders only matter to a client.
 4. **A client.** It plays, in a window (above): models, maps lit as they
    were baked, the UI and HUD, sprites, lines, sound and input, drawn on
-   wgpu from what s&box's public shaders say. Next: decals, local lights'
-   shadows, a game's own shaders.
+   wgpu from what s&box's public shaders say, and decals laid into
+   surfaces. Next: local lights' shadows, a game's own shaders.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
    download.
 

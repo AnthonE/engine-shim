@@ -130,6 +130,26 @@ pub fn material_texture(m: usize, name: &str) -> Option<usize> {
     MATERIAL_TEXTURES.lock().unwrap().as_ref()?.get(&m)?.get(name).copied()
 }
 
+/// Each decal's textures as managed set them (CDecalSceneObject's m_hColor,
+/// m_hNormal, m_hRMO, m_hHeight, m_hEmission).
+static DECAL_TEXTURES: Mutex<Option<HashMap<usize, [usize; 5]>>> = Mutex::new(None);
+
+pub fn set_decal_texture(decal: usize, which: usize, t: usize) {
+    DECAL_TEXTURES.lock().unwrap().get_or_insert_with(Default::default).entry(decal).or_default()[which] = t;
+}
+
+pub fn decal_texture(decal: usize, which: usize) -> usize {
+    DECAL_TEXTURES.lock().unwrap().as_ref().and_then(|d| d.get(&decal)).map(|t| t[which]).unwrap_or(0)
+}
+
+/// Each scene object's render attributes (SceneObject.Attributes: a
+/// decal's DecalBlendMode, a line's combos), one set per object.
+static OBJECT_ATTRS: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
+
+pub fn object_attrs(obj: usize) -> usize {
+    *OBJECT_ATTRS.lock().unwrap().get_or_insert_with(Default::default).entry(obj).or_insert_with(crate::gpu::new_attrs)
+}
+
 /// Textures by name, each one object (as materials are).
 static TEXTURES: Mutex<Option<(HashMap<String, usize>, HashMap<usize, String>)>> = Mutex::new(None);
 
@@ -233,6 +253,8 @@ pub fn turn_light(light: usize, towards: crate::slots::S_Vector3) {
 pub fn forget(obj: usize) {
     set_shown(obj, true);
     if let Some(t) = TAGS.lock().unwrap().as_mut() { t.remove(&obj); }
+    if let Some(d) = DECAL_TEXTURES.lock().unwrap().as_mut() { d.remove(&obj); }
+    if let Some(a) = OBJECT_ATTRS.lock().unwrap().as_mut().and_then(|a| a.remove(&obj)) { crate::gpu::device().attrs.remove(&a); }
     if let Some(s) = SUNS.lock().unwrap().as_mut() { s.remove(&obj); }
     if let Some(s) = SKIES.lock().unwrap().as_mut() { s.remove(&obj); }
     if let Some(s) = BAKED.lock().unwrap().as_mut() { s.remove(&obj); }
@@ -518,6 +540,31 @@ mod draw {
         (batches, lines, said)
     }
 
+    /// The decals in a camera's worlds that it shows (managed's Decal
+    /// components' DecalSceneObjects): their boxes, as their transforms place
+    /// and size them, and what managed set on them.
+    fn decals(camera: usize) -> Vec<crate::render::decals::Decal> {
+        let mut out = Vec::new();
+        for world in super::worlds(camera) {
+            for d in crate::handles::made_with("DecalSceneObject", world) {
+                if !super::shown(d) || !super::tags_drawn(camera, d) { continue; }
+                let t = crate::state::get::<S_Transform>(d, PROP_Transform);
+                let q = t.f_Rotation.f__quat;
+                let rotation = if q.f_X == 0.0 && q.f_Y == 0.0 && q.f_Z == 0.0 && q.f_W == 0.0 { Quat::IDENTITY } else { Quat::from_xyzw(q.f_X, q.f_Y, q.f_Z, q.f_W).normalize() };
+                let mut decal = crate::render::decals::Decal::placed(v3(t.f_Position), rotation, v3(t.f_Scale));
+                let tint = crate::state::get::<S_Vector4>(d, PROP__CDclScnbjct_m_vColorTint).f__vec;
+                decal.tint = [tint.f_X, tint.f_Y, tint.f_Z, tint.f_W];
+                decal.color_mix = crate::state::get::<f32>(d, PROP__CDclScnbjct_m_flColorMix);
+                decal.attenuation = crate::state::get::<f32>(d, PROP__CDclScnbjct_m_flAttenuationAngle).clamp(0.0, 1.0);
+                decal.sort = crate::state::get::<u32>(d, PROP__CDclScnbjct_m_nSortOrder);
+                decal.blend_mode = match crate::gpu::get(super::object_attrs(d), crate::string_token("DecalBlendMode")) { Some(crate::gpu::Val::Int(m)) => m.clamp(0, 2) as u32, _ => 0 };
+                decal.texture = Some(super::decal_texture(d, 0)).filter(|&t| t != 0);
+                out.push(decal);
+            }
+        }
+        out
+    }
+
     pub fn frame(camera: usize, width: i32, height: i32) -> Option<(Vec<u8>, String)> {
         frame_into(camera, width, height, None)
     }
@@ -639,6 +686,15 @@ mod draw {
         let (sprites, lines, custom) = custom_objects(camera, &view, width, height);
         view.sprites = sprites;
         view.lines = lines;
+        view.decals = decals(camera);
+        let custom = if view.decals.is_empty() { custom } else {
+            let found = view.decals.iter().filter(|d| d.texture.is_some_and(|t| r.sprites.try_texture_of(r, t).is_some())).count();
+            format!("{custom}; {} decals ({found} with their texture)", view.decals.len())
+        };
+        let custom = if std::env::var_os("ENGINE2_FRAME_DUMP").is_none() { custom } else {
+            let all: Vec<usize> = super::worlds(camera).into_iter().flat_map(|w| crate::handles::made_with("DecalSceneObject", w)).collect();
+            format!("{custom}; decal objects {} ({} shown)", all.len(), all.iter().filter(|&&d| super::shown(d)).count())
+        };
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
         let image = r.draw_into(&instances, &view, width as u32, height as u32, target);
         let mut said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes); {custom}", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
