@@ -58,9 +58,17 @@ def sha256(path):
         for chunk in iter(lambda: f.read(1 << 20), b""): h.update(chunk)
     return h.hexdigest()
 
+# What the engine writes into its game folder when the build runs (its data,
+# logs, the packages it downloaded): a build that has been run carries them,
+# and a depot ships the build, not what one machine wrote
+RUNTIME = {"game/data", "game/logs", "game/download", "game/.source2"}
+
 files = []
 for dirpath, dirnames, filenames in os.walk(build):
-    dirnames.sort()
+    here = os.path.relpath(dirpath, build).replace(os.sep, "/")
+    skipped = [d for d in dirnames if f"{here}/{d}".lstrip("./") in RUNTIME]
+    for d in skipped: print(f"depot: leaving out {here}/{d}".replace("./", ""), "(written when the build ran)")
+    dirnames[:] = sorted(d for d in dirnames if d not in skipped)
     for name in sorted(filenames):
         src = os.path.join(dirpath, name)
         rel = os.path.relpath(src, build).replace(os.sep, "/")

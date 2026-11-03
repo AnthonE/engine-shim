@@ -1,0 +1,28 @@
+# An engine-shim game server, one per game: shim-server@<slug>.
+# Its build is /opt/elo-shim/<slug> (tools/build.sh's folder), its settings
+# /etc/elo-shim/<slug>.env (shim-server.env), its keys and shard row
+# /var/lib/elo-shim/<slug>. deploy/install-server.sh puts them there.
+[Unit]
+Description=engine-shim game server (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=elo-shim
+Group=elo-shim
+EnvironmentFile=/etc/elo-shim/%i.env
+WorkingDirectory=/opt/elo-shim/%i
+# SHIM_ARGS: s&box's own server arguments, from the env file
+ExecStart=/opt/elo-shim/%i/host $SHIM_ARGS
+Restart=on-failure
+RestartSec=5
+# the managed engine writes its data, logs and downloaded packages into its
+# game folder, and the host key and shard row live in /var/lib
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/elo-shim/%i/game /var/lib/elo-shim/%i
+
+[Install]
+WantedBy=multi-user.target

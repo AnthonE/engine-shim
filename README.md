@@ -1124,6 +1124,56 @@ Wine 9 doesn't implement (Windows does); the run used a local copy of
 quinn-udp that carries on without them. Not yet run on Windows itself,
 nor the sign-in's named pipe or the launcher there.
 
+## Publishing a game on Elo Pros
+
+What it takes for a player to run `elo install <slug>` and `elo play
+<slug>` against a server we host: the builds on the origin, and the server
+on the game box.
+
+**The builds, on the origin** (`tools/publish.sh`). From one or more
+`tools/build.sh` folders, it stages what scry-forge's `meter/launcher.py`
+serves: each platform's depot at `depots/<slug>/<build>/<platform>/` with
+the bytes beside it and its root on the origin's own route
+(`/api/launcher/depot/<slug>/<build>/<platform>/files`, so the notary's
+digest and the download agree), the `published.json` that makes them live,
+and the title's manifest for scry-forge's `data/launcher/`, a native slot
+per platform and its shard list at `/api/launcher/servers/<slug>`.
+`PUBLISH.txt` says the copy in order (the pointer last: a build is live
+when `published.json` names it, never because its directory is there).
+`depot.py` leaves out what a build writes when it runs (`game/data`,
+`logs`, `download`), so a folder that has been played ships as it was
+built.
+
+```sh
+sh tools/publish.sh sandbox Sandbox ../stage ../sandbox-build ../sandbox-win
+```
+
+**The server, on the game box** (`deploy/`). `install-server.sh <slug>
+<build> <host> [port] [status port]` installs a Linux build as
+`shim-server@<slug>` (systemd, its own user, its folder and
+`/var/lib/elo-shim/<slug>` the only places it writes), with its settings in
+`/etc/elo-shim/<slug>.env` (`shim-server.env`: sign-ins required for its
+address, its certificate, its host key, its shard row, its status, `+port`)
+and prints what's left: the certificate (`letsencrypt-hook.sh`, also the
+renewal hook), nginx's two locations for its status (`nginx-status.conf`:
+the origin asks a shard's `status_url` over https on the host its `addr`
+names), the firewall, and its shard row copied to the origin. Run again
+with a new build to update it; its settings, key and row stay.
+
+Measured here: both builds staged for a local origin and served by
+scry-forge's own router (its manifest route filled both native rows,
+`depot_state: published`, with their digests); `elo install sandbox` by
+slug from it, in the clean namespace, fetched and verified all 16,092
+files and `elo play --dry-run` named the title's shard list. That install
+first took 8 files a second, because the router re-validated the whole
+depot on every file request; scry-forge now parses a depot once per
+document (its `claude/laughing-brown-grojb1` branch), and the same install
+and verify took 34 s. The server, installed from the staged Linux depot
+with a stand-in for systemd and certbot and run as its unit runs it: as
+`elo-shim`, listening with the given certificate, its host key made, its
+row written (`status_url` https on its own host) and `status.json`
+answering on loopback for nginx.
+
 ## What a player hears
 
 `engine2/src/audio.rs`. s&box mixes in C# (`Sandbox.Audio.MixingThread`);
@@ -1298,6 +1348,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/play.sh` | Sandbox hosted here and joined in a window: play it |
 | `tools/build.sh` | a game as a player installs it: one folder with the runtime, the engine and the game, and its `host` and `play` (Linux, or Windows cross-compiled) |
 | `tools/depot.py` | a build as the Elo Pros launcher installs it: its depot and manifest, and the files to serve |
+| `tools/publish.sh` | builds staged as the Elo Pros origin serves them: depots, the pointer that makes them live, the manifest |
+| `deploy/` | a game's server on the game box: `install-server.sh`, its systemd unit and settings, nginx's status locations, the certificate hook |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
