@@ -1,5 +1,5 @@
 diff --git a/engine/Launcher/SboxServer/Launcher.cs b/engine/Launcher/SboxServer/Launcher.cs
-index f8cf0c29..fd65916a 100644
+index f8cf0c29..9d8b732e 100644
 --- a/engine/Launcher/SboxServer/Launcher.cs
 +++ b/engine/Launcher/SboxServer/Launcher.cs
 @@ -1,4 +1,5 @@
@@ -49,7 +49,7 @@ index f8cf0c29..fd65916a 100644
  		// No game specified, show some help
  		if ( !Environment.CommandLine.Contains( "game " ) )
  		{
-@@ -60,9 +79,43 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -60,9 +79,44 @@ public class DedicatedServerAppSystem : AppSystem
  		console?.Update();
  	}
  
@@ -87,14 +87,15 @@ index f8cf0c29..fd65916a 100644
 +		if ( shimClient is not null && ++shimFrames == 30 )
 +		{
 +			System.Console.WriteLine( $"engine-shim: a player, dedicated={Application.IsDedicatedServer} headless={Application.IsHeadless}, connecting to {shimClient}" );
-+			// engine-shim: +shimclient best joins the busiest server on the list (ENGINE2_SERVER_LIST) that has room and no password: Play with no server chosen
-+			if ( shimClient == "best" ) ShimJoinBest(); else ConVarSystem.Run( $"connect {shimClient}" );
++			// engine-shim: +shimclient best (or empty: a launcher's {server} with none chosen, "" on Windows) joins the busiest server on the list (ENGINE2_SERVER_LIST) that has room and no password
++			var target = shimClient.Trim( '"', ' ' );
++			if ( target is "" or "best" ) ShimJoinBest(); else ConVarSystem.Run( $"connect {target}" );
 +		}
  
  		return base.RunFrame();
  	}
 diff --git a/engine/Sandbox.AppSystem/AppSystem.cs b/engine/Sandbox.AppSystem/AppSystem.cs
-index bde38e73..a528979b 100644
+index bde38e73..32b08b96 100644
 --- a/engine/Sandbox.AppSystem/AppSystem.cs
 +++ b/engine/Sandbox.AppSystem/AppSystem.cs
 @@ -144,6 +144,7 @@ public class AppSystem
@@ -105,6 +106,16 @@ index bde38e73..a528979b 100644
  
  			CrashShutdown();
  
+@@ -467,6 +468,9 @@ public class AppSystem
+ 			return;
+ 
+ 		var dllName = $"{Environment.CurrentDirectory}\\bin\\win64\\steam_api64.dll";
++		// engine-shim: with the open native engine there's no Valve Steam API beside it; Steam's
++		// imports go unanswered, as on Linux, where this is never loaded
++		if ( !System.IO.File.Exists( dllName ) ) return;
+ 		if ( !NativeLibrary.TryLoad( dllName, out steamApiDll ) )
+ 		{
+ 			throw new System.Exception( "Couldn't load bin/win64/steam_api64.dll" );
 diff --git a/engine/Sandbox.Engine/Core/Windowing/GameWindow.cs b/engine/Sandbox.Engine/Core/Windowing/GameWindow.cs
 index 21880bb7..a96553c0 100644
 --- a/engine/Sandbox.Engine/Core/Windowing/GameWindow.cs

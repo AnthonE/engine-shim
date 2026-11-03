@@ -82,7 +82,8 @@ pub fn find(path: &str) -> Option<PathBuf> {
         roots.extend(a);
     }
     if let Ok(more) = std::env::var("ENGINE2_CONTENT") {
-        roots.extend(more.split(':').filter(|d| !d.is_empty()).map(PathBuf::from));
+        // the platform's own separator: ':' here, ';' on Windows (where ':' is a drive's)
+        roots.extend(std::env::split_paths(&more).filter(|d| !d.as_os_str().is_empty()));
     }
     let rel = path.replace('\\', "/");
     let rel = rel.trim_start_matches('/');

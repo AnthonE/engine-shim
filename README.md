@@ -790,7 +790,9 @@ client does, and this library answers it:
 - **SDL3's window**: the startup splash and the game's window are
   winit's, made on a thread of their own (X11, Wayland and Windows allow
   it; macOS doesn't yet), shown, sized, placed, focused, the splash's
-  pixels shown as managed draws them.
+  pixels shown as managed draws them. Its OS handles are read on that
+  thread when it's made (Windows hands them out there only), and the
+  renderer makes its surface from them.
 - **Its input**: keys (as SDL's scancodes and a US layout's keycodes),
   text, the mouse's position, buttons and wheel, focus and closing, as
   SDL3's 128-byte events for managed to poll; mouse look (relative mode)
@@ -1091,6 +1093,37 @@ the window drew the zoo at 1280x720. One thing a server box serving its
 depot from Python's `http.server` needs: `--protocol HTTP/1.1`, or the
 launcher's reused connections are cut after the first file.
 
+**For Windows** (`--platform win-x86_64`), cross-compiled from Linux
+(`apt-get install mingw-w64`, `rustup target add x86_64-pc-windows-gnu`).
+`engine2.dll` builds from the same source and imports only Windows' own
+DLLs. The folder has Microsoft's .NET runtime for Windows, the same managed
+engine, and in `bin/win64` this library alone (as `engine2.dll` and the two
+module names) with SkiaSharp's and HarfBuzz's Windows natives: none of
+Facepunch's closed ones. `host.cmd` and `play.cmd` start it (668 MB for
+Sandbox). Its depot starts the folder's own `dotnet\dotnet.exe` (a PE,
+Microsoft's) in `game\`, with the content folders and the title's shard
+list in its environment; an empty `{server}` joins the best on that list.
+Two things it needed: s&box loads `bin\win64\steam_api64.dll` itself on
+Windows, which the patch now skips when there's none (Steam's imports go
+unanswered, as on Linux), and winit gives a window's handle out on its
+own thread only (above).
+
+```sh
+sh tools/build.sh ../sandbox ../sandbox-win --platform win-x86_64 --package 'facepunch.flatgrass=^materials/dev/'
+python3 tools/depot.py ../sandbox-win ../sandbox-win-depot --platform win-x86_64 --slug sandbox --name Sandbox --base https://<where>
+```
+
+Measured under Wine 9.0 on this Linux box, not on Windows: the Windows
+server (`host.cmd`) loaded Sandbox and listened, and the Windows player
+(`play.cmd 127.0.0.1:27015`) joined it and drew the zoo as the Linux build
+does (29 objects, the physgun in hand, the HUD), at about a second a frame
+through Wine onto lavapipe. One thing in that run isn't what ships: this
+machine has no IPv6, so the sockets fell back to IPv4, where quinn-udp
+reads `IPV6_V6ONLY` and sets the ECN and don't-fragment options, which
+Wine 9 doesn't implement (Windows does); the run used a local copy of
+quinn-udp that carries on without them. Not yet run on Windows itself,
+nor the sign-in's named pipe or the launcher there.
+
 ## What a player hears
 
 `engine2/src/audio.rs`. s&box mixes in C# (`Sandbox.Audio.MixingThread`);
@@ -1263,7 +1296,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/package.sh` | a package's files from sbox.game, at their game paths, for development (never committed) |
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/play.sh` | Sandbox hosted here and joined in a window: play it |
-| `tools/build.sh` | a game as a player installs it: one folder with the runtime, the engine and the game, and its `host` and `play` |
+| `tools/build.sh` | a game as a player installs it: one folder with the runtime, the engine and the game, and its `host` and `play` (Linux, or Windows cross-compiled) |
 | `tools/depot.py` | a build as the Elo Pros launcher installs it: its depot and manifest, and the files to serve |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 

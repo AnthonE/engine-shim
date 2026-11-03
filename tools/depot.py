@@ -9,14 +9,15 @@ a manifest naming it (elo-pros-launcher docs/LAUNCHER.md §3). Writes, into
   manifest.json  the title, its native build row pointing at that depot
 
   python3 tools/depot.py <build dir> <out dir> --slug sandbox --name Sandbox \\
-      --base https://example.com/sandbox/0.1.0 [--version 0.1.0] \\
+      --base https://example.com/sandbox/0.1.0 [--version 0.1.0] [--platform win-x86_64] \\
       [--servers https://elopros.com/api/launcher/servers/sandbox] \\
       [--publisher NAME] [--repo URL] [--blurb TEXT]
 
 Serve <out> at --base. Then `elo install <base>/manifest.json` (or the
 manifest's path on disk), `elo verify`, `elo play`. The launcher starts the
 build's `play` with the server the player chose ({server}, or `best` on the
-title's shard list when none) and the title's list ({servers}).
+title's shard list when none) and the title's list ({servers}). A Windows
+build (tools/build.sh --platform win-x86_64) starts its own dotnet.exe.
 
 A depot names files, not links: a symlink in the build (libengine2.so's
 module names) becomes a copy. The digest a notary commits is the launcher's
@@ -35,8 +36,9 @@ p.add_argument("--publisher", default=""); p.add_argument("--repo", default="");
 a = p.parse_args()
 
 build = os.path.abspath(a.build); out = os.path.abspath(a.out)
-if not os.path.isfile(os.path.join(build, "play")):
-    sys.exit(f"depot: {build} has no play: make it with tools/build.sh")
+windows = a.platform.startswith("win-")
+if not os.path.isfile(os.path.join(build, "play.cmd" if windows else "play")):
+    sys.exit(f"depot: {build} is no {a.platform} build: make it with tools/build.sh --platform {a.platform}")
 if not a.slug or not all(c.islower() or c.isdigit() or c in "-_" for c in a.slug):
     sys.exit(f"depot: bad slug {a.slug!r}: lowercase letters, digits, - and _")
 base = a.base.rstrip("/")
@@ -67,7 +69,8 @@ for dirpath, dirnames, filenames in os.walk(build):
             sys.exit(f"depot: {rel} links outside the build ({real})")
         if not os.path.isfile(real): continue
         mode = os.stat(real).st_mode
-        executable = bool(mode & stat.S_IXUSR)
+        # Windows has no mode bits: what runs there is a .exe
+        executable = rel.lower().endswith(".exe") if windows else bool(mode & stat.S_IXUSR)
         dest = os.path.join(files_dir, rel)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         try: os.link(real, dest)        # the same disk: no second copy
@@ -91,6 +94,20 @@ depot = {
         "env": {"ENGINE2_ELO_GAME": a.slug},
     },
 }
+if windows:
+    # A PE, not a cmd script: the folder's own dotnet.exe (Microsoft's,
+    # signed), which finds its runtime beside itself, run in game/. An empty
+    # {server} reaches the engine as "" and joins the best on the list; the
+    # list and the content folders are the depot's environment, relative to
+    # game/ (';' between, as Windows separates paths)
+    depot["launch"] = {
+        "exec": "dotnet/dotnet.exe",
+        "args": ["sbox-server.dll", "+shimclient", "{server}", "+shimwindow",
+                 "-width", "1280", "-height", "720", "+instanceid", "2"],
+        "cwd": "game",
+        "env": {"ENGINE2_ELO_GAME": a.slug, "ENGINE2_CONTENT": "../project/Assets;../content",
+                **({"ENGINE2_SERVER_LIST": a.servers} if a.servers else {})},
+    }
 total = sum(f["bytes"] for f in files)
 manifest = {
     "manifest_version": 1,
