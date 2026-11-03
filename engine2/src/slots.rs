@@ -3090,8 +3090,8 @@ unsafe extern "C" fn s1707(_a0: usize, _a1: usize, _a2: usize) { hit(1707);  }
 unsafe extern "C" fn s1708(_a0: usize, _a1: usize, _a2: usize) -> usize { hit(1708); unsafe { crate::impls::IMaterial2_GetString(_a0, _a1, _a2) } }
 unsafe extern "C" fn s1709(_a0: usize, _a1: usize, _a2: usize) { hit(1709);  }
 unsafe extern "C" fn s1710(_a0: usize, _a1: usize) -> S_Vector4 { hit(1710); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1711(_a0: usize, _a1: usize, _a2: usize) { hit(1711);  }
-unsafe extern "C" fn s1712(_a0: usize, _a1: usize) -> usize { hit(1712); crate::trace::object(1712) }
+unsafe extern "C" fn s1711(_a0: usize, _a1: usize, _a2: usize) { hit(1711); unsafe { crate::impls::IMaterial2_Set_2(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1712(_a0: usize, _a1: usize) -> usize { hit(1712); unsafe { crate::impls::IMaterial2_GetTexture(_a0, _a1) } }
 unsafe extern "C" fn s1713(_a0: usize, _a1: i32) { hit(1713);  }
 unsafe extern "C" fn s1714(_a0: usize) -> i32 { hit(1714); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1715(_a0: usize) { hit(1715);  }
@@ -3433,7 +3433,7 @@ unsafe extern "C" fn s2050(_a0: usize, _a1: usize, _a2: i32) -> i32 { hit(2050);
 unsafe extern "C" fn s2051(_a0: usize, _a1: usize, _a2: i32, _a3: i32) -> i32 { hit(2051); unsafe { crate::impls::IRenderContext_BindIndexBuffer_1(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s2052(_a0: usize, _a1: i32, _a2: usize, _a3: i32) -> i32 { hit(2052); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2053(_a0: usize, _a1: i32, _a2: usize, _a3: i32, _a4: i32) -> i32 { hit(2053); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s2054(_a0: usize, _a1: i32, _a2: usize, _a3: i32) -> i32 { hit(2054); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s2054(_a0: usize, _a1: i32, _a2: usize, _a3: i32) -> i32 { hit(2054); unsafe { crate::impls::IRenderContext_BindVertexBuffer_2(_a0, _a1, _a2, _a3) } }
 unsafe extern "C" fn s2055(_a0: usize, _a1: i32, _a2: usize, _a3: i32, _a4: i32) -> i32 { hit(2055); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2056(_a0: usize, _a1: usize, _a2: usize) { hit(2056);  }
 unsafe extern "C" fn s2057(_a0: usize, _a1: usize) { hit(2057);  }
@@ -4270,7 +4270,7 @@ unsafe extern "C" fn s2887(_a0: usize) { hit(2887);  }
 unsafe extern "C" fn s2888(_a0: i32) { hit(2888);  }
 unsafe extern "C" fn s2889(_a0: usize, _a1: usize, _a2: i32) -> usize { hit(2889); unsafe { crate::impls::g_pMtrlSystm2_CreateRawMaterial(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2890(_a0: usize, _a1: usize, _a2: i32) -> usize { hit(2890); crate::trace::object(2890) }
-unsafe extern "C" fn s2891(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(2891); crate::trace::object(2891) }
+unsafe extern "C" fn s2891(_a0: usize, _a1: i32, _a2: i32) -> usize { hit(2891); unsafe { crate::impls::g_pMtrlSystm2_CreateProceduralMaterialCopy(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2892(_a0: usize) -> usize { hit(2892); crate::trace::object(2892) }
 unsafe extern "C" fn s2893() { hit(2893);  }
 unsafe extern "C" fn s2894(_a0: usize, _a1: usize, _a2: usize, _a3: i32, _a4: i32, _a5: i32, _a6: i32, _a7: f32, _a8: f32, _a9: f32, _a10: f32, _a11: i32, _a12: i32) { hit(2894);  }

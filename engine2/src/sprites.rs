@@ -87,6 +87,8 @@ pub fn dispatch(shader: &str, attrs: usize, threads: [i32; 3]) {
     if shader.contains("sprite_cs") {
         let camera = match get("CameraPosition") { Some(Val::Vec3(v)) => *v, Some(Val::Vec4(v)) => [v[0], v[1], v[2]], _ => eye().map(|e| e.position).unwrap_or_default() };
         sprite_cs(buffer("Sprites"), buffer("SpriteBufferOut"), buffer("DistanceBuffer"), buffer("AtomicCounter"), int("SpriteCount").max(0) as usize, threads[0].max(0) as usize, camera, eye());
+    } else if shader.contains("line_cs") {
+        crate::lines::dispatch(attrs);
     } else if shader.contains("sort_cs") {
         sort_cs(buffer("SortBuffer"), buffer("DistanceBuffer"), int("Count").max(0) as usize, int("Block").max(0) as usize, int("Dim").max(0) as usize, int("D_CLEAR") != 0, threads);
     } else {

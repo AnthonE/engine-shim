@@ -26,6 +26,7 @@ pub mod relay;
 mod audio;
 mod gpu;
 mod sprites;
+mod lines;
 #[cfg(feature = "render")]
 mod window;
 mod rendermesh;

@@ -6,6 +6,7 @@
 //! every material s&box's content has is one of). The engine draws its
 //! scene with it when managed asks a camera for pixels (impls.rs,
 //! CCameraRenderer_RenderToBitmap); `render` draws one model.
+pub mod lines;
 pub mod sprites;
 pub mod ui;
 use std::collections::HashMap;
@@ -179,6 +180,8 @@ pub struct Renderer {
     pub ui: ui::Ui,
     /// sprite batches drawn into the scene (sprites.rs)
     pub sprites: sprites::Sprites,
+    /// lines drawn into the scene (lines.rs)
+    pub lines: lines::Lines,
     pub gpu: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -386,7 +389,8 @@ impl Renderer {
         let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&none, &none, &none, &none], &[BakedLight::default()]);
         let ui = ui::Ui::new(&device, &queue);
         let sprites = sprites::Sprites::new(&device, &queue);
-        Ok(Renderer { instance, ui, sprites, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
+        let lines = lines::Lines::new(&device, &queue);
+        Ok(Renderer { instance, ui, sprites, lines, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -839,8 +843,8 @@ impl Renderer {
             }
         }
         later.sort_by(|a, b| b.0.total_cmp(&a.0));
-        // sprites are drawn after what's translucent, against the same depth
-        let sprites = view.sprites.iter().any(|b| !b.is_empty());
+        // lines and sprites are drawn after what's translucent, against the same depth
+        let sprites = view.sprites.iter().any(|b| !b.is_empty()) || view.lines.iter().any(|l| !l.indices.is_empty());
         let store = if later.is_empty() && !sprites { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store };
         let resolved_view = resolved.create_view(&Default::default());
         let mut encoder = d.create_command_encoder(&Default::default());
@@ -967,7 +971,7 @@ impl Renderer {
         profile.mark(&mut encoder, "translucent");
         if sprites {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("sprites"),
+                label: Some("lines and sprites"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &msaa,
                     resolve_target: multisampled.then_some(&resolved_view),
@@ -987,6 +991,8 @@ impl Renderer {
                 sun_color: sun_color.extend(0.0).into(),
                 ambient: uniform.sky,
             };
+            let l = lines::LineView { view_proj: u.view_proj, eye: u.eye, sun: sun.normalize().extend(0.0).into(), sun_color: u.sun_color, ambient: u.ambient };
+            self.lines.draw(self, &mut pass, &l, &view.lines, samples());
             self.sprites.draw(self, &mut pass, &u, &view.sprites, samples());
         }
         profile.mark(&mut encoder, "sprites");
@@ -1146,6 +1152,8 @@ pub struct View {
     pub exposure: Exposure,
     /// sprite batches (particles), drawn over what's translucent in their order
     pub sprites: Vec<crate::sprites::Batch>,
+    /// lines (beams, trails), drawn before the sprites
+    pub lines: Vec<crate::lines::Line>,
 }
 
 /// A light a map's lightmaps name by its bake index (managed's
@@ -1389,6 +1397,7 @@ impl View {
             tonemap: Tonemap::Hable,
             exposure: Exposure::default(),
             sprites: Vec::new(),
+            lines: Vec::new(),
         }
     }
 
@@ -1400,7 +1409,7 @@ impl View {
         let fov = 30f32.to_radians();
         let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
         let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default(), sprites: Vec::new() }
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default(), sprites: Vec::new(), lines: Vec::new() }
     }
 }
 

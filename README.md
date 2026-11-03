@@ -759,8 +759,46 @@ where the beam meets the chair and the barrel's 152. Core's particle
 textures (`textures/particles/flares/...`, `textures/shapes/spark2`) are
 only their settings in sbox-public, their images coming with Facepunch's
 download, so each is drawn as a soft round glow in its place: where it
-is and how large, not its art. The physgun's beam is a `LineRenderer`, a
-custom object too (`SceneLineObject`, the `line` shader): not drawn yet.
+is and how large, not its art.
+
+**Lines** (`engine2/src/lines.rs`, `render/lines.rs`): a `LineRenderer`,
+a beam, a particle trail (`SceneTrailObject` is one, though none was
+seen in these runs). Each is a custom object too (`SceneLineObject`): its command list uploads its points (`LinePoint`:
+position, normal, colour, width, texture coordinate) and dispatches
+`line_cs`, run here on the CPU as the sprites' are: a row of vertices
+across the line at each point (facing the camera, along the points'
+normals, or round them as a cylinder, as many across as its
+tessellation), quads joining each row to the next, and caps at its ends
+(a triangle, an arrow's head, a fan of eight). Its draw takes its
+vertices from a GPU buffer (`BindVertexBuffer`, recorded now, with the
+bytes of the vertex and index buffers a draw reads), and is read back
+as a line where `line_cs` wrote those vertices; drawn by our port of
+`line.shader` (`render/lines.wgsl`) after what's translucent and before
+the sprites: its material's colour texture times the vertex colour
+(stored as gamma), cut where that leaves nothing, added, blended or
+opaque (those first, writing depth). A material copied
+(`CreateProceduralMaterialCopy`: the default line material each
+renderer makes its own) keeps its source's name, shader and textures,
+and takes the ones managed sets on it (`IMaterial2.Set`: `g_tColor`).
+Not yet: soft edges against what's behind (`g_DepthFeather`), fog, the
+material's normal map, roughness and metalness, wireframe; a lit line
+takes the sky's ambient and the sun on the side it faces. Measured
+(`cargo test`, lavapipe): a line along x seen from above has its width
+across it in y, the quads joining its rows in `line_cs`'s order; a
+triangle cap's point lies a half-width beyond its end, an arrow's tip a
+width, a rounded cap's fan a half-width round it; a cylinder's ring
+goes round its line. Drawn 40 wide at 100 from a 90° camera, a line
+covers a fifth of the frame's height, orange as authored; added at half
+alpha, half as bright; behind an opaque one, hidden.
+
+In the game (the zoo, grabbing the office chair): the physgun's beam,
+one line of 48 triangles from the muzzle to where it holds the chair,
+added, its colour 1.9, 3.5, 4 (brighter than white) tapering to nothing
+at the chair. Its material (`weapons/physgun/physgun_beam.vmat`) is
+only its source in Sandbox's repository and its texture
+(`textures/beams/beam_crack_01`) only its settings in sbox-public, so a
+band across the line stands in for it, opaque in its middle and fading
+at its edges: a beam's shape, not its crackle.
 
 `render map` draws a map from its pak alone, its sun and sky as its
 entities name them, lit by its lightmaps and probes (`RENDER_LIGHTMAPS=0`:
@@ -1210,6 +1248,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
 | `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
 | `engine2/src/sprites.rs`, `render/sprites.rs`, `sprites.wgsl` | sprite batches (particles): their compute shaders run on the CPU, their draw read back in order and drawn as s&box's `sprite_ps` |
+| `engine2/src/lines.rs`, `render/lines.rs`, `lines.wgsl` | lines (beams, trails): `line_cs` run on the CPU, their triangles drawn as s&box's `line.shader` |
 | `engine2/src/camera.rs` | cameras managed asks for pixels: their worlds, what's shown, the view drawn into managed's bitmap |
 | `render/` | the renderer from the command line: a model, or a map from its pak, drawn into a PNG |
 | `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders (case blind, as managed names them), the game's own, mounted paks |
@@ -1247,10 +1286,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    values, animation graphs), surfaces and maps are read (above).
    Materials, textures and shaders only matter to a client.
 4. **A client.** It plays, in a window (above): models, maps lit as they
-   were baked, the UI and HUD, sprites, sound and input, drawn on wgpu
-   from what s&box's public shaders say. Next: beams and trails
-   (`SceneLineObject`), decals, local lights' shadows, a game's own
-   shaders.
+   were baked, the UI and HUD, sprites, lines, sound and input, drawn on
+   wgpu from what s&box's public shaders say. Next: decals, local lights'
+   shadows, a game's own shaders.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
    download.
 

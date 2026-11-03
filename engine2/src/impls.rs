@@ -474,6 +474,12 @@ pub unsafe fn IRenderContext_SetScissorRect(ctx: usize, rect: usize) {
     let r = unsafe { rd::<[i32; 4]>(rect) };
     gpu::with_context(ctx, |c| c.scissor = r)
 }
+/// A GPU buffer bound to draw vertices from (Graphics.Draw with a vertex
+/// buffer: a line's); slot 0 is the one kept.
+pub unsafe fn IRenderContext_BindVertexBuffer_2(ctx: usize, slot: i32, b: usize, offset: i32) -> i32 {
+    if slot == 0 { gpu::with_context(ctx, |c| c.vertex_buffer = Some((b, offset))); }
+    1
+}
 pub unsafe fn IRenderContext_Draw(ctx: usize, prim: i64, first: i32, count: i32) { gpu::record(ctx, prim, first, count, 1, 0, false) }
 /// What a render context draws into: the UI layer's, the view it was made for.
 pub unsafe fn IRenderContext_GetViewport(ctx: usize) -> crate::slots::S_NativeEngine_RenderViewport {
@@ -2792,6 +2798,16 @@ pub unsafe fn g_pMtrlSystm2_CreateRawMaterial(name: usize, shader: usize, _anony
     let m = crate::camera::material(&name);
     crate::camera::set_material_shader(m, &shader);
     m
+}
+/// A material copied (Material.CreateCopy: a line's default material).
+pub unsafe fn g_pMtrlSystm2_CreateProceduralMaterialCopy(src: usize, _flags: i32, _anonymous: i32) -> usize { crate::camera::copy_material(src) }
+/// A texture set on a material by its parameter's name (Material.Set).
+pub unsafe fn IMaterial2_Set_2(m: usize, name: usize, t: usize) { crate::camera::set_material_texture(m, &unsafe { read(name) }, t) }
+/// A texture a material was given by name; one it wasn't is still a texture
+/// (managed's SkyBox2D asks its material for one and throws on none), an
+/// object of its own as the stub's answer was.
+pub unsafe fn IMaterial2_GetTexture(m: usize, name: usize) -> usize {
+    crate::camera::material_texture(m, &unsafe { read(name) }).unwrap_or_else(|| crate::trace::object(1712))
 }
 /// A shader by name (CVfx): one object per name, which answers it.
 pub unsafe fn Glue_Resources_GetShader(name: usize, _guid: crate::slots::S_System_Guid) -> usize { crate::camera::shader(&unsafe { read(name) }) }

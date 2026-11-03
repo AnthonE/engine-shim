@@ -101,6 +101,35 @@ pub fn material(name: &str) -> usize {
     })
 }
 
+/// A copy of a material (CreateProceduralMaterialCopy: managed's
+/// Material.CreateCopy): an object of its own with its source's name and
+/// shader, and its source's texture parameters, which it can then change.
+pub fn copy_material(src: usize) -> usize {
+    let p = crate::handles::object();
+    {
+        let mut m = MATERIALS.lock().unwrap();
+        let (_, names) = m.get_or_insert_with(Default::default);
+        let name = names.get(&src).cloned().unwrap_or_default();
+        names.insert(p, name);
+    }
+    if let Some(shader) = material_shader(src) { set_material_shader(p, &shader); }
+    let params = MATERIAL_TEXTURES.lock().unwrap().as_ref().and_then(|t| t.get(&src).cloned());
+    if let Some(params) = params { MATERIAL_TEXTURES.lock().unwrap().get_or_insert_with(Default::default).insert(p, params); }
+    p
+}
+
+/// Textures managed set on a material by parameter name (Material.Set:
+/// a line's `g_tColor`).
+static MATERIAL_TEXTURES: Mutex<Option<HashMap<usize, HashMap<String, usize>>>> = Mutex::new(None);
+
+pub fn set_material_texture(m: usize, name: &str, t: usize) {
+    MATERIAL_TEXTURES.lock().unwrap().get_or_insert_with(Default::default).entry(m).or_default().insert(name.to_string(), t);
+}
+
+pub fn material_texture(m: usize, name: &str) -> Option<usize> {
+    MATERIAL_TEXTURES.lock().unwrap().as_ref()?.get(&m)?.get(name).copied()
+}
+
 /// Textures by name, each one object (as materials are).
 static TEXTURES: Mutex<Option<(HashMap<String, usize>, HashMap<usize, String>)>> = Mutex::new(None);
 
@@ -433,14 +462,14 @@ mod draw {
     /// sprite batch, say) asked to render, as native asks in its translucent
     /// layer (SceneCustomObjectRender.RenderObject), each with a render
     /// context that records what it draws; what they drew as sprite
-    /// batches, and what's said of it.
-    fn custom_objects(camera: usize, view: &View, width: i32, height: i32) -> (Vec<crate::sprites::Batch>, String) {
+    /// batches and lines, and what's said of it.
+    fn custom_objects(camera: usize, view: &View, width: i32, height: i32) -> (Vec<crate::sprites::Batch>, Vec<crate::lines::Line>, String) {
         let f = crate::managed(M_Sandbox_ScnCstmbjctRndr_RenderObject);
         let objects: Vec<usize> = super::worlds(camera).into_iter()
             .flat_map(|w| crate::handles::made_with("ManagedSceneObject", w))
             .filter(|&o| super::shown(o) && super::tags_drawn(camera, o))
             .collect();
-        if f == 0 || objects.is_empty() { return (Vec::new(), String::new()); }
+        if f == 0 || objects.is_empty() { return (Vec::new(), Vec::new(), String::new()); }
         #[repr(C)]
         struct Setup { context: usize, view: usize, layer: usize, format: i32, msaa: i32, stats: usize }
         // managed finds the object by its handle (HandleIndex.Get<SceneCustomObject>)
@@ -463,10 +492,12 @@ mod draw {
         crate::gpu::free_view(scene_view);
         crate::sprites::set_eye(None);
         let batches: Vec<crate::sprites::Batch> = draws.iter().filter_map(crate::sprites::batch).collect();
-        let other: Vec<String> = draws.iter().filter(|d| crate::sprites::batch(d).is_none() && d.grab.is_none() && d.clear.is_none())
+        let lines: Vec<crate::lines::Line> = draws.iter().filter_map(crate::lines::line).collect();
+        let other: Vec<String> = draws.iter().filter(|d| crate::sprites::batch(d).is_none() && crate::lines::line(d).is_none() && d.grab.is_none() && d.clear.is_none())
             .map(|d| super::material_shader(d.material).or_else(|| super::material_name(d.material)).unwrap_or_else(|| format!("{:#x}", d.material))).collect();
         let n: usize = batches.iter().map(|b| b.len()).sum();
-        let mut said = format!("{} custom objects: {} sprite batches, {n} sprites", objects.len(), batches.len());
+        let triangles: usize = lines.iter().map(|l| l.indices.len() / 3).sum();
+        let mut said = format!("{} custom objects: {} sprite batches, {n} sprites; {} lines, {triangles} triangles", objects.len(), batches.len(), lines.len());
         if !other.is_empty() { said += &format!(", and {} draws not drawn here ({})", other.len(), other.join(", ")); }
         if std::env::var_os("ENGINE2_FRAME_DUMP").is_some() {
             use crate::sprites::at;
@@ -477,8 +508,14 @@ mod draw {
                     crate::gpu::texture_at(b.word(i, at::TEXTURE) as i32).and_then(super::texture_name))).collect();
                 said += &format!("; batch {k} ({} sprites, {}): {}", b.len(), if b.additive { "added" } else { "blended" }, first.join(" | "));
             }
+            for (k, l) in lines.iter().enumerate() {
+                let ends = l.indices.first().zip(l.indices.last()).map(|(&a, &b)| (l.vertices[a as usize].position, l.vertices[b as usize].position));
+                said += &format!("; line {k} ({} triangles, {}{}, material {:?}, texture {:?}{}): from {:?}", l.indices.len() / 3,
+                    if l.additive { "added" } else if l.opaque { "opaque" } else { "blended" }, if l.lit { ", lit" } else { "" },
+                    l.material.and_then(super::material_name), l.texture.and_then(super::texture_name), if l.missing_texture { " (not found: a band in its place)" } else { "" }, ends);
+            }
         }
-        (batches, said)
+        (batches, lines, said)
     }
 
     pub fn frame(camera: usize, width: i32, height: i32) -> Option<(Vec<u8>, String)> {
@@ -599,8 +636,9 @@ mod draw {
             }
         }
         // what managed draws itself (its custom scene objects: sprite batches), asked for now
-        let (sprites, custom) = custom_objects(camera, &view, width, height);
+        let (sprites, lines, custom) = custom_objects(camera, &view, width, height);
         view.sprites = sprites;
+        view.lines = lines;
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
         let image = r.draw_into(&instances, &view, width as u32, height as u32, target);
         let mut said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes); {custom}", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());

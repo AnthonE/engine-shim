@@ -111,7 +111,12 @@ impl Sprites {
     /// with Facepunch's download, not sbox-public) is a soft glow in its
     /// place, so what uses it shows where and how large it is.
     fn texture(&self, r: &super::Renderer, index: i32) -> wgpu::TextureView {
-        let Some(t) = crate::gpu::texture_at(index) else { return self.white.clone() };
+        self.texture_of(r, crate::gpu::texture_at(index))
+    }
+
+    /// A texture by its object, as `texture` puts it on the GPU (none: white).
+    pub(super) fn texture_of(&self, r: &super::Renderer, t: Option<usize>) -> wgpu::TextureView {
+        let Some(t) = t else { return self.white.clone() };
         let version = crate::gpu::texture_version(t);
         if let Some((v, view)) = self.textures.lock().unwrap().get(&t) {
             if *v == version { return view.clone().unwrap_or_else(|| self.glow.clone()); }
