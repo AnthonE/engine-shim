@@ -1213,8 +1213,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    to build for `wasm32-unknown-emscripten`, where wgpu 25 has only WebGL
    (no WebGPU: the renderer uses storage buffers) and winit has no backend.
    Then threads (SharedArrayBuffer), a frame loop the browser drives
-   instead of one that blocks, files fetched instead of read, and the
-   games' C# run on .NET's interpreter. Expect a large download.
+   instead of one that blocks, files fetched instead of read, and a 2 GB
+   heap. Expect a large download.
 
 ## Open questions
 
