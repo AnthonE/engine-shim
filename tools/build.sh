@@ -13,7 +13,7 @@
 #   sh tools/build.sh ../sandbox ../sandbox-build --package 'facepunch.flatgrass=^materials/dev/'
 # Then, from anywhere (copy the folder where you like):
 #   <out>/host                     the game's dedicated server, on 27015
-#   <out>/play <host:port> [w h]   join one, in a window
+#   <out>/play [host:port|best]    join one, in a window
 # Run from the repository's root after tools/setup.sh. A project from
 # tools/sandbox.sh wants SHIMWATCH=0 (the test watcher left out).
 set -e
@@ -90,14 +90,24 @@ exec "\$here/dotnet/dotnet" sbox-server.dll +shimgame "\$here/project/$(basename
 EOF
 cat > "$out/play" <<'EOF'
 #!/bin/sh
-# Join a server in a window, on this folder alone: ./play <host:port> [width height]
+# Join a server in a window, on this folder alone:
+#   ./play [host:port | identity | best] [--servers <list>] [engine arguments...]
+# best (or nothing) joins the busiest server on the list that has room. The
+# list is a shard list's URL or file (ENGINE2_SERVER_LIST): the Elo Pros
+# launcher passes its title's. -width and -height go to the engine
+# (1280x720 unless given).
 here=$(cd "$(dirname "$0")" && pwd)
 export DOTNET_ROOT="$here/dotnet"
 export ENGINE2_CONTENT="$here/project/Assets:$here/content${ENGINE2_CONTENT:+:$ENGINE2_CONTENT}"
-address=${1:?a server to join, host:port}; width=${2:-1280}; height=${3:-720}
-[ $# -gt 0 ] && shift; [ $# -gt 0 ] && shift; [ $# -gt 0 ] && shift
+address=${1:-best}; [ $# -gt 0 ] && shift
+if [ "$1" = --servers ]; then
+	[ -n "$2" ] && export ENGINE2_SERVER_LIST="$2"
+	shift; [ $# -gt 0 ] && shift
+fi
+size="-width 1280 -height 720"
+case " $* " in *" -width "*|*" -height "*) size= ;; esac
 cd "$here/game"
-exec "$here/dotnet/dotnet" sbox-server.dll +shimclient "$address" +shimwindow -width "$width" -height "$height" +instanceid 2 "$@"
+exec "$here/dotnet/dotnet" sbox-server.dll +shimclient "$address" +shimwindow $size +instanceid 2 "$@"
 EOF
 chmod +x "$out/host" "$out/play"
 
@@ -112,7 +122,7 @@ maps:$maps
 packages:$packages
 
 ./host                    the dedicated server
-./play <host:port> [w h]  join one in a window
+./play [host:port|best]   join one in a window (best: the busiest on --servers <list>)
 
 A Linux machine wants, besides: ALSA (libasound2), a Vulkan driver
 (libvulkan1 and your GPU's, or mesa-vulkan-drivers), and for the window

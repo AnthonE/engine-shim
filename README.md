@@ -1037,7 +1037,7 @@ and a build you ship carries only content you may ship.
 SHIMWATCH=0 sh tools/sandbox.sh ../sandbox      # no test watcher in a build
 sh tools/build.sh ../sandbox ../sandbox-build --package 'facepunch.flatgrass=^materials/dev/'
 ../sandbox-build/host                           # on 27015
-../sandbox-build/play 127.0.0.1:27015 1280 720
+../sandbox-build/play 127.0.0.1:27015           # or best --servers <shard list>; -width/-height
 ```
 
 Measured on Sandbox's zoo: a 592 MB folder (the game's project 269 MB, the
@@ -1056,6 +1056,40 @@ download).
 A machine wants, besides, what any desktop has: ALSA (`libasound2`), a
 Vulkan driver (`libvulkan1` and the GPU's, or Mesa's), and for the window
 `libxkbcommon-x11-0` with X11 or Wayland.
+
+**Through the Elo Pros launcher.** `tools/depot.py` makes a build into what
+the launcher installs (elo-pros-launcher `docs/LAUNCHER.md` §3): a depot,
+every file's path, size and sha256 with the one command that starts it, and
+a manifest whose native row names it. The command is the build's `play`,
+given the server the player chose (`{server}`) and the title's shard list
+(`{servers}`); with none chosen, `play` joins the busiest server on that
+list (`+shimclient best`). `ENGINE2_ELO_GAME` is the title's slug, so the
+launcher signs a sign-in for it. A depot names files, not links, so
+`libengine2.so`'s two module names are copies. The digest a notary commits
+is the launcher's (`elo digest`).
+
+```sh
+python3 tools/depot.py ../sandbox-build ../sandbox-depot --slug sandbox --name Sandbox \
+  --base https://<where you serve it> --servers https://elopros.com/api/launcher/servers/sandbox
+elo install https://<where you serve it>/manifest.json
+elo play sandbox
+```
+
+Measured end to end with the launcher's own CLI (`elo` 0.6.11, built from
+scry-forge's `launcher-rs`): the depot (16,093 files, 583 MB) served over
+HTTP on loopback (`--allow-insecure`; a real root is https), a copy of the
+build hosting with sign-ins required and writing its shard-list row there,
+and engine-shim's stand-in launcher (test key 9) answering at the default
+socket where `elo-gui` would. With `/home/user` and `/root` emptied as
+above, `elo install`
+fetched and hashed every file into `~/.local/share/elo/games/sandbox/`,
+`elo verify` matched all 16,093, and `elo play` with no server chosen
+started `play`, which read the shard list, joined `Sandbox at
+127.0.0.1:27015 (0/32, of 1)`, and signed in through the socket: the
+server took the player as their wallet (`online.json`: `0xf7ed…fa5c`) and
+the window drew the zoo at 1280x720. One thing a server box serving its
+depot from Python's `http.server` needs: `--protocol HTTP/1.1`, or the
+launcher's reused connections are cut after the first file.
 
 ## What a player hears
 
@@ -1151,6 +1185,8 @@ first.
   opens the lobby, as a networked game's `NetworkHelper` does for itself.
 - `+shimclient <address>` boots the same launcher as a headless player (a
   game app, not a dedicated server) and runs `connect <address>`.
+  `+shimclient best` joins the busiest server on its list
+  (`ENGINE2_SERVER_LIST`) that has room and no password.
 - `+shimrun <command>` runs a console command on that player before it
   connects (the server browser's `servers`, say).
 - `+shimwindow` makes that player a game with a window, as s&box's client
@@ -1228,6 +1264,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/play.sh` | Sandbox hosted here and joined in a window: play it |
 | `tools/build.sh` | a game as a player installs it: one folder with the runtime, the engine and the game, and its `host` and `play` |
+| `tools/depot.py` | a build as the Elo Pros launcher installs it: its depot and manifest, and the files to serve |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next

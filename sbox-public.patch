@@ -1,8 +1,14 @@
 diff --git a/engine/Launcher/SboxServer/Launcher.cs b/engine/Launcher/SboxServer/Launcher.cs
-index f8cf0c29..1b388727 100644
+index f8cf0c29..fd65916a 100644
 --- a/engine/Launcher/SboxServer/Launcher.cs
 +++ b/engine/Launcher/SboxServer/Launcher.cs
-@@ -22,6 +22,15 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -1,4 +1,5 @@
+ ﻿using System;
++using System.Linq;
+ using System.Threading.Tasks;
+ 
+ namespace Sandbox;
+@@ -22,6 +23,15 @@ public class DedicatedServerAppSystem : AppSystem
  
  	public override void Init()
  	{
@@ -18,7 +24,7 @@ index f8cf0c29..1b388727 100644
  		// Redirecting console output (docker/wine/etc..) won't support this overlay, so don't bother with it
  		if ( !Console.IsOutputRedirected )
  		{
-@@ -43,14 +52,23 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -43,14 +53,23 @@ public class DedicatedServerAppSystem : AppSystem
  
  		CreateGame();
  
@@ -43,10 +49,22 @@ index f8cf0c29..1b388727 100644
  		// No game specified, show some help
  		if ( !Environment.CommandLine.Contains( "game " ) )
  		{
-@@ -60,9 +78,26 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -60,9 +79,43 @@ public class DedicatedServerAppSystem : AppSystem
  		console?.Update();
  	}
  
++	static async void ShimJoinBest()
++	{
++		using var list = new Sandbox.Services.ServerList();
++		list.Query();
++		while ( list.IsQuerying ) await System.Threading.Tasks.Task.Yield();
++		var best = list.Where( x => !x.HasPassword && (x.MaxPlayers <= 0 || x.Players < x.MaxPlayers) )
++			.OrderByDescending( x => x.Players ).ThenBy( x => x.Ping ).FirstOrDefault();
++		if ( string.IsNullOrEmpty( best.IPAddressAndPort ) ) { System.Console.WriteLine( $"engine-shim: no server to join ({list.Count} listed)" ); return; }
++		System.Console.WriteLine( $"engine-shim: joining {best.Name} at {best.IPAddressAndPort} ({best.Players}/{best.MaxPlayers}, of {list.Count})" );
++		ConVarSystem.Run( $"connect {best.IPAddressAndPort}" );
++	}
++
 +	string shimGame;
 +	string shimClient;
 +	int shimFrames;
@@ -66,7 +84,12 @@ index f8cf0c29..1b388727 100644
 +		}
 +		// engine-shim: +shimrun <command> runs a console command on a player first (the server browser's `servers`, say)
 +		if ( shimClient is not null && shimFrames == 19 && Sandbox.Utility.CommandLine.GetSwitch( "+shimrun", null ) is { } shimRun ) { System.Console.WriteLine( $"engine-shim: running {shimRun}" ); ConVarSystem.Run( shimRun ); }
-+		if ( shimClient is not null && ++shimFrames == 30 ) { System.Console.WriteLine( $"engine-shim: a player, dedicated={Application.IsDedicatedServer} headless={Application.IsHeadless}, connecting to {shimClient}" ); ConVarSystem.Run( $"connect {shimClient}" ); }
++		if ( shimClient is not null && ++shimFrames == 30 )
++		{
++			System.Console.WriteLine( $"engine-shim: a player, dedicated={Application.IsDedicatedServer} headless={Application.IsHeadless}, connecting to {shimClient}" );
++			// engine-shim: +shimclient best joins the busiest server on the list (ENGINE2_SERVER_LIST) that has room and no password: Play with no server chosen
++			if ( shimClient == "best" ) ShimJoinBest(); else ConVarSystem.Run( $"connect {shimClient}" );
++		}
  
  		return base.RunFrame();
  	}
