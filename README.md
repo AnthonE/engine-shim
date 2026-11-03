@@ -1009,6 +1009,54 @@ Not yet: `border-shape`'s shapes and
 paths (ShapeIndex; drawn as the rounded rect), world panels (a nameplate in
 the world), and panel layers (`filter:`, `mask-image`).
 
+## A build players install
+
+`tools/build.sh` makes a game into one folder that runs on a Linux machine
+with nothing else: no .NET SDK, no sbox-public checkout, no Rust. In it:
+
+- `dotnet/`: Microsoft's .NET runtime, the shared framework the server's
+  runtimeconfig names and the host that finds it (80 MB), not the SDK.
+- `game/`: s&box's game folder as `tools/setup.sh` built it, the managed
+  engine and its content, without the editor, the samples, the API docs or
+  `bin/win64`'s closed natives; `libengine2.so` without its debug info,
+  SkiaSharp and HarfBuzz.
+- `project/`: the game. Its server compiles its code, as s&box's does; a
+  player is sent it.
+- `content/`: what `--package` brought from sbox.game, which a player reads
+  from disk (`ENGINE2_CONTENT`).
+- `host` and `play`: the server, and a player joining one in a window.
+  Each runs from wherever the folder is.
+
+The packages a game names on sbox.game are what a player still downloads:
+the server lists them when the player joins, and they install into
+`game/download/` from sbox.game as s&box's own client installs them, kept
+for the next time. A build carries only what `--map` and `--package` name,
+and a build you ship carries only content you may ship.
+
+```sh
+SHIMWATCH=0 sh tools/sandbox.sh ../sandbox      # no test watcher in a build
+sh tools/build.sh ../sandbox ../sandbox-build --package 'facepunch.flatgrass=^materials/dev/'
+../sandbox-build/host                           # on 27015
+../sandbox-build/play 127.0.0.1:27015 1280 720
+```
+
+Measured on Sandbox's zoo: a 592 MB folder (the game's project 269 MB, the
+engine's folder 244, the runtime 80), copied to `/opt` and run with
+`/home/user` and `/root` emptied (the SDK, the checkouts and cargo gone) and
+a bare environment. With no network at all (the build before its library
+was stripped), the server started in 42 s, a player joined it, and its
+window drew the zoo and the HUD at 14 to 36 ms a frame after the first
+(640x360, lavapipe), only without the packages from sbox.game: 11 objects.
+Online, the server started in 38 s, the player installed the game's 147
+packages (123 MB) at the door and drew the same frame as the development
+checkout does: 29 objects, the physgun in hand, and the same 188 files not
+found (core's sounds and skybox, which come with Facepunch's closed
+download).
+
+A machine wants, besides, what any desktop has: ALSA (`libasound2`), a
+Vulkan driver (`libvulkan1` and the GPU's, or Mesa's), and for the window
+`libxkbcommon-x11-0` with X11 or Wayland.
+
 ## What a player hears
 
 `engine2/src/audio.rs`. s&box mixes in C# (`Sandbox.Audio.MixingThread`);
@@ -1179,6 +1227,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/package.sh` | a package's files from sbox.game, at their game paths, for development (never committed) |
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/play.sh` | Sandbox hosted here and joined in a window: play it |
+| `tools/build.sh` | a game as a player installs it: one folder with the runtime, the engine and the game, and its `host` and `play` |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
