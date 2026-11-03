@@ -1193,11 +1193,24 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    credits do (scry-forge `meter/relay.py`).
 3. **Assets.** Models (collision, bones, hitboxes, sequences, key
    values, animation graphs), surfaces and maps are read (above).
-   Materials, textures and shaders only matter to a client.
-4. **A client.** Rendering: about 670 scene and render slots onto a renderer
-   of our own choosing (Bevy or Godot; see below), then sound and input.
-5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
-   download.
+   A client reads materials and textures too; a game's own shaders it
+   doesn't (below).
+4. **A client.** It draws with a renderer of our own, on wgpu
+   (`engine2/src/render/`): models skinned and posed, maps lit as they were
+   baked, the sky, the sun's shadows, the HUD and the UI, in a window, with
+   input and sound (above). What's left: particles, decals, shadows from
+   local lights on what moves, a game's own shaders (s&box's UI and HUD
+   shaders are ported to WGSL by hand), the UI's `border-shape` paths,
+   world panels and panel layers, reverb; and a frame's cost on a real GPU.
+5. **The browser.** .NET and Rust both build to WebAssembly, the transport
+   is already WebTransport, and physics and the asset readers are pure
+   Rust. The seam is the hard part: .NET's browser runtime is built with
+   Emscripten and links its natives in statically, so `engine2` would have
+   to build for `wasm32-unknown-emscripten`, where wgpu 25 has only WebGL
+   (no WebGPU: the renderer uses storage buffers) and winit has no backend.
+   Then threads (SharedArrayBuffer), a frame loop the browser drives
+   instead of one that blocks, files fetched instead of read, and the
+   games' C# run on .NET's interpreter. Expect a large download.
 
 ## Open questions
 
@@ -1208,10 +1221,12 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
   `Facepunch.ActionGraphs` (NuGet) declares no licence; ask before bundling it.
 - **The creator's own terms** with Facepunch decide where their game may
   run; read them for each game.
-- **The renderer.** Bevy (Rust, MIT/Apache, wasm) fits a Rust `engine2`.
-  Godot (MIT) brings an editor, Jolt physics and C#; whether it embeds
-  under a .NET host cleanly is to be measured. Decide once a server runs
-  and the client slots are measured.
+- **A game's shaders.** The renderer is decided: our own, on wgpu
+  (Vulkan, Metal, DX12; WebGPU in a browser), not Bevy or Godot. What's
+  open is a game's own shaders: s&box compiles them with the closed
+  `vfx_vulkan`, and so far each one drawn here is ported to WGSL by hand.
+  A translator, or a game that brings its shaders as WGSL, is to be
+  decided.
 - **The name.** s&box is Facepunch's; nothing we ship uses it as ours.
 
 The `.def` files, the generated interop and the slot names are Facepunch
