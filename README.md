@@ -610,8 +610,8 @@ yaw 101; colour 3.5 times 255 245 234) and its sunrise sky, the sun's
 glow in it where the light comes from; the roof of the spawn building,
 its scaffolding, the grass to the horizon, and the physgun in the
 player's hand, posed by its animation graph. What isn't drawn yet:
-local lights' shadows from what moves (the sun's are drawn, below),
-particles, decals and the UI. A headless player has no tonemapper of
+local lights' shadows from what moves (the sun's are drawn, below) and
+decals (particles and the UI are, below). A headless player has no tonemapper of
 managed's (`Graphics.IsAvailable` is false with the empty render device):
 the watcher's turning auto exposure off reaches nothing, and frames are
 exposed as s&box's defaults would expose them (above).
@@ -724,6 +724,43 @@ comes from `g_tMetalness`'s green where a material has one. Measured: the
 microwave's window and flatgrass's windows and skylights are glass now
 (they were missing: the microwave showed its inside), and the hall's
 strip lights glow.
+
+**Particles and sprites** (`engine2/src/sprites.rs`, `render/sprites.rs`).
+s&box batches every sprite, a particle's or a `SpriteRenderer`'s, into a
+custom scene object of managed's (`SpriteBatchSceneObject`) that draws
+itself: native asks each one in a camera's worlds to render
+(`SceneCustomObjectRender.RenderObject`, by its handle) in its
+translucent layer, with a render context that records. Its command list
+uploads the sprites (`SpriteData`, 148 bytes each) and dispatches two
+compute shaders, which run here on the CPU over the buffers' bytes, in
+the order they're issued (`RenderTools.Compute`): `sprite/sprite_cs`
+(each sprite's distance from the camera, one facing its velocity turned
+on screen, a fast one's motion-blur copies appended) and `sort_cs` (a
+bitonic sort of them by distance). Its one instanced draw of
+`sprite_ps` is read back in the order its shader reads it (the sorted
+ones farthest first) and drawn by our port (`render/sprites.wgsl`) into
+the scene's HDR colour after what's translucent, tested against its
+depth: billboarded to the camera (or turning about z only, or turned as
+the sprite is), flipped, rolled, its texture by its bindless index (eight
+a draw, split where a batch names more), tinted and overlaid (each RGB
+stored around 128 with a shared exponent), cut off below its alpha
+cutoff, faded near the camera, added or blended. Not yet: a texture's
+sheet of frames, soft edges (`DepthFeather`), fog, refraction, text
+sprites, and lighting as s&box's (a lit sprite takes the sky's ambient
+and half the sun). Measured (`cargo test`, lavapipe): a white sprite 50
+across, 100 in front of a 90° camera, covers a square half the frame
+wide; rolled 45°, a diamond of the same area; three sprites and a
+motion-blurred one's copies sort farthest first.
+
+In the game (Sandbox's zoo, windowed under Xvfb): three batches every
+frame, the physgun's glow at its muzzle and on its world model; grabbing
+the office chair, five batches and 293 sprites, the grab's 130 sparks
+where the beam meets the chair and the barrel's 152. Core's particle
+textures (`textures/particles/flares/...`, `textures/shapes/spark2`) are
+only their settings in sbox-public, their images coming with Facepunch's
+download, so each is drawn as a soft round glow in its place: where it
+is and how large, not its art. The physgun's beam is a `LineRenderer`, a
+custom object too (`SceneLineObject`, the `line` shader): not drawn yet.
 
 `render map` draws a map from its pak alone, its sun and sky as its
 entities name them, lit by its lightmaps and probes (`RENDER_LIGHTMAPS=0`:
@@ -1172,6 +1209,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/rendermesh.rs` | meshes made at runtime: MeshGlue's render meshes, their vertex and index buffers, managed's vertex layouts |
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
 | `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
+| `engine2/src/sprites.rs`, `render/sprites.rs`, `sprites.wgsl` | sprite batches (particles): their compute shaders run on the CPU, their draw read back in order and drawn as s&box's `sprite_ps` |
 | `engine2/src/camera.rs` | cameras managed asks for pixels: their worlds, what's shown, the view drawn into managed's bitmap |
 | `render/` | the renderer from the command line: a model, or a map from its pak, drawn into a PNG |
 | `engine2/src/fs.rs` | the engine's file system: the files managed links, its project folders (case blind, as managed names them), the game's own, mounted paks |
@@ -1208,8 +1246,11 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 3. **Assets.** Models (collision, bones, hitboxes, sequences, key
    values, animation graphs), surfaces and maps are read (above).
    Materials, textures and shaders only matter to a client.
-4. **A client.** Rendering: about 670 scene and render slots onto a renderer
-   of our own choosing (Bevy or Godot; see below), then sound and input.
+4. **A client.** It plays, in a window (above): models, maps lit as they
+   were baked, the UI and HUD, sprites, sound and input, drawn on wgpu
+   from what s&box's public shaders say. Next: beams and trails
+   (`SceneLineObject`), decals, local lights' shadows, a game's own
+   shaders.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
    download.
 
@@ -1222,10 +1263,11 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
   `Facepunch.ActionGraphs` (NuGet) declares no licence; ask before bundling it.
 - **The creator's own terms** with Facepunch decide where their game may
   run; read them for each game.
-- **The renderer.** Bevy (Rust, MIT/Apache, wasm) fits a Rust `engine2`.
-  Godot (MIT) brings an editor, Jolt physics and C#; whether it embeds
-  under a .NET host cleanly is to be measured. Decide once a server runs
-  and the client slots are measured.
+- **The renderer.** The client draws with wgpu directly (`render/`), each
+  of s&box's public shaders ported as it's met, not on Bevy or Godot.
+  Bevy (Rust, MIT/Apache, wasm) would fit a Rust `engine2`; Godot (MIT)
+  brings an editor, Jolt physics and C#. Whether to move onto either is
+  still open.
 - **The name.** s&box is Facepunch's; nothing we ship uses it as ours.
 
 The `.def` files, the generated interop and the slot names are Facepunch

@@ -1808,8 +1808,8 @@ unsafe extern "C" fn s425(_a0: usize, _a1: usize, _a2: usize) -> i32 { hit(425);
 unsafe extern "C" fn s426(_a0: usize, _a1: usize, _a2: usize) { hit(426);  }
 unsafe extern "C" fn s427(_a0: usize, _a1: usize, _a2: usize) { hit(427);  }
 unsafe extern "C" fn s428(_a0: usize) -> i32 { hit(428); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s429(_a0: usize) -> S_Vector3 { hit(429); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s430(_a0: usize) -> S_Angles { hit(430); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s429(_a0: usize) -> S_Vector3 { hit(429); unsafe { crate::impls::CFrustum_GetCameraPosition(_a0) } }
+unsafe extern "C" fn s430(_a0: usize) -> S_Angles { hit(430); unsafe { crate::impls::CFrustum_GetCameraAngles(_a0) } }
 unsafe extern "C" fn s431(_a0: usize) -> f32 { hit(431); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s432(_a0: usize) -> f32 { hit(432); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s433(_a0: usize) -> f32 { hit(433); unsafe { core::mem::zeroed() } }
@@ -3501,7 +3501,7 @@ unsafe extern "C" fn s2118(_a0: usize, _a1: usize) { hit(2118);  }
 unsafe extern "C" fn s2119(_a0: usize) -> usize { hit(2119); crate::trace::object(2119) }
 unsafe extern "C" fn s2120(_a0: usize) -> i32 { hit(2120); crate::state::get::<i32>(_a0, 202) }
 unsafe extern "C" fn s2121(_a0: usize, _a1: i32) { hit(2121); crate::state::set(_a0, 202, _a1) }
-unsafe extern "C" fn s2122(_a0: usize) -> usize { hit(2122); crate::trace::object(2122) }
+unsafe extern "C" fn s2122(_a0: usize) -> usize { hit(2122); unsafe { crate::impls::ISceneView_GetFrustum(_a0) } }
 unsafe extern "C" fn s2123(_a0: usize) -> i32 { hit(2123); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2124(_a0: usize) -> i32 { hit(2124); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2125(_a0: usize) -> i32 { hit(2125); crate::state::get::<i32>(_a0, 203) }
@@ -3803,7 +3803,7 @@ unsafe extern "C" fn s2420(_a0: usize, _a1: usize, _a2: S_Sandbox_StringToken, _
 unsafe extern "C" fn s2421(_a0: usize, _a1: usize, _a2: S_Sandbox_StringToken, _a3: usize, _a4: usize, _a5: i32, _a6: usize, _a7: i32) { hit(2421);  }
 unsafe extern "C" fn s2422(_a0: usize, _a1: usize, _a2: S_Sandbox_StringToken, _a3: usize, _a4: usize, _a5: i32, _a6: usize, _a7: i32) { hit(2422);  }
 unsafe extern "C" fn s2423(_a0: usize, _a1: usize, _a2: S_Sandbox_StringToken, _a3: usize, _a4: usize, _a5: usize, _a6: i32, _a7: usize, _a8: i32) { hit(2423);  }
-unsafe extern "C" fn s2424(_a0: usize, _a1: usize, _a2: usize, _a3: i32, _a4: i32, _a5: i32) { hit(2424);  }
+unsafe extern "C" fn s2424(_a0: usize, _a1: usize, _a2: usize, _a3: i32, _a4: i32, _a5: i32) { hit(2424); unsafe { crate::impls::RenderTools_Compute(_a0, _a1, _a2, _a3, _a4, _a5) } }
 unsafe extern "C" fn s2425(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: u32) { hit(2425);  }
 unsafe extern "C" fn s2426(_a0: usize, _a1: usize, _a2: usize, _a3: u32, _a4: u32, _a5: u32) { hit(2426);  }
 unsafe extern "C" fn s2427(_a0: usize, _a1: usize, _a2: usize, _a3: usize, _a4: u32) { hit(2427);  }

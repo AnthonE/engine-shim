@@ -533,6 +533,24 @@ pub unsafe fn RenderTools_ResolveFrameBuffer(ctx: usize, texture: usize, _viewpo
     }
     gpu::record_grab(ctx, texture)
 }
+/// A compute shader dispatched (ComputeShader.DispatchWithAttributes): its
+/// material's mode (the material, here) names the shader; the sprite
+/// batch's run on the CPU (sprites.rs).
+pub unsafe fn RenderTools_Compute(_ctx: usize, attrs: usize, mode: usize, x: i32, y: i32, z: i32) {
+    let shader = crate::camera::material_shader(mode).unwrap_or_default();
+    crate::sprites::dispatch(&shader, attrs, [x, y, z])
+}
+/// A view's frustum is the view: what Graphics asks of it while a custom
+/// object renders is where its camera is (sprites.rs keeps it).
+pub unsafe fn ISceneView_GetFrustum(v: usize) -> usize { v }
+pub unsafe fn CFrustum_GetCameraPosition(_f: usize) -> S_Vector3 {
+    let p = crate::sprites::eye().map(|e| e.position).unwrap_or_default();
+    S_Vector3 { f__vec: crate::slots::S_System_Numerics_Vector3 { f_X: p[0], f_Y: p[1], f_Z: p[2] } }
+}
+pub unsafe fn CFrustum_GetCameraAngles(_f: usize) -> crate::slots::S_Angles {
+    let [pitch, yaw, roll] = crate::sprites::eye().map(|e| e.angles).unwrap_or_default();
+    crate::slots::S_Angles { f_pitch: pitch, f_yaw: yaw, f_roll: roll }
+}
 pub unsafe fn IRenderContext_DrawInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32) { gpu::record(ctx, prim, first, count, instances, 0, false) }
 pub unsafe fn IRenderContext_DrawIndexed(ctx: usize, prim: i64, first: i32, count: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, 1, base, true) }
 pub unsafe fn IRenderContext_DrawIndexedInstanced(ctx: usize, prim: i64, first: i32, count: i32, instances: i32, _max: i32, base: i32) { gpu::record(ctx, prim, first, count, instances, base, true) }

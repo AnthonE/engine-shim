@@ -429,6 +429,58 @@ mod draw {
 
     /// Camera `camera`'s view, `width` by `height`, as RGBA (top row first),
     /// and a line saying what was in it.
+    /// The camera's custom scene objects (managed's SceneCustomObject: a
+    /// sprite batch, say) asked to render, as native asks in its translucent
+    /// layer (SceneCustomObjectRender.RenderObject), each with a render
+    /// context that records what it draws; what they drew as sprite
+    /// batches, and what's said of it.
+    fn custom_objects(camera: usize, view: &View, width: i32, height: i32) -> (Vec<crate::sprites::Batch>, String) {
+        let f = crate::managed(M_Sandbox_ScnCstmbjctRndr_RenderObject);
+        let objects: Vec<usize> = super::worlds(camera).into_iter()
+            .flat_map(|w| crate::handles::made_with("ManagedSceneObject", w))
+            .filter(|&o| super::shown(o) && super::tags_drawn(camera, o))
+            .collect();
+        if f == 0 || objects.is_empty() { return (Vec::new(), String::new()); }
+        #[repr(C)]
+        struct Setup { context: usize, view: usize, layer: usize, format: i32, msaa: i32, stats: usize }
+        // managed finds the object by its handle (HandleIndex.Get<SceneCustomObject>)
+        let render: extern "C" fn(Setup, i32) = unsafe { std::mem::transmute(f) };
+        let angles = crate::state::get::<S_Angles>(camera, PROP__CCameraRenderer_CameraRotation);
+        let row = |k: usize| view.view.row(k).truncate().to_array();
+        let back = row(2);
+        crate::sprites::set_eye(Some(crate::sprites::Eye { position: view.eye.to_array(), forward: back.map(|v| -v), right: row(0), up: row(1), angles: [angles.f_pitch, angles.f_yaw, angles.f_roll] }));
+        let scene_view = crate::gpu::new_view(crate::impls::camera_id(camera), width, height);
+        let layer = crate::gpu::add_layer(scene_view, "Translucent", 0);
+        // SceneLayerType.Translucent: what a sprite batch with refraction asks
+        crate::state::set::<i64>(layer, PROP__ISceneLayer_LayerEnum, 1);
+        let mut draws = Vec::new();
+        for obj in &objects {
+            let context = crate::gpu::new_layer_context(layer);
+            crate::gpu::with_context(context, |c| c.viewport = [0, 0, width, height]);
+            render(Setup { context, view: scene_view, layer, format: 0, msaa: 0, stats: 0 }, crate::handles::of(*obj));
+            if let Some(c) = crate::gpu::take_context(context) { draws.extend(c.draws); }
+        }
+        crate::gpu::free_view(scene_view);
+        crate::sprites::set_eye(None);
+        let batches: Vec<crate::sprites::Batch> = draws.iter().filter_map(crate::sprites::batch).collect();
+        let other: Vec<String> = draws.iter().filter(|d| crate::sprites::batch(d).is_none() && d.grab.is_none() && d.clear.is_none())
+            .map(|d| super::material_shader(d.material).or_else(|| super::material_name(d.material)).unwrap_or_else(|| format!("{:#x}", d.material))).collect();
+        let n: usize = batches.iter().map(|b| b.len()).sum();
+        let mut said = format!("{} custom objects: {} sprite batches, {n} sprites", objects.len(), batches.len());
+        if !other.is_empty() { said += &format!(", and {} draws not drawn here ({})", other.len(), other.join(", ")); }
+        if std::env::var_os("ENGINE2_FRAME_DUMP").is_some() {
+            use crate::sprites::at;
+            for (k, b) in batches.iter().enumerate() {
+                let f = |i: usize, w: usize| f32::from_bits(b.word(i, w));
+                let first: Vec<String> = (0..b.len().min(4)).map(|i| format!("at {:.1},{:.1},{:.1} scale {:.1}x{:.1} billboard {} texture {:?}",
+                    f(i, at::POSITION), f(i, at::POSITION + 1), f(i, at::POSITION + 2), f(i, at::SCALE), f(i, at::SCALE + 1), b.word(i, at::BILLBOARD),
+                    crate::gpu::texture_at(b.word(i, at::TEXTURE) as i32).and_then(super::texture_name))).collect();
+                said += &format!("; batch {k} ({} sprites, {}): {}", b.len(), if b.additive { "added" } else { "blended" }, first.join(" | "));
+            }
+        }
+        (batches, said)
+    }
+
     pub fn frame(camera: usize, width: i32, height: i32) -> Option<(Vec<u8>, String)> {
         frame_into(camera, width, height, None)
     }
@@ -546,9 +598,12 @@ mod draw {
                 }
             }
         }
+        // what managed draws itself (its custom scene objects: sprite batches), asked for now
+        let (sprites, custom) = custom_objects(camera, &view, width, height);
+        view.sprites = sprites;
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
         let image = r.draw_into(&instances, &view, width as u32, height as u32, target);
-        let mut said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes)", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
+        let mut said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes); {custom}", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
         if dump {
             let a = crate::state::get::<S_Angles>(camera, PROP__CCameraRenderer_CameraRotation);
             said += &format!("; looking {:?} (fov {fov}, planes {near}..{far}), clear {:?}, {}: {}", [a.f_pitch, a.f_yaw, a.f_roll], view.clear, super::camera_tag_names(camera), described.join("; "));

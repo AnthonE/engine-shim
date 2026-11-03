@@ -6,6 +6,7 @@
 //! every material s&box's content has is one of). The engine draws its
 //! scene with it when managed asks a camera for pixels (impls.rs,
 //! CCameraRenderer_RenderToBitmap); `render` draws one model.
+pub mod sprites;
 pub mod ui;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -176,6 +177,8 @@ pub struct Renderer {
     pub instance: wgpu::Instance,
     /// the UI drawn over a frame (ui.rs)
     pub ui: ui::Ui,
+    /// sprite batches drawn into the scene (sprites.rs)
+    pub sprites: sprites::Sprites,
     pub gpu: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -382,7 +385,8 @@ impl Renderer {
         }, Default::default(), &[0; 4]).create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let unlit = Lightmaps::group(&device, &lighting_layout, &clamp, LightingUniform::default(), [&none, &none, &none, &none], &[BakedLight::default()]);
         let ui = ui::Ui::new(&device, &queue);
-        Ok(Renderer { instance, ui, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
+        let sprites = sprites::Sprites::new(&device, &queue);
+        Ok(Renderer { instance, ui, sprites, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -835,7 +839,9 @@ impl Renderer {
             }
         }
         later.sort_by(|a, b| b.0.total_cmp(&a.0));
-        let store = if later.is_empty() { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store };
+        // sprites are drawn after what's translucent, against the same depth
+        let sprites = view.sprites.iter().any(|b| !b.is_empty());
+        let store = if later.is_empty() && !sprites { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store };
         let resolved_view = resolved.create_view(&Default::default());
         let mut encoder = d.create_command_encoder(&Default::default());
         profile.mark(&mut encoder, "setup");
@@ -933,9 +939,9 @@ impl Renderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &msaa,
                     resolve_target: multisampled.then_some(&resolved_view),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: if multisampled { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store } },
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: if multisampled && !sprites { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store } },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard }), stencil_ops: None }),
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: if sprites { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard } }), stencil_ops: None }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
@@ -959,6 +965,31 @@ impl Renderer {
             }
         }
         profile.mark(&mut encoder, "translucent");
+        if sprites {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("sprites"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &msaa,
+                    resolve_target: multisampled.then_some(&resolved_view),
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: if multisampled { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store } },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard }), stencil_ops: None }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            let row = |k: usize| view.view.row(k).truncate();
+            let u = sprites::SpriteView {
+                view_proj: view_proj.to_cols_array_2d(),
+                eye: view.eye.extend(1.0).into(),
+                right: row(0).extend(0.0).into(),
+                up: row(1).extend(0.0).into(),
+                forward: (-row(2)).extend(0.0).into(),
+                sun_color: sun_color.extend(0.0).into(),
+                ambient: uniform.sky,
+            };
+            self.sprites.draw(self, &mut pass, &u, &view.sprites, samples());
+        }
+        profile.mark(&mut encoder, "sprites");
         // its exposure: as asked, or from what's been drawn
         let debug = std::env::var("RENDER_DEBUG").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0) != 0.0;
         let exposure = match view.exposure {
@@ -1113,6 +1144,8 @@ pub struct View {
     /// how it's brought into what a screen shows
     pub tonemap: Tonemap,
     pub exposure: Exposure,
+    /// sprite batches (particles), drawn over what's translucent in their order
+    pub sprites: Vec<crate::sprites::Batch>,
 }
 
 /// A light a map's lightmaps name by its bake index (managed's
@@ -1355,6 +1388,7 @@ impl View {
             probes: Vec::new(),
             tonemap: Tonemap::Hable,
             exposure: Exposure::default(),
+            sprites: Vec::new(),
         }
     }
 
@@ -1366,7 +1400,7 @@ impl View {
         let fov = 30f32.to_radians();
         let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
         let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default() }
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default(), sprites: Vec::new() }
     }
 }
 
