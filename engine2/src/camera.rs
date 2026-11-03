@@ -203,6 +203,7 @@ pub fn turn_light(light: usize, towards: crate::slots::S_Vector3) {
 /// A scene object gone: whatever was kept of it here.
 pub fn forget(obj: usize) {
     set_shown(obj, true);
+    if let Some(t) = TAGS.lock().unwrap().as_mut() { t.remove(&obj); }
     if let Some(s) = SUNS.lock().unwrap().as_mut() { s.remove(&obj); }
     if let Some(s) = SKIES.lock().unwrap().as_mut() { s.remove(&obj); }
     if let Some(s) = BAKED.lock().unwrap().as_mut() { s.remove(&obj); }
@@ -238,6 +239,58 @@ pub fn set_shown(obj: usize, shown: bool) {
 
 pub fn shown(obj: usize) -> bool {
     !HIDDEN.lock().unwrap().as_ref().is_some_and(|h| h.contains(&obj))
+}
+
+/// Each scene object's tags (StringToken values, in the order given), and
+/// each camera's render and exclude tags.
+static TAGS: Mutex<Option<HashMap<usize, Vec<u32>>>> = Mutex::new(None);
+static CAMERA_TAGS: Mutex<Option<HashMap<usize, (Vec<u32>, Vec<u32>)>>> = Mutex::new(None);
+
+pub fn with_tags<T>(obj: usize, f: impl FnOnce(&mut Vec<u32>) -> T) -> T {
+    let mut t = TAGS.lock().unwrap();
+    let t = t.get_or_insert_with(Default::default);
+    let tags = t.entry(obj).or_default();
+    let out = f(tags);
+    if tags.is_empty() { t.remove(&obj); }
+    out
+}
+
+pub fn add_tag(obj: usize, tag: u32) { with_tags(obj, |t| if !t.contains(&tag) { t.push(tag) }) }
+pub fn remove_tag(obj: usize, tag: u32) { with_tags(obj, |t| t.retain(|&x| x != tag)) }
+pub fn tags(obj: usize) -> Vec<u32> { with_tags(obj, |t| t.clone()) }
+
+/// A camera's tags changed: `exclude` picks which set; None clears it.
+pub fn camera_tag(camera: usize, exclude: bool, tag: Option<u32>) {
+    let mut c = CAMERA_TAGS.lock().unwrap();
+    let (render, excluded) = c.get_or_insert_with(Default::default).entry(camera).or_default();
+    let set = if exclude { excluded } else { render };
+    match tag { Some(t) => if !set.contains(&t) { set.push(t) }, None => set.clear() }
+}
+
+/// Tags as names where they're ones a game's camera commonly sets, for what
+/// a frame dump says (a token is a hash: the rest are said as numbers).
+pub fn tag_names(tags: &[u32]) -> String {
+    const KNOWN: [&str; 10] = ["firstperson", "viewmodel", "viewer", "ui", "player", "light", "skybox", "world", "debris", "hide_in_game"];
+    tags.iter().map(|&t| KNOWN.iter().find(|n| crate::string_token(n) == t).map(|n| n.to_string()).unwrap_or_else(|| format!("{t:#x}"))).collect::<Vec<_>>().join(",")
+}
+
+/// A camera's render and exclude tags, said (a frame dump).
+pub fn camera_tag_names(camera: usize) -> String {
+    let c = CAMERA_TAGS.lock().unwrap();
+    let (r, e) = c.as_ref().and_then(|c| c.get(&camera)).cloned().unwrap_or_default();
+    format!("render [{}] exclude [{}]", tag_names(&r), tag_names(&e))
+}
+
+/// Whether a camera draws an object by their tags, as native's views
+/// filter them: one with any excluded tag isn't, and where the camera
+/// names tags to draw, only one with at least one of them is.
+pub fn tags_drawn(camera: usize, obj: usize) -> bool {
+    let c = CAMERA_TAGS.lock().unwrap();
+    let Some((render, excluded)) = c.as_ref().and_then(|c| c.get(&camera)) else { return true };
+    if render.is_empty() && excluded.is_empty() { return true; }
+    let t = TAGS.lock().unwrap();
+    let tags = t.as_ref().and_then(|t| t.get(&obj)).map(|v| v.as_slice()).unwrap_or(&[]);
+    !tags.iter().any(|x| excluded.contains(x)) && (render.is_empty() || tags.iter().any(|x| render.contains(x)))
 }
 
 #[cfg(feature = "render")]
@@ -404,6 +457,10 @@ mod draw {
         for world in super::worlds(camera) {
             for obj in crate::handles::made_with("SceneObject", world) {
                 if !super::shown(obj) { continue; }
+                if !super::tags_drawn(camera, obj) {
+                    if dump { described.push(format!("({} left out by its tags [{}])", crate::models::name_of(crate::animation::model_of(obj)).unwrap_or_else(|| "(built)".into()), super::tag_names(&super::tags(obj)))); }
+                    continue;
+                }
                 let model = crate::animation::model_of(obj);
                 let g = match (crate::models::name_of(model), crate::models::meshes_of(model)) {
                     (Some(name), _) => gpu_model(r, &name),
@@ -415,7 +472,7 @@ mod draw {
                 let tint = crate::state::get::<S_Vector4>(obj, PROP_TintRGBA).f__vec;
                 let tint = if tint.f_X + tint.f_Y + tint.f_Z + tint.f_W == 0.0 { [1.0; 4] } else { [tint.f_X, tint.f_Y, tint.f_Z, tint.f_W] };
                 let bones = skin(obj, model);
-                if dump { described.push(format!("{} at {:?} scale {:?}, {} bones posed, bounds {:?}..{:?}", crate::models::name_of(model).unwrap_or_else(|| "(built)".into()), m.w_axis.truncate(), m.x_axis.truncate().length(), bones.len(), g.min, g.max)); }
+                if dump { described.push(format!("{} at {:?} scale {:?}, {} bones posed, bounds {:?}..{:?}, tags [{}]", crate::models::name_of(model).unwrap_or_else(|| "(built)".into()), m.w_axis.truncate(), m.x_axis.truncate().length(), bones.len(), g.min, g.max, super::tag_names(&super::tags(obj)))); }
                 placed.push((g, m, tint, bones, false, super::chosen_mesh_groups(obj), super::skin(obj)));
             }
         }
@@ -494,7 +551,7 @@ mod draw {
         let mut said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes)", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
         if dump {
             let a = crate::state::get::<S_Angles>(camera, PROP__CCameraRenderer_CameraRotation);
-            said += &format!("; looking {:?} (fov {fov}, planes {near}..{far}), clear {:?}: {}", [a.f_pitch, a.f_yaw, a.f_roll], view.clear, described.join("; "));
+            said += &format!("; looking {:?} (fov {fov}, planes {near}..{far}), clear {:?}, {}: {}", [a.f_pitch, a.f_yaw, a.f_roll], view.clear, super::camera_tag_names(camera), described.join("; "));
         }
         Some((image, said))
     }
@@ -508,6 +565,30 @@ pub use draw::probe_volumes;
 
 #[cfg(not(feature = "render"))]
 pub fn to_bitmap(_camera: usize, _pixels: usize, _width: i32, _height: i32, _bpp: i32) {}
+
+#[cfg(test)]
+mod tag_tests {
+    #[test]
+    fn a_camera_draws_by_its_tags() {
+        let (camera, viewmodel, prop, player) = (crate::handles::object(), crate::handles::object(), crate::handles::object(), crate::handles::object());
+        let (firstperson, ui, viewer) = (crate::string_token("firstperson"), crate::string_token("ui"), crate::string_token("viewer"));
+        super::add_tag(viewmodel, firstperson);
+        super::add_tag(player, viewer);
+        assert!(super::tags_drawn(camera, viewmodel) && super::tags_drawn(camera, prop), "a camera with no tags draws everything");
+        // FreeCam: the viewmodel and the UI out, the player's own body in
+        super::camera_tag(camera, true, Some(firstperson));
+        super::camera_tag(camera, true, Some(ui));
+        assert!(!super::tags_drawn(camera, viewmodel), "an excluded tag hides it");
+        assert!(super::tags_drawn(camera, prop) && super::tags_drawn(camera, player));
+        super::camera_tag(camera, true, None);
+        assert!(super::tags_drawn(camera, viewmodel), "cleared, it's drawn again");
+        // render tags: only what has one of them
+        super::camera_tag(camera, false, Some(viewer));
+        assert!(super::tags_drawn(camera, player) && !super::tags_drawn(camera, prop));
+        super::remove_tag(player, viewer);
+        assert!(!super::tags_drawn(camera, player) && super::tags(player).is_empty());
+    }
+}
 
 #[cfg(all(test, feature = "render"))]
 mod tests {

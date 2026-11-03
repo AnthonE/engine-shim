@@ -964,12 +964,26 @@ lists show their icons where each showed its name ("construction",
 Backdrops, measured (`cargo test`, lavapipe): over a checkerboard of
 4-pixel squares, one blurred 10 runs them together into their mean, 128
 throughout its middle; what's outside it and in its rounded corners stays
-as it was; one inverted turns each square to the other. In the game none
-has been drawn yet: Sandbox's are its full-screen popups (a resource
-picker's), its FreeCam overlay and its signals, and none of them was
-opened in these runs (with FreeCam on, J, no UI drew at all here; it adds
-`ui` to the camera's excluded tags, and why that hides its own overlay
-here is still to find).
+as it was; one inverted turns each square to the other. In the game:
+Sandbox's FreeCam (J) hides the HUD, as it means to, and its overlay is
+transparent until Tab is held (`opacity: 0` but for `.active`); held, its
+panel of sliders shows over the scene, blurred behind it (a windowed
+player of the zoo under Xvfb). Its other backdrops are its full-screen
+popups (a resource picker's) and its signals.
+
+**Tags choose what a camera draws.** Each scene object keeps the tags
+managed gives it (`AddTag`, `RemoveTag`, read back by `HasTag`,
+`GetTagCount`, `GetTagAt`: each scene object class's copy of them), and a
+camera its render and exclude tags (`AddRenderTag`, `AddExcludeTag`): an
+object with an excluded tag isn't drawn, nor, where a camera names tags to
+draw, one with none of them. Measured in the zoo: in third person (X) the
+camera excludes `firstperson` and `viewer`, and the viewmodel's arms and
+physgun, which drew floating in front of it, are left out. In FreeCam the
+camera excludes only `ui`: Sandbox's player puts `firstperson` back each
+time it composes the camera (`Player.Camera.cs`, when not in third
+person), so the first-person arms stay where the player's eyes were, as
+the same C# would leave them on Facepunch's engine. `ENGINE2_FRAME_DUMP`
+says each object's tags, the camera's, and what was left out by them.
 
 **Render targets: Sandbox's HUD.** Its gameplay HUD (`HudCanvas`) paints
 into an RGBA16F texture of its own, in a command list on the camera after

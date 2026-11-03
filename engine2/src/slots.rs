@@ -1471,10 +1471,10 @@ unsafe extern "C" fn s88(_a0: usize) { hit(88);  }
 unsafe extern "C" fn s89(_a0: usize, _a1: i32, _a2: i32, _a3: i32, _a4: i32) { hit(89);  }
 unsafe extern "C" fn s90(_a0: usize, _a1: i32, _a2: i32) { hit(90);  }
 unsafe extern "C" fn s91(_a0: usize, _a1: i32, _a2: i32) { hit(91);  }
-unsafe extern "C" fn s92(_a0: usize) { hit(92);  }
-unsafe extern "C" fn s93(_a0: usize) { hit(93);  }
-unsafe extern "C" fn s94(_a0: usize, _a1: u32) { hit(94);  }
-unsafe extern "C" fn s95(_a0: usize, _a1: u32) { hit(95);  }
+unsafe extern "C" fn s92(_a0: usize) { hit(92); unsafe { crate::impls::CCameraRenderer_ClearRenderTags(_a0) } }
+unsafe extern "C" fn s93(_a0: usize) { hit(93); unsafe { crate::impls::CCameraRenderer_ClearExcludeTags(_a0) } }
+unsafe extern "C" fn s94(_a0: usize, _a1: u32) { hit(94); unsafe { crate::impls::CCameraRenderer_AddRenderTag(_a0, _a1) } }
+unsafe extern "C" fn s95(_a0: usize, _a1: u32) { hit(95); unsafe { crate::impls::CCameraRenderer_AddExcludeTag(_a0, _a1) } }
 unsafe extern "C" fn s96(_a0: usize) -> S_Matrix { hit(96); crate::state::get::<S_Matrix>(_a0, 4) }
 unsafe extern "C" fn s97(_a0: usize, _a1: usize) { hit(97); unsafe { crate::state::set_from::<S_Matrix>(_a0, 4, _a1) } }
 unsafe extern "C" fn s98(_a0: usize) -> S_Vector4 { hit(98); crate::state::get::<S_Vector4>(_a0, 5) }
@@ -1581,12 +1581,12 @@ unsafe extern "C" fn s198(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { hi
 unsafe extern "C" fn s199(_a0: usize, _a1: i32) { hit(199);  }
 unsafe extern "C" fn s200(_a0: usize) -> i32 { hit(200); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s201(_a0: usize, _a1: i32) { hit(201);  }
-unsafe extern "C" fn s202(_a0: usize, _a1: u32) { hit(202);  }
-unsafe extern "C" fn s203(_a0: usize) { hit(203);  }
-unsafe extern "C" fn s204(_a0: usize) -> i32 { hit(204); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s205(_a0: usize, _a1: i32) -> u32 { hit(205); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s206(_a0: usize, _a1: u32) { hit(206);  }
-unsafe extern "C" fn s207(_a0: usize, _a1: u32) -> i32 { hit(207); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s202(_a0: usize, _a1: u32) { hit(202); unsafe { crate::impls::CDclScnbjct_RemoveTag(_a0, _a1) } }
+unsafe extern "C" fn s203(_a0: usize) { hit(203); unsafe { crate::impls::CDclScnbjct_RemoveAllTags(_a0) } }
+unsafe extern "C" fn s204(_a0: usize) -> i32 { hit(204); unsafe { crate::impls::CDclScnbjct_GetTagCount(_a0) } }
+unsafe extern "C" fn s205(_a0: usize, _a1: i32) -> u32 { hit(205); unsafe { crate::impls::CDclScnbjct_GetTagAt(_a0, _a1) } }
+unsafe extern "C" fn s206(_a0: usize, _a1: u32) { hit(206); unsafe { crate::impls::CDclScnbjct_AddTag(_a0, _a1) } }
+unsafe extern "C" fn s207(_a0: usize, _a1: u32) -> i32 { hit(207); unsafe { crate::impls::CDclScnbjct_HasTag(_a0, _a1) } }
 unsafe extern "C" fn s208(_a0: usize, _a1: S_Sandbox_StringToken) { hit(208);  }
 unsafe extern "C" fn s209(_a0: usize, _a1: S_Sandbox_StringToken) { hit(209);  }
 unsafe extern "C" fn s210(_a0: usize) -> u32 { hit(210); unsafe { core::mem::zeroed() } }
@@ -1686,12 +1686,12 @@ unsafe extern "C" fn s303(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { hi
 unsafe extern "C" fn s304(_a0: usize, _a1: i32) { hit(304);  }
 unsafe extern "C" fn s305(_a0: usize) -> i32 { hit(305); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s306(_a0: usize, _a1: i32) { hit(306);  }
-unsafe extern "C" fn s307(_a0: usize, _a1: u32) { hit(307);  }
-unsafe extern "C" fn s308(_a0: usize) { hit(308);  }
-unsafe extern "C" fn s309(_a0: usize) -> i32 { hit(309); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s310(_a0: usize, _a1: i32) -> u32 { hit(310); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s311(_a0: usize, _a1: u32) { hit(311);  }
-unsafe extern "C" fn s312(_a0: usize, _a1: u32) -> i32 { hit(312); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s307(_a0: usize, _a1: u32) { hit(307); unsafe { crate::impls::CDynmcScnbjct_RemoveTag(_a0, _a1) } }
+unsafe extern "C" fn s308(_a0: usize) { hit(308); unsafe { crate::impls::CDynmcScnbjct_RemoveAllTags(_a0) } }
+unsafe extern "C" fn s309(_a0: usize) -> i32 { hit(309); unsafe { crate::impls::CDynmcScnbjct_GetTagCount(_a0) } }
+unsafe extern "C" fn s310(_a0: usize, _a1: i32) -> u32 { hit(310); unsafe { crate::impls::CDynmcScnbjct_GetTagAt(_a0, _a1) } }
+unsafe extern "C" fn s311(_a0: usize, _a1: u32) { hit(311); unsafe { crate::impls::CDynmcScnbjct_AddTag(_a0, _a1) } }
+unsafe extern "C" fn s312(_a0: usize, _a1: u32) -> i32 { hit(312); unsafe { crate::impls::CDynmcScnbjct_HasTag(_a0, _a1) } }
 unsafe extern "C" fn s313(_a0: usize, _a1: S_Sandbox_StringToken) { hit(313);  }
 unsafe extern "C" fn s314(_a0: usize, _a1: S_Sandbox_StringToken) { hit(314);  }
 unsafe extern "C" fn s315(_a0: usize) -> u32 { hit(315); unsafe { core::mem::zeroed() } }
@@ -1904,12 +1904,12 @@ unsafe extern "C" fn s521(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { hi
 unsafe extern "C" fn s522(_a0: usize, _a1: i32) { hit(522);  }
 unsafe extern "C" fn s523(_a0: usize) -> i32 { hit(523); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s524(_a0: usize, _a1: i32) { hit(524);  }
-unsafe extern "C" fn s525(_a0: usize, _a1: u32) { hit(525);  }
-unsafe extern "C" fn s526(_a0: usize) { hit(526);  }
-unsafe extern "C" fn s527(_a0: usize) -> i32 { hit(527); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s528(_a0: usize, _a1: i32) -> u32 { hit(528); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s529(_a0: usize, _a1: u32) { hit(529);  }
-unsafe extern "C" fn s530(_a0: usize, _a1: u32) -> i32 { hit(530); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s525(_a0: usize, _a1: u32) { hit(525); unsafe { crate::impls::CMngdScnbjct_RemoveTag(_a0, _a1) } }
+unsafe extern "C" fn s526(_a0: usize) { hit(526); unsafe { crate::impls::CMngdScnbjct_RemoveAllTags(_a0) } }
+unsafe extern "C" fn s527(_a0: usize) -> i32 { hit(527); unsafe { crate::impls::CMngdScnbjct_GetTagCount(_a0) } }
+unsafe extern "C" fn s528(_a0: usize, _a1: i32) -> u32 { hit(528); unsafe { crate::impls::CMngdScnbjct_GetTagAt(_a0, _a1) } }
+unsafe extern "C" fn s529(_a0: usize, _a1: u32) { hit(529); unsafe { crate::impls::CMngdScnbjct_AddTag(_a0, _a1) } }
+unsafe extern "C" fn s530(_a0: usize, _a1: u32) -> i32 { hit(530); unsafe { crate::impls::CMngdScnbjct_HasTag(_a0, _a1) } }
 unsafe extern "C" fn s531(_a0: usize, _a1: S_Sandbox_StringToken) { hit(531);  }
 unsafe extern "C" fn s532(_a0: usize, _a1: S_Sandbox_StringToken) { hit(532);  }
 unsafe extern "C" fn s533(_a0: usize) -> u32 { hit(533); unsafe { core::mem::zeroed() } }
@@ -2387,12 +2387,12 @@ unsafe extern "C" fn s1004(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { h
 unsafe extern "C" fn s1005(_a0: usize, _a1: i32) { hit(1005);  }
 unsafe extern "C" fn s1006(_a0: usize) -> i32 { hit(1006); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1007(_a0: usize, _a1: i32) { hit(1007);  }
-unsafe extern "C" fn s1008(_a0: usize, _a1: u32) { hit(1008);  }
-unsafe extern "C" fn s1009(_a0: usize) { hit(1009);  }
-unsafe extern "C" fn s1010(_a0: usize) -> i32 { hit(1010); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1011(_a0: usize, _a1: i32) -> u32 { hit(1011); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1012(_a0: usize, _a1: u32) { hit(1012);  }
-unsafe extern "C" fn s1013(_a0: usize, _a1: u32) -> i32 { hit(1013); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1008(_a0: usize, _a1: u32) { hit(1008); unsafe { crate::impls::CScnnmtblbjct_RemoveTag(_a0, _a1) } }
+unsafe extern "C" fn s1009(_a0: usize) { hit(1009); unsafe { crate::impls::CScnnmtblbjct_RemoveAllTags(_a0) } }
+unsafe extern "C" fn s1010(_a0: usize) -> i32 { hit(1010); unsafe { crate::impls::CScnnmtblbjct_GetTagCount(_a0) } }
+unsafe extern "C" fn s1011(_a0: usize, _a1: i32) -> u32 { hit(1011); unsafe { crate::impls::CScnnmtblbjct_GetTagAt(_a0, _a1) } }
+unsafe extern "C" fn s1012(_a0: usize, _a1: u32) { hit(1012); unsafe { crate::impls::CScnnmtblbjct_AddTag(_a0, _a1) } }
+unsafe extern "C" fn s1013(_a0: usize, _a1: u32) -> i32 { hit(1013); unsafe { crate::impls::CScnnmtblbjct_HasTag(_a0, _a1) } }
 unsafe extern "C" fn s1014(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1014);  }
 unsafe extern "C" fn s1015(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1015);  }
 unsafe extern "C" fn s1016(_a0: usize) -> u32 { hit(1016); unsafe { core::mem::zeroed() } }
@@ -2514,12 +2514,12 @@ unsafe extern "C" fn s1131(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { h
 unsafe extern "C" fn s1132(_a0: usize, _a1: i32) { hit(1132);  }
 unsafe extern "C" fn s1133(_a0: usize) -> i32 { hit(1133); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1134(_a0: usize, _a1: i32) { hit(1134);  }
-unsafe extern "C" fn s1135(_a0: usize, _a1: u32) { hit(1135);  }
-unsafe extern "C" fn s1136(_a0: usize) { hit(1136);  }
-unsafe extern "C" fn s1137(_a0: usize) -> i32 { hit(1137); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1138(_a0: usize, _a1: i32) -> u32 { hit(1138); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1139(_a0: usize, _a1: u32) { hit(1139);  }
-unsafe extern "C" fn s1140(_a0: usize, _a1: u32) -> i32 { hit(1140); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1135(_a0: usize, _a1: u32) { hit(1135); unsafe { crate::impls::CScnLghtbjct_RemoveTag(_a0, _a1) } }
+unsafe extern "C" fn s1136(_a0: usize) { hit(1136); unsafe { crate::impls::CScnLghtbjct_RemoveAllTags(_a0) } }
+unsafe extern "C" fn s1137(_a0: usize) -> i32 { hit(1137); unsafe { crate::impls::CScnLghtbjct_GetTagCount(_a0) } }
+unsafe extern "C" fn s1138(_a0: usize, _a1: i32) -> u32 { hit(1138); unsafe { crate::impls::CScnLghtbjct_GetTagAt(_a0, _a1) } }
+unsafe extern "C" fn s1139(_a0: usize, _a1: u32) { hit(1139); unsafe { crate::impls::CScnLghtbjct_AddTag(_a0, _a1) } }
+unsafe extern "C" fn s1140(_a0: usize, _a1: u32) -> i32 { hit(1140); unsafe { crate::impls::CScnLghtbjct_HasTag(_a0, _a1) } }
 unsafe extern "C" fn s1141(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1141);  }
 unsafe extern "C" fn s1142(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1142);  }
 unsafe extern "C" fn s1143(_a0: usize) -> u32 { hit(1143); unsafe { core::mem::zeroed() } }
@@ -2579,12 +2579,12 @@ unsafe extern "C" fn s1196(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { h
 unsafe extern "C" fn s1197(_a0: usize, _a1: i32) { hit(1197);  }
 unsafe extern "C" fn s1198(_a0: usize) -> i32 { hit(1198); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1199(_a0: usize, _a1: i32) { hit(1199);  }
-unsafe extern "C" fn s1200(_a0: usize, _a1: u32) { hit(1200);  }
-unsafe extern "C" fn s1201(_a0: usize) { hit(1201);  }
-unsafe extern "C" fn s1202(_a0: usize) -> i32 { hit(1202); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1203(_a0: usize, _a1: i32) -> u32 { hit(1203); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1204(_a0: usize, _a1: u32) { hit(1204);  }
-unsafe extern "C" fn s1205(_a0: usize, _a1: u32) -> i32 { hit(1205); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1200(_a0: usize, _a1: u32) { hit(1200); unsafe { crate::impls::CScnLghtPrbVlmbj_RemoveTag(_a0, _a1) } }
+unsafe extern "C" fn s1201(_a0: usize) { hit(1201); unsafe { crate::impls::CScnLghtPrbVlmbj_RemoveAllTags(_a0) } }
+unsafe extern "C" fn s1202(_a0: usize) -> i32 { hit(1202); unsafe { crate::impls::CScnLghtPrbVlmbj_GetTagCount(_a0) } }
+unsafe extern "C" fn s1203(_a0: usize, _a1: i32) -> u32 { hit(1203); unsafe { crate::impls::CScnLghtPrbVlmbj_GetTagAt(_a0, _a1) } }
+unsafe extern "C" fn s1204(_a0: usize, _a1: u32) { hit(1204); unsafe { crate::impls::CScnLghtPrbVlmbj_AddTag(_a0, _a1) } }
+unsafe extern "C" fn s1205(_a0: usize, _a1: u32) -> i32 { hit(1205); unsafe { crate::impls::CScnLghtPrbVlmbj_HasTag(_a0, _a1) } }
 unsafe extern "C" fn s1206(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1206);  }
 unsafe extern "C" fn s1207(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1207);  }
 unsafe extern "C" fn s1208(_a0: usize) -> u32 { hit(1208); unsafe { core::mem::zeroed() } }
@@ -2655,12 +2655,12 @@ unsafe extern "C" fn s1272(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { h
 unsafe extern "C" fn s1273(_a0: usize, _a1: i32) { hit(1273);  }
 unsafe extern "C" fn s1274(_a0: usize) -> i32 { hit(1274); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1275(_a0: usize, _a1: i32) { hit(1275);  }
-unsafe extern "C" fn s1276(_a0: usize, _a1: u32) { hit(1276);  }
-unsafe extern "C" fn s1277(_a0: usize) { hit(1277);  }
-unsafe extern "C" fn s1278(_a0: usize) -> i32 { hit(1278); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1279(_a0: usize, _a1: i32) -> u32 { hit(1279); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1280(_a0: usize, _a1: u32) { hit(1280);  }
-unsafe extern "C" fn s1281(_a0: usize, _a1: u32) -> i32 { hit(1281); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1276(_a0: usize, _a1: u32) { hit(1276); unsafe { crate::impls::CSceneObject_RemoveTag(_a0, _a1) } }
+unsafe extern "C" fn s1277(_a0: usize) { hit(1277); unsafe { crate::impls::CSceneObject_RemoveAllTags(_a0) } }
+unsafe extern "C" fn s1278(_a0: usize) -> i32 { hit(1278); unsafe { crate::impls::CSceneObject_GetTagCount(_a0) } }
+unsafe extern "C" fn s1279(_a0: usize, _a1: i32) -> u32 { hit(1279); unsafe { crate::impls::CSceneObject_GetTagAt(_a0, _a1) } }
+unsafe extern "C" fn s1280(_a0: usize, _a1: u32) { hit(1280); unsafe { crate::impls::CSceneObject_AddTag(_a0, _a1) } }
+unsafe extern "C" fn s1281(_a0: usize, _a1: u32) -> i32 { hit(1281); unsafe { crate::impls::CSceneObject_HasTag(_a0, _a1) } }
 unsafe extern "C" fn s1282(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1282);  }
 unsafe extern "C" fn s1283(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1283);  }
 unsafe extern "C" fn s1284(_a0: usize) -> u32 { hit(1284); unsafe { core::mem::zeroed() } }
@@ -2732,12 +2732,12 @@ unsafe extern "C" fn s1349(_a0: usize, _a1: S_Sandbox_StringToken, _a2: i32) { h
 unsafe extern "C" fn s1350(_a0: usize, _a1: i32) { hit(1350);  }
 unsafe extern "C" fn s1351(_a0: usize) -> i32 { hit(1351); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1352(_a0: usize, _a1: i32) { hit(1352);  }
-unsafe extern "C" fn s1353(_a0: usize, _a1: u32) { hit(1353);  }
-unsafe extern "C" fn s1354(_a0: usize) { hit(1354);  }
-unsafe extern "C" fn s1355(_a0: usize) -> i32 { hit(1355); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1356(_a0: usize, _a1: i32) -> u32 { hit(1356); unsafe { core::mem::zeroed() } }
-unsafe extern "C" fn s1357(_a0: usize, _a1: u32) { hit(1357);  }
-unsafe extern "C" fn s1358(_a0: usize, _a1: u32) -> i32 { hit(1358); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1353(_a0: usize, _a1: u32) { hit(1353); unsafe { crate::impls::CScnSkyBxbjct_RemoveTag(_a0, _a1) } }
+unsafe extern "C" fn s1354(_a0: usize) { hit(1354); unsafe { crate::impls::CScnSkyBxbjct_RemoveAllTags(_a0) } }
+unsafe extern "C" fn s1355(_a0: usize) -> i32 { hit(1355); unsafe { crate::impls::CScnSkyBxbjct_GetTagCount(_a0) } }
+unsafe extern "C" fn s1356(_a0: usize, _a1: i32) -> u32 { hit(1356); unsafe { crate::impls::CScnSkyBxbjct_GetTagAt(_a0, _a1) } }
+unsafe extern "C" fn s1357(_a0: usize, _a1: u32) { hit(1357); unsafe { crate::impls::CScnSkyBxbjct_AddTag(_a0, _a1) } }
+unsafe extern "C" fn s1358(_a0: usize, _a1: u32) -> i32 { hit(1358); unsafe { crate::impls::CScnSkyBxbjct_HasTag(_a0, _a1) } }
 unsafe extern "C" fn s1359(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1359);  }
 unsafe extern "C" fn s1360(_a0: usize, _a1: S_Sandbox_StringToken) { hit(1360);  }
 unsafe extern "C" fn s1361(_a0: usize) -> u32 { hit(1361); unsafe { core::mem::zeroed() } }

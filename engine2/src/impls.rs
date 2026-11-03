@@ -2691,6 +2691,62 @@ pub unsafe fn g_pSceneSystem_DeleteSceneObject(obj: usize) {
     crate::handles::free(obj);
 }
 pub unsafe fn g_pSceneSystem_DeleteSceneObjectAtFrameEnd(obj: usize) { unsafe { g_pSceneSystem_DeleteSceneObject(obj) } }
+// ---- tags: each scene object's (StringToken values), which a camera's
+// render and exclude tags choose by (camera.rs). Each class has its own copy of the slots.
+
+pub unsafe fn CSceneObject_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CSceneObject_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CSceneObject_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CSceneObject_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CSceneObject_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CSceneObject_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CScnnmtblbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CScnnmtblbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CScnnmtblbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CScnnmtblbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CScnnmtblbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CScnnmtblbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CMngdScnbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CMngdScnbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CMngdScnbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CMngdScnbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CMngdScnbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CMngdScnbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CDynmcScnbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CDynmcScnbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CDynmcScnbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CDynmcScnbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CDynmcScnbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CDynmcScnbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CDclScnbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CDclScnbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CDclScnbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CDclScnbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CDclScnbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CDclScnbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CScnLghtbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CScnLghtbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CScnLghtbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CScnLghtbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CScnLghtbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CScnLghtbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CScnLghtPrbVlmbj_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CScnLghtPrbVlmbj_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CScnLghtPrbVlmbj_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CScnLghtPrbVlmbj_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CScnLghtPrbVlmbj_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CScnLghtPrbVlmbj_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CScnSkyBxbjct_AddTag(obj: usize, tag: u32) { crate::camera::add_tag(obj, tag) }
+pub unsafe fn CScnSkyBxbjct_RemoveTag(obj: usize, tag: u32) { crate::camera::remove_tag(obj, tag) }
+pub unsafe fn CScnSkyBxbjct_RemoveAllTags(obj: usize) { crate::camera::with_tags(obj, |t| t.clear()) }
+pub unsafe fn CScnSkyBxbjct_HasTag(obj: usize, tag: u32) -> i32 { crate::camera::with_tags(obj, |t| t.contains(&tag)) as i32 }
+pub unsafe fn CScnSkyBxbjct_GetTagCount(obj: usize) -> i32 { crate::camera::with_tags(obj, |t| t.len() as i32) }
+pub unsafe fn CScnSkyBxbjct_GetTagAt(obj: usize, i: i32) -> u32 { crate::camera::with_tags(obj, |t| t.get(i.max(0) as usize).copied().unwrap_or(0)) }
+pub unsafe fn CCameraRenderer_AddRenderTag(camera: usize, tag: u32) { crate::camera::camera_tag(camera, false, Some(tag)) }
+pub unsafe fn CCameraRenderer_AddExcludeTag(camera: usize, tag: u32) { crate::camera::camera_tag(camera, true, Some(tag)) }
+pub unsafe fn CCameraRenderer_ClearRenderTags(camera: usize) { crate::camera::camera_tag(camera, false, None) }
+pub unsafe fn CCameraRenderer_ClearExcludeTags(camera: usize) { crate::camera::camera_tag(camera, true, None) }
+
 pub unsafe fn CSceneObject_SetRenderingEnabled(obj: usize, on: i32) { crate::camera::set_shown(obj, on != 0) }
 pub unsafe fn CSceneObject_EnableRendering(obj: usize) { crate::camera::set_shown(obj, true) }
 pub unsafe fn CSceneObject_DisableRendering(obj: usize) { crate::camera::set_shown(obj, false) }
