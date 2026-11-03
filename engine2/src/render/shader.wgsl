@@ -97,6 +97,23 @@ struct DecalGpu {
 @group(0) @binding(4) var<storage, read> decals: array<DecalGpu>;
 @group(0) @binding(5) var decal_array: texture_2d_array<f32>;
 @group(0) @binding(6) var decal_sampler: sampler;
+// the view's local lights (lights.rs): points and spots that move, the nearest
+// few with shadow maps, their faces layers of one depth array
+struct LocalLight {
+    // xyz where it is; w its radius (0: none)
+    position: vec4<f32>,
+    // xyz the way it shines; w: 1 a spot light
+    forward: vec4<f32>,
+    // rgb its colour; w its first shadow face, or -1
+    color: vec4<f32>,
+    // constant, linear, quadratic attenuation; w what's left of it at its radius
+    falloff: vec4<f32>,
+    // a spot's cosines: inner, outer, 1 / (inner - outer)
+    cone: vec4<f32>,
+};
+@group(0) @binding(7) var<storage, read> local_lights: array<LocalLight>;
+@group(0) @binding(8) var<storage, read> local_faces: array<mat4x4<f32>>;
+@group(0) @binding(9) var local_shadows: texture_depth_2d_array;
 @group(1) @binding(0) var<uniform> material: Material;
 @group(1) @binding(1) var color_a: texture_2d<f32>;
 @group(1) @binding(2) var occlusion_a: texture_2d<f32>;
@@ -218,6 +235,35 @@ fn sun_shadow(world: vec3<f32>, n: vec3<f32>) -> f32 {
         }
     }
     return lit / 9.0;
+}
+
+// How much of a local light reaches a point (1: all): its shadow face's map
+// (a cube's, picked by the way the point lies from it), a little off the
+// surface, four taps.
+fn local_shadow(light: LocalLight, world: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (light.color.w < 0.0) { return 1.0; }
+    var face = 0;
+    if (light.forward.w < 0.5) {
+        let d = world - light.position.xyz;
+        let a = abs(d);
+        if (a.x >= a.y && a.x >= a.z) { face = select(1, 0, d.x > 0.0); }
+        else if (a.y >= a.z) { face = select(3, 2, d.y > 0.0); }
+        else { face = select(5, 4, d.z > 0.0); }
+    }
+    let layer = i32(light.color.w) + face;
+    let off = max(distance(world, light.position.xyz) * 0.01, 0.5);
+    let clip = local_faces[layer] * vec4<f32>(world + n * off, 1.0);
+    if (clip.w <= 0.0) { return 1.0; }
+    let p = clip.xyz / clip.w;
+    let uv = vec2<f32>(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || p.z > 1.0 || p.z < 0.0) { return 1.0; }
+    let texel = 1.0 / 512.0;
+    var lit = 0.0;
+    for (var k = 0; k < 4; k++) {
+        let o = vec2<f32>(f32(k & 1) - 0.5, f32(k >> 1u) - 0.5) * texel;
+        lit += textureSampleCompareLevel(local_shadows, shadow_compare, uv + o, layer, p.z);
+    }
+    return lit / 4.0;
 }
 
 const PI: f32 = 3.14159265;
@@ -422,6 +468,30 @@ fn light(i: Out, n: vec3<f32>, s: Surface) -> Lit {
         // cubemaps to the irradiance so)
         reflected = reflected * min(luminance(bounced) / max(luminance(ambient), 0.001), 1.0);
         ambient = bounced;
+    }
+    // and the local lights that move, as s&box shades its dynamic lights
+    // (vr_lighting.fxc): their falloff, a spot's cone, their shadows
+    for (var j = 0u; j < arrayLength(&local_lights); j = j + 1u) {
+        let light = local_lights[j];
+        let radius = light.position.w;
+        if (radius <= 0.0) { continue; }
+        let to = light.position.xyz - i.world;
+        let dist = length(to);
+        if (dist >= radius) { continue; }
+        let lj = to / max(dist, 1e-4);
+        let ndlj = max(dot(n, lj), 0.0);
+        if (ndlj <= 0.0) { continue; }
+        let d = max(dist, 1.0);
+        var atten = clamp(1.0 / max(light.falloff.x + light.falloff.y * d + light.falloff.z * d * d, 1e-6) - light.falloff.w, 0.0, 1.0);
+        if (light.forward.w > 0.5) {
+            atten *= clamp((dot(-lj, light.forward.xyz) - light.cone.y) * light.cone.z, 0.0, 1.0);
+        }
+        if (atten <= 0.0) { continue; }
+        let c = light.color.rgb * atten * local_shadow(light, i.world, n);
+        let hj = normalize(lj + v);
+        direct += c * ndlj;
+        let visj = 1.0 / ((ndlj * (1.0 - k) + k) * (ndv * (1.0 - k) + k) * 4.0);
+        direct_spec += c * ggx(n, hj, rough) * visj * ndlj;
     }
     var o: Lit;
     o.color = diffuse * (direct + ambient) * ao + fresnel * (direct_spec + reflected * ao);

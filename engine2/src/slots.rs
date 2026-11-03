@@ -4379,7 +4379,7 @@ unsafe extern "C" fn s2996() -> i32 { hit(2996); unsafe { core::mem::zeroed() } 
 unsafe extern "C" fn s2997() -> i32 { hit(2997); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s2998(_a0: usize, _a1: usize, _a2: usize) { hit(2998);  }
 unsafe extern "C" fn s2999(_a0: usize) -> i32 { hit(2999); crate::handles::create(2999, "SceneLightObject", &[_a0]) }
-unsafe extern "C" fn s3000(_a0: usize) -> i32 { hit(3000); crate::handles::create(3000, "SceneLightObject", &[_a0]) }
+unsafe extern "C" fn s3000(_a0: usize) -> i32 { hit(3000); unsafe { crate::impls::g_pSceneSystem_CreateSpotLight(_a0) } }
 unsafe extern "C" fn s3001(_a0: usize) -> i32 { hit(3001); crate::handles::create(3001, "SceneLightObject", &[_a0]) }
 unsafe extern "C" fn s3002(_a0: usize, _a1: usize) -> i32 { hit(3002); unsafe { crate::impls::g_pSceneSystem_CreateDirectionalLight(_a0, _a1) } }
 unsafe extern "C" fn s3003(_a0: usize, _a1: i32) -> i32 { hit(3003); crate::handles::create(3003, "SceneLightObject", &[_a0]) }

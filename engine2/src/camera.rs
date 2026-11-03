@@ -244,16 +244,28 @@ pub fn add_sun(light: usize, towards: crate::slots::S_Vector3) {
 }
 
 /// A light turned: a directional one's new direction (every kind of light
-/// is told).
+/// is told, and each one's kept: a spot light shines away from it).
 pub fn turn_light(light: usize, towards: crate::slots::S_Vector3) {
     if let Some(d) = SUNS.lock().unwrap().as_mut().and_then(|s| s.get_mut(&light)) { *d = towards; }
+    FACING.lock().unwrap().get_or_insert_with(Default::default).insert(light, towards);
 }
+
+/// Each light's back (towards it from what it shines on), as last turned.
+static FACING: Mutex<Option<HashMap<usize, crate::slots::S_Vector3>>> = Mutex::new(None);
+/// The lights made as spot lights (CreateSpotLight); the others are points or suns.
+static SPOTS: Mutex<Option<std::collections::HashSet<usize>>> = Mutex::new(None);
+
+pub fn light_facing(light: usize) -> Option<crate::slots::S_Vector3> { FACING.lock().unwrap().as_ref()?.get(&light).copied() }
+pub fn mark_spot(light: usize) { SPOTS.lock().unwrap().get_or_insert_with(Default::default).insert(light); }
+pub fn is_spot(light: usize) -> bool { SPOTS.lock().unwrap().as_ref().is_some_and(|s| s.contains(&light)) }
 
 /// A scene object gone: whatever was kept of it here.
 pub fn forget(obj: usize) {
     set_shown(obj, true);
     if let Some(t) = TAGS.lock().unwrap().as_mut() { t.remove(&obj); }
     if let Some(d) = DECAL_TEXTURES.lock().unwrap().as_mut() { d.remove(&obj); }
+    if let Some(f) = FACING.lock().unwrap().as_mut() { f.remove(&obj); }
+    if let Some(s) = SPOTS.lock().unwrap().as_mut() { s.remove(&obj); }
     if let Some(a) = OBJECT_ATTRS.lock().unwrap().as_mut().and_then(|a| a.remove(&obj)) { crate::gpu::device().attrs.remove(&a); }
     if let Some(s) = SUNS.lock().unwrap().as_mut() { s.remove(&obj); }
     if let Some(s) = SKIES.lock().unwrap().as_mut() { s.remove(&obj); }
@@ -540,6 +552,32 @@ mod draw {
         (batches, lines, said)
     }
 
+    /// The lights in a camera's worlds that move rather than being baked: its
+    /// point and spot lights (not suns, not the ones a map's lightmaps name by
+    /// their bake index), as managed placed and set them.
+    fn local_lights(camera: usize) -> Vec<crate::render::lights::LocalLight> {
+        let suns: std::collections::HashSet<usize> = super::suns().into_iter().map(|(l, _)| l).collect();
+        let mut out = Vec::new();
+        for world in super::worlds(camera) {
+            for light in crate::handles::made_with("SceneLightObject", world) {
+                if suns.contains(&light) || !super::shown(light) || !super::tags_drawn(camera, light) { continue; }
+                if super::baked(light).is_some_and(|(index, _)| index >= 0) { continue; }
+                let f = |prop| crate::state::get::<f32>(light, prop);
+                let back = super::light_facing(light).map(v3).unwrap_or(-Vec3::X);
+                out.push(crate::render::lights::LocalLight {
+                    position: v3(crate::state::get::<S_Vector3>(light, PROP_WorldPosition)),
+                    forward: -back,
+                    color: v3(crate::state::get::<S_Vector3>(light, PROP_Color)),
+                    radius: f(PROP_Radius),
+                    attenuation: [f(PROP_ConstantAttn), f(PROP_LinearAttn), f(PROP_QuadraticAttn)],
+                    cone: super::is_spot(light).then(|| (f(PROP_Theta), f(PROP_Phi))),
+                    shadows: crate::state::get::<i32>(light, PROP_Shadows) != 0,
+                });
+            }
+        }
+        out
+    }
+
     /// The decals in a camera's worlds that it shows (managed's Decal
     /// components' DecalSceneObjects): their boxes, as their transforms place
     /// and size them, and what managed set on them.
@@ -687,9 +725,16 @@ mod draw {
         view.sprites = sprites;
         view.lines = lines;
         view.decals = decals(camera);
+        view.lights = local_lights(camera);
         let custom = if view.decals.is_empty() { custom } else {
             let found = view.decals.iter().filter(|d| d.texture.is_some_and(|t| r.sprites.try_texture_of(r, t).is_some())).count();
             format!("{custom}; {} decals ({found} with their texture)", view.decals.len())
+        };
+        let custom = if view.lights.is_empty() { custom } else {
+            let spots = view.lights.iter().filter(|l| l.cone.is_some()).count();
+            let mut said = format!("{custom}; {} local lights ({spots} spots, {} casting shadows)", view.lights.len(), view.lights.iter().filter(|l| l.shadows).count());
+            if dump { for l in &view.lights { said += &format!(" [at {:.0},{:.0},{:.0} colour {:.2},{:.2},{:.2} radius {:.0} attenuation {:?} cone {:?}]", l.position.x, l.position.y, l.position.z, l.color.x, l.color.y, l.color.z, l.radius, l.attenuation, l.cone); } }
+            said
         };
         let custom = if std::env::var_os("ENGINE2_FRAME_DUMP").is_none() { custom } else {
             let all: Vec<usize> = super::worlds(camera).into_iter().flat_map(|w| crate::handles::made_with("DecalSceneObject", w)).collect();

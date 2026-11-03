@@ -2863,6 +2863,12 @@ pub unsafe fn g_pSceneSystem_CreateDirectionalLight(world: usize, direction: usi
     crate::camera::add_sun(obj, unsafe { std::ptr::read_unaligned(direction as *const S_Vector3) });
     crate::handles::register(obj, "SceneLightObject", &[world])
 }
+/// A spot light: a light that knows it is one (camera.rs draws it as one).
+pub unsafe fn g_pSceneSystem_CreateSpotLight(world: usize) -> i32 {
+    let obj = crate::handles::object();
+    crate::camera::mark_spot(obj);
+    crate::handles::register(obj, "SceneLightObject", &[world])
+}
 /// A light turned (managed passes its rotation): it shines along its
 /// forward, so towards it is backward.
 pub unsafe fn CScnLghtbjct_SetWorldDirection(light: usize, rotation: usize) {

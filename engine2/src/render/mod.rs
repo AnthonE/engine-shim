@@ -7,6 +7,7 @@
 //! scene with it when managed asks a camera for pixels (impls.rs,
 //! CCameraRenderer_RenderToBitmap); `render` draws one model.
 pub mod decals;
+pub mod lights;
 pub mod lines;
 pub mod sprites;
 pub mod ui;
@@ -185,6 +186,8 @@ pub struct Renderer {
     pub lines: lines::Lines,
     /// decals laid into what's opaque (decals.rs)
     pub decals: decals::Decals,
+    /// local lights' shadow maps, a face a layer (lights.rs)
+    local_shadows: wgpu::Texture,
     pub gpu: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -284,7 +287,10 @@ impl Renderer {
         // and its decals: their boxes, the array their textures are layers of, its sampler
         let decal_list = wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None };
         let decal_sampler = wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None };
-        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), shadow_map, compare, decal_list, array(5), decal_sampler] });
+        // and its local lights: theirs, their shadow faces' views, the depth array of their maps
+        let storage = |binding| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None };
+        let local_maps = wgpu::BindGroupLayoutEntry { binding: 9, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None };
+        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), shadow_map, compare, decal_list, array(5), decal_sampler, storage(7), storage(8), local_maps] });
         // the shadow map's own pass: the view alone
         let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("shadow view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)] });
         let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &[] });
@@ -308,7 +314,7 @@ impl Renderer {
             wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
         ] });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &material_layout, &object_layout, &lighting_layout], push_constant_ranges: &[] });
-        let glass_view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), tex(1), shadow_map, compare] });
+        let glass_view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), tex(1), shadow_map, compare, storage(7), storage(8), local_maps] });
         let glass_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass"), entries: &[
             uniform(0, wgpu::ShaderStages::FRAGMENT), tex(1), tex(2),
             wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
@@ -397,7 +403,11 @@ impl Renderer {
         let sprites = sprites::Sprites::new(&device, &queue);
         let lines = lines::Lines::new(&device, &queue);
         let decals = decals::Decals::new(&device, &queue);
-        Ok(Renderer { instance, ui, sprites, lines, decals, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
+        let local_shadows = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("local shadows"), size: wgpu::Extent3d { width: lights::SHADOW_SIZE, height: lights::SHADOW_SIZE, depth_or_array_layers: lights::SHADOW_LAYERS }, mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2, format: DEPTH, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
+        });
+        Ok(Renderer { instance, ui, sprites, lines, decals, local_shadows, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -804,6 +814,14 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2, format: DEPTH, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
         }).create_view(&Default::default());
         let decal_buffer = self.decals.buffer(self, &view.decals);
+        // the local lights it's lit by, and the faces of their shadows (one of each at least: a buffer can't be empty)
+        let (mut light_gpu, faces) = lights::pack(&view.lights, view.eye);
+        if light_gpu.is_empty() { light_gpu.push(bytemuck::Zeroable::zeroed()); }
+        let mut face_mats: Vec<[[f32; 4]; 4]> = faces.iter().map(|(_, m)| m.to_cols_array_2d()).collect();
+        if face_mats.is_empty() { face_mats.push(Mat4::IDENTITY.to_cols_array_2d()); }
+        let light_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("local lights"), contents: bytemuck::cast_slice(&light_gpu), usage: wgpu::BufferUsages::STORAGE });
+        let face_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("local shadow faces"), contents: bytemuck::cast_slice(&face_mats), usage: wgpu::BufferUsages::STORAGE });
+        let local_maps = self.local_shadows.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let view_group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("view"), layout: &self.view_layout, entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() },
             at(2, &shadow_map),
@@ -811,6 +829,9 @@ impl Renderer {
             wgpu::BindGroupEntry { binding: 4, resource: decal_buffer.as_entire_binding() },
             at(5, &self.decals.array_view),
             wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.decals.sampler) },
+            wgpu::BindGroupEntry { binding: 7, resource: light_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 8, resource: face_buffer.as_entire_binding() },
+            at(9, &local_maps),
         ] });
         // how each object is lit: by the view's lightmaps (1), the probe
         // volume that's chosen for it (2), or neither
@@ -887,6 +908,38 @@ impl Renderer {
             }
         }
         profile.mark(&mut encoder, "shadow");
+        // each local light's shadow faces: what's opaque within its reach, from where it is
+        for (layer, (k, face)) in faces.iter().enumerate() {
+            let (at, reach) = (Vec3::from_slice(&light_gpu[*k].position_xyz()), light_gpu[*k].radius());
+            let u = ViewUniform { shadow: face.to_cols_array_2d(), ..uniform };
+            let b = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("local shadow view"), contents: bytemuck::bytes_of(&u), usage: wgpu::BufferUsages::UNIFORM });
+            let group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("local shadow view"), layout: &self.uniform_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: b.as_entire_binding() }] });
+            let target = self.local_shadows.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2), base_array_layer: layer as u32, array_layer_count: Some(1), ..Default::default() });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("local shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &target, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }), stencil_ops: None }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.shadow_pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_bind_group(1, &self.empty, &[]);
+            for (o, g) in objects.iter().zip(&object_groups) {
+                // within its reach: the object's bounds, as a sphere, touch the light's
+                let (lo, hi) = (o.transform.transform_point3(o.model.min), o.transform.transform_point3(o.model.max));
+                if (lo + hi).distance(at * 2.0) * 0.5 > reach + lo.distance(hi) * 0.5 { continue; }
+                pass.set_bind_group(2, g, &[]);
+                for m in o.model.meshes.iter().filter(|m| o.shows(m)) {
+                    for dr in m.draws.iter().filter(|dr| dr.look(o.skin).1.opaque()) {
+                        pass.set_vertex_buffer(0, m.vertices[dr.vertex_buffer].slice(..));
+                        pass.set_index_buffer(m.indices[dr.index_buffer].slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(dr.range.clone(), dr.base_vertex, 0..1);
+                    }
+                }
+            }
+        }
+        if !faces.is_empty() { profile.mark(&mut encoder, "local shadows"); }
         {
             let [r, g, b, a] = view.clear;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -948,6 +1001,9 @@ impl Renderer {
                 at(1, &behind.create_view(&Default::default())),
                 at(2, &shadow_map),
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.compare_sampler) },
+                wgpu::BindGroupEntry { binding: 7, resource: light_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 8, resource: face_buffer.as_entire_binding() },
+                at(9, &local_maps),
             ] });
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -1167,6 +1223,8 @@ pub struct View {
     pub lines: Vec<crate::lines::Line>,
     /// decals, laid into what's opaque
     pub decals: Vec<decals::Decal>,
+    /// local lights that move (not the map's baked ones)
+    pub lights: Vec<lights::LocalLight>,
 }
 
 /// A light a map's lightmaps name by its bake index (managed's
@@ -1412,6 +1470,7 @@ impl View {
             sprites: Vec::new(),
             lines: Vec::new(),
             decals: Vec::new(),
+            lights: Vec::new(),
         }
     }
 
@@ -1423,7 +1482,7 @@ impl View {
         let fov = 30f32.to_radians();
         let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
         let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default(), sprites: Vec::new(), lines: Vec::new(), decals: Vec::new() }
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default(), sprites: Vec::new(), lines: Vec::new(), decals: Vec::new(), lights: Vec::new() }
     }
 }
 

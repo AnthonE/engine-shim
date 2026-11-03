@@ -609,9 +609,8 @@ sun (towards 0.11, -0.59, 0.80: its `light_environment` at pitch 53,
 yaw 101; colour 3.5 times 255 245 234) and its sunrise sky, the sun's
 glow in it where the light comes from; the roof of the spawn building,
 its scaffolding, the grass to the horizon, and the physgun in the
-player's hand, posed by its animation graph. What isn't drawn yet:
-local lights' shadows from what moves (the sun's are drawn, below) and
-decals (particles and the UI are, below). A headless player has no tonemapper of
+player's hand, posed by its animation graph. Since drawn too (below):
+particles, lines, decals, the UI, local lights and their shadows. A headless player has no tonemapper of
 managed's (`Graphics.IsAvailable` is false with the empty render device):
 the watcher's turning auto exposure off reaches nothing, and frames are
 exposed as s&box's defaults would expose them (above).
@@ -832,6 +831,33 @@ PNGs that are only their settings in sbox-public: the scorch's came out
 as the image generator's own error texture (magenta, as s&box shows a
 missing image), a bullet's not at all, and a dark soft-edged mark
 stands in for it, where it lands and how large, not its look.
+
+**Local lights** (`render/lights.rs`, `shader.wgsl`): the point and
+spot lights that aren't in a map's lightmaps (a `PointLight` or
+`SpotLight` component, a lamp spawned at runtime, the physgun's glow),
+shaded per pixel on every opaque and glass surface, the map's own
+lightmapped geometry included, as s&box shades its dynamic lights
+(`vr_lighting.fxc`): the falloff `1 / (constant + linear d + quadratic d²)`
+less what's left of it at the light's radius, so it ends there (how
+native turns managed's attenuation into its falloff isn't public: this
+is the shape of the shader's `CalculateDistanceFalloff`), a spot's cone
+from its inner to its outer half-angle (`Theta`, `Phi`; a light made by
+`CreateSpotLight` is one), diffuse and GGX specular as the sun's. The 32
+whose reach comes nearest the camera are shaded; the nearest that cast
+shadows get shadow maps while 24 layers of one 512-square depth array
+last, a point light's six cube faces, a spot's one, everything opaque
+within the light's reach drawn into them, read four taps at a time.
+Not yet: shadows of what moves on the lights the lightmaps carry
+(s&box's mixed shadows), light cookies, area lights' shapes, fog.
+Measured (`cargo test`, lavapipe): a point light's default falloff (400
+across, quadratic 1) is full to 100, a quarter less what's left at its
+edge at 200, nothing at 400; a floor lit by one 100 above is brightest
+under it (673 against 415 at its corner); a plate between them throws a
+48-pixel shadow, and none with its shadows off. In the zoo: five local
+lights, the bulb and spotlight fixtures on its floor (the spot's fan of
+light across the floor ahead of it, a warm pool round the bulb), the
+physgun's glow; seven shadow faces a frame, and frames as long as
+before (670 to 850 ms on lavapipe).
 
 Shots had left nothing at all: a gun's trace (`WithCollisionRules(
 "bullet" )`) names at most eight tags a shape may have one of, and under
@@ -1289,6 +1315,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `engine2/src/assets/` | compiled Source 2 resources: the container (`resource.rs`), binary KeyValues 3 (`kv3.rs`) and as text (`kv3text.rs`), models (`model.rs`) and their animations (`anim.rs`), meshes' buffers (`mesh.rs`), textures (`texture.rs`), materials (`material.rs`), paks (`vpk.rs`), entity lumps (`entities.rs`) |
 | `engine2/src/render/` | what a client draws, begun: models on wgpu, with our own `complex` and `blendable` shaders (`shader.wgsl`) |
 | `engine2/src/sprites.rs`, `render/sprites.rs`, `sprites.wgsl` | sprite batches (particles): their compute shaders run on the CPU, their draw read back in order and drawn as s&box's `sprite_ps` |
+| `engine2/src/render/lights.rs` | local lights: their falloff and cones, which get shadow maps, the faces those are drawn from |
 | `engine2/src/render/decals.rs` | decals: their boxes, their colour textures as layers of one array, laid into surfaces by `shader.wgsl` |
 | `engine2/src/lines.rs`, `render/lines.rs`, `lines.wgsl` | lines (beams, trails): `line_cs` run on the CPU, their triangles drawn as s&box's `line.shader` |
 | `engine2/src/camera.rs` | cameras managed asks for pixels: their worlds, what's shown, the view drawn into managed's bitmap |
@@ -1329,8 +1356,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    Materials, textures and shaders only matter to a client.
 4. **A client.** It plays, in a window (above): models, maps lit as they
    were baked, the UI and HUD, sprites, lines, sound and input, drawn on
-   wgpu from what s&box's public shaders say, and decals laid into
-   surfaces. Next: local lights' shadows, a game's own shaders.
+   wgpu from what s&box's public shaders say, decals laid into surfaces,
+   local lights and their shadows. Next: a game's own shaders.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
    download.
 
