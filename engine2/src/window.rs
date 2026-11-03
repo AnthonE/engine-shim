@@ -18,6 +18,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 // SDL3's event types (managed's Sdl.EventType)
@@ -76,7 +77,28 @@ static START: OnceLock<std::time::Instant> = OnceLock::new();
 pub struct Win {
     pub id: u32,
     pub window: Arc<Window>,
+    /// its OS handles, read on the window thread: Windows hands them out
+    /// there only, and the renderer makes the surface on another
+    pub handles: Option<Handles>,
     pub state: Mutex<WinState>,
+}
+
+/// A window's raw handles (an HWND, an X11 window, a Wayland surface).
+#[derive(Clone, Copy)]
+pub struct Handles {
+    display: RawDisplayHandle,
+    window: RawWindowHandle,
+}
+// A raw handle is a value (a number or a pointer the OS owns), safe to carry
+// to the render thread; what it names lives as long as its Window, which
+// each Surface holds.
+unsafe impl Send for Handles {}
+unsafe impl Sync for Handles {}
+
+impl Handles {
+    fn of(w: &Window) -> Option<Handles> {
+        Some(Handles { display: w.display_handle().ok()?.as_raw(), window: w.window_handle().ok()?.as_raw() })
+    }
 }
 
 #[derive(Default)]
@@ -100,6 +122,8 @@ pub struct WinState {
 pub struct Surface {
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
+    /// the window the surface was made from, kept until after it (fields drop in order)
+    _window: Arc<Window>,
 }
 
 #[derive(Default)]
@@ -154,7 +178,7 @@ pub fn error_ptr() -> usize {
 // ---- the event loop's thread
 
 enum Request {
-    Create { title: String, width: u32, height: u32, hidden: bool, borderless: bool, reply: mpsc::Sender<Result<Arc<Window>, String>> },
+    Create { title: String, width: u32, height: u32, hidden: bool, borderless: bool, reply: mpsc::Sender<Result<(Arc<Window>, Option<Handles>), String>> },
     /// the primary monitor's size and refresh, before there's a window to ask
     Monitor { reply: mpsc::Sender<Option<(i32, i32, u32)>> },
 }
@@ -194,7 +218,7 @@ impl ApplicationHandler<Request> for App {
                     .with_inner_size(winit::dpi::PhysicalSize::new(width.max(1), height.max(1)))
                     .with_visible(!hidden)
                     .with_decorations(!borderless);
-                let _ = reply.send(el.create_window(attrs).map(Arc::new).map_err(|e| e.to_string()));
+                let _ = reply.send(el.create_window(attrs).map(|w| { let h = Handles::of(&w); (Arc::new(w), h) }).map_err(|e| e.to_string()));
             }
             Request::Monitor { reply } => {
                 let m = el.primary_monitor().or_else(|| el.available_monitors().next());
@@ -344,7 +368,7 @@ pub fn create(title: &str, width: i32, height: i32, flags: i64, software: bool) 
         set_error("the window thread has gone");
         return 0;
     }
-    let window = match got.recv() {
+    let (window, handles) = match got.recv() {
         Ok(Ok(w)) => w,
         Ok(Err(e)) => { set_error(&e); return 0; }
         Err(_) => { set_error("the window thread didn't answer"); return 0; }
@@ -355,7 +379,7 @@ pub fn create(title: &str, width: i32, height: i32, flags: i64, software: bool) 
     let id = all.next;
     all.by_id.insert(window.id(), p);
     let state = WinState { hidden, borderless, software, ..Default::default() };
-    all.by_ptr.insert(p, Arc::new(Win { id, window, state: Mutex::new(state) }));
+    all.by_ptr.insert(p, Arc::new(Win { id, window, handles, state: Mutex::new(state) }));
     crate::trace::note(&format!("window: {title:?}, {width}x{height}"));
     p
 }
@@ -452,7 +476,12 @@ pub fn relative(p: usize) -> bool {
 fn surface_for(w: &Win, s: &mut WinState, r: &crate::render::Renderer, width: u32, height: u32) -> Option<()> {
     if s.surface.as_ref().is_some_and(|x| x.config.width == width && x.config.height == height) { return Some(()); }
     if s.surface.is_none() {
-        let surface = r.instance.create_surface(w.window.clone()).map_err(|e| crate::trace::note(&format!("window: no surface: {e}"))).ok()?;
+        let made = match w.handles {
+            // SAFETY: the handles are this window's, and the Surface holds the window
+            Some(h) => unsafe { r.instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle { raw_display_handle: h.display, raw_window_handle: h.window }) },
+            None => r.instance.create_surface(w.window.clone()),
+        };
+        let surface = made.map_err(|e| crate::trace::note(&format!("window: no surface: {e}"))).ok()?;
         let caps = surface.get_capabilities(&r.gpu);
         let format = caps.formats.iter().copied().find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm)).or(caps.formats.first().copied())?;
         if !caps.usages.contains(wgpu::TextureUsages::COPY_DST) {
@@ -472,7 +501,7 @@ fn surface_for(w: &Win, s: &mut WinState, r: &crate::render::Renderer, width: u3
             view_formats: vec![format.add_srgb_suffix()],
         };
         crate::trace::note(&format!("window: a surface, {format:?}, {width}x{height}"));
-        s.surface = Some(Surface { surface, config });
+        s.surface = Some(Surface { surface, config, _window: w.window.clone() });
     }
     let x = s.surface.as_mut()?;
     x.config.width = width;

@@ -865,7 +865,9 @@ client does, and this library answers it:
 - **SDL3's window**: the startup splash and the game's window are
   winit's, made on a thread of their own (X11, Wayland and Windows allow
   it; macOS doesn't yet), shown, sized, placed, focused, the splash's
-  pixels shown as managed draws them.
+  pixels shown as managed draws them. Its OS handles are read on that
+  thread when it's made (Windows hands them out there only), and the
+  renderer makes its surface from them.
 - **Its input**: keys (as SDL's scancodes and a US layout's keycodes),
   text, the mouse's position, buttons and wheel, focus and closing, as
   SDL3's 128-byte events for managed to poll; mouse look (relative mode)
@@ -1098,6 +1100,169 @@ Not yet: `border-shape`'s shapes and
 paths (ShapeIndex; drawn as the rounded rect), world panels (a nameplate in
 the world), and panel layers (`filter:`, `mask-image`).
 
+## A build players install
+
+`tools/build.sh` makes a game into one folder that runs on a Linux machine
+with nothing else: no .NET SDK, no sbox-public checkout, no Rust. In it:
+
+- `dotnet/`: Microsoft's .NET runtime, the shared framework the server's
+  runtimeconfig names and the host that finds it (80 MB), not the SDK.
+- `game/`: s&box's game folder as `tools/setup.sh` built it, the managed
+  engine and its content, without the editor, the samples, the API docs or
+  `bin/win64`'s closed natives; `libengine2.so` without its debug info,
+  SkiaSharp and HarfBuzz.
+- `project/`: the game. Its server compiles its code, as s&box's does; a
+  player is sent it.
+- `content/`: what `--package` brought from sbox.game, which a player reads
+  from disk (`ENGINE2_CONTENT`).
+- `host` and `play`: the server, and a player joining one in a window.
+  Each runs from wherever the folder is.
+
+The packages a game names on sbox.game are what a player still downloads:
+the server lists them when the player joins, and they install into
+`game/download/` from sbox.game as s&box's own client installs them, kept
+for the next time. A build carries only what `--map` and `--package` name,
+and a build you ship carries only content you may ship.
+
+```sh
+SHIMWATCH=0 sh tools/sandbox.sh ../sandbox      # no test watcher in a build
+sh tools/build.sh ../sandbox ../sandbox-build --package 'facepunch.flatgrass=^materials/dev/'
+../sandbox-build/host                           # on 27015
+../sandbox-build/play 127.0.0.1:27015           # or best --servers <shard list>; -width/-height
+```
+
+Measured on Sandbox's zoo: a 592 MB folder (the game's project 269 MB, the
+engine's folder 244, the runtime 80), copied to `/opt` and run with
+`/home/user` and `/root` emptied (the SDK, the checkouts and cargo gone) and
+a bare environment. With no network at all (the build before its library
+was stripped), the server started in 42 s, a player joined it, and its
+window drew the zoo and the HUD at 14 to 36 ms a frame after the first
+(640x360, lavapipe), only without the packages from sbox.game: 11 objects.
+Online, the server started in 38 s, the player installed the game's 147
+packages (123 MB) at the door and drew the same frame as the development
+checkout does: 29 objects, the physgun in hand, and the same 188 files not
+found (core's sounds and skybox, which come with Facepunch's closed
+download).
+
+A machine wants, besides, what any desktop has: ALSA (`libasound2`), a
+Vulkan driver (`libvulkan1` and the GPU's, or Mesa's), and for the window
+`libxkbcommon-x11-0` with X11 or Wayland.
+
+**Through the Elo Pros launcher.** `tools/depot.py` makes a build into what
+the launcher installs (elo-pros-launcher `docs/LAUNCHER.md` §3): a depot,
+every file's path, size and sha256 with the one command that starts it, and
+a manifest whose native row names it. The command is the build's `play`,
+given the server the player chose (`{server}`) and the title's shard list
+(`{servers}`); with none chosen, `play` joins the busiest server on that
+list (`+shimclient best`). `ENGINE2_ELO_GAME` is the title's slug, so the
+launcher signs a sign-in for it. A depot names files, not links, so
+`libengine2.so`'s two module names are copies. The digest a notary commits
+is the launcher's (`elo digest`).
+
+```sh
+python3 tools/depot.py ../sandbox-build ../sandbox-depot --slug sandbox --name Sandbox \
+  --base https://<where you serve it> --servers https://elopros.com/api/launcher/servers/sandbox
+elo install https://<where you serve it>/manifest.json
+elo play sandbox
+```
+
+Measured end to end with the launcher's own CLI (`elo` 0.6.11, built from
+scry-forge's `launcher-rs`): the depot (16,093 files, 583 MB) served over
+HTTP on loopback (`--allow-insecure`; a real root is https), a copy of the
+build hosting with sign-ins required and writing its shard-list row there,
+and engine-shim's stand-in launcher (test key 9) answering at the default
+socket where `elo-gui` would. With `/home/user` and `/root` emptied as
+above, `elo install`
+fetched and hashed every file into `~/.local/share/elo/games/sandbox/`,
+`elo verify` matched all 16,093, and `elo play` with no server chosen
+started `play`, which read the shard list, joined `Sandbox at
+127.0.0.1:27015 (0/32, of 1)`, and signed in through the socket: the
+server took the player as their wallet (`online.json`: `0xf7ed…fa5c`) and
+the window drew the zoo at 1280x720. One thing a server box serving its
+depot from Python's `http.server` needs: `--protocol HTTP/1.1`, or the
+launcher's reused connections are cut after the first file.
+
+**For Windows** (`--platform win-x86_64`), cross-compiled from Linux
+(`apt-get install mingw-w64`, `rustup target add x86_64-pc-windows-gnu`).
+`engine2.dll` builds from the same source and imports only Windows' own
+DLLs. The folder has Microsoft's .NET runtime for Windows, the same managed
+engine, and in `bin/win64` this library alone (as `engine2.dll` and the two
+module names) with SkiaSharp's and HarfBuzz's Windows natives: none of
+Facepunch's closed ones. `host.cmd` and `play.cmd` start it (668 MB for
+Sandbox). Its depot starts the folder's own `dotnet\dotnet.exe` (a PE,
+Microsoft's) in `game\`, with the content folders and the title's shard
+list in its environment; an empty `{server}` joins the best on that list.
+Two things it needed: s&box loads `bin\win64\steam_api64.dll` itself on
+Windows, which the patch now skips when there's none (Steam's imports go
+unanswered, as on Linux), and winit gives a window's handle out on its
+own thread only (above).
+
+```sh
+sh tools/build.sh ../sandbox ../sandbox-win --platform win-x86_64 --package 'facepunch.flatgrass=^materials/dev/'
+python3 tools/depot.py ../sandbox-win ../sandbox-win-depot --platform win-x86_64 --slug sandbox --name Sandbox --base https://<where>
+```
+
+Measured under Wine 9.0 on this Linux box, not on Windows: the Windows
+server (`host.cmd`) loaded Sandbox and listened, and the Windows player
+(`play.cmd 127.0.0.1:27015`) joined it and drew the zoo as the Linux build
+does (29 objects, the physgun in hand, the HUD), at about a second a frame
+through Wine onto lavapipe. One thing in that run isn't what ships: this
+machine has no IPv6, so the sockets fell back to IPv4, where quinn-udp
+reads `IPV6_V6ONLY` and sets the ECN and don't-fragment options, which
+Wine 9 doesn't implement (Windows does); the run used a local copy of
+quinn-udp that carries on without them. Not yet run on Windows itself,
+nor the sign-in's named pipe or the launcher there.
+
+## Publishing a game on Elo Pros
+
+What it takes for a player to run `elo install <slug>` and `elo play
+<slug>` against a server we host: the builds on the origin, and the server
+on the game box.
+
+**The builds, on the origin** (`tools/publish.sh`). From one or more
+`tools/build.sh` folders, it stages what scry-forge's `meter/launcher.py`
+serves: each platform's depot at `depots/<slug>/<build>/<platform>/` with
+the bytes beside it and its root on the origin's own route
+(`/api/launcher/depot/<slug>/<build>/<platform>/files`, so the notary's
+digest and the download agree), the `published.json` that makes them live,
+and the title's manifest for scry-forge's `data/launcher/`, a native slot
+per platform and its shard list at `/api/launcher/servers/<slug>`.
+`PUBLISH.txt` says the copy in order (the pointer last: a build is live
+when `published.json` names it, never because its directory is there).
+`depot.py` leaves out what a build writes when it runs (`game/data`,
+`logs`, `download`), so a folder that has been played ships as it was
+built.
+
+```sh
+sh tools/publish.sh sandbox Sandbox ../stage ../sandbox-build ../sandbox-win
+```
+
+**The server, on the game box** (`deploy/`). `install-server.sh <slug>
+<build> <host> [port] [status port]` installs a Linux build as
+`shim-server@<slug>` (systemd, its own user, its folder and
+`/var/lib/elo-shim/<slug>` the only places it writes), with its settings in
+`/etc/elo-shim/<slug>.env` (`shim-server.env`: sign-ins required for its
+address, its certificate, its host key, its shard row, its status, `+port`)
+and prints what's left: the certificate (`letsencrypt-hook.sh`, also the
+renewal hook), nginx's two locations for its status (`nginx-status.conf`:
+the origin asks a shard's `status_url` over https on the host its `addr`
+names), the firewall, and its shard row copied to the origin. Run again
+with a new build to update it; its settings, key and row stay.
+
+Measured here: both builds staged for a local origin and served by
+scry-forge's own router (its manifest route filled both native rows,
+`depot_state: published`, with their digests); `elo install sandbox` by
+slug from it, in the clean namespace, fetched and verified all 16,092
+files and `elo play --dry-run` named the title's shard list. That install
+first took 8 files a second, because the router re-validated the whole
+depot on every file request; scry-forge now parses a depot once per
+document (its `claude/laughing-brown-grojb1` branch), and the same install
+and verify took 34 s. The server, installed from the staged Linux depot
+with a stand-in for systemd and certbot and run as its unit runs it: as
+`elo-shim`, listening with the given certificate, its host key made, its
+row written (`status_url` https on its own host) and `status.json`
+answering on loopback for nginx.
+
 ## What a player hears
 
 `engine2/src/audio.rs`. s&box mixes in C# (`Sandbox.Audio.MixingThread`);
@@ -1192,6 +1357,8 @@ first.
   opens the lobby, as a networked game's `NetworkHelper` does for itself.
 - `+shimclient <address>` boots the same launcher as a headless player (a
   game app, not a dedicated server) and runs `connect <address>`.
+  `+shimclient best` joins the busiest server on its list
+  (`ENGINE2_SERVER_LIST`) that has room and no password.
 - `+shimrun <command>` runs a console command on that player before it
   connects (the server browser's `servers`, say).
 - `+shimwindow` makes that player a game with a window, as s&box's client
@@ -1270,6 +1437,10 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/package.sh` | a package's files from sbox.game, at their game paths, for development (never committed) |
 | `tools/surfacerig.sh`, `tools/surfacerig/` | balls and boxes of core's surfaces, and how they bounce, slide, weigh and trace |
 | `tools/play.sh` | Sandbox hosted here and joined in a window: play it |
+| `tools/build.sh` | a game as a player installs it: one folder with the runtime, the engine and the game, and its `host` and `play` (Linux, or Windows cross-compiled) |
+| `tools/depot.py` | a build as the Elo Pros launcher installs it: its depot and manifest, and the files to serve |
+| `tools/publish.sh` | builds staged as the Elo Pros origin serves them: depots, the pointer that makes them live, the manifest |
+| `deploy/` | a game's server on the game box: `install-server.sh`, its systemd unit and settings, nginx's status locations, the certificate hook |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
@@ -1284,6 +1455,28 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    credits do (scry-forge `meter/relay.py`).
 3. **Assets.** Models (collision, bones, hitboxes, sequences, key
    values, animation graphs), surfaces and maps are read (above).
+   A client reads materials and textures too; a game's own shaders it
+   doesn't (below).
+4. **A client.** It draws with a renderer of our own, on wgpu
+   (`engine2/src/render/`): models skinned and posed, maps lit as they were
+   baked, the sky, the sun's shadows, the HUD and the UI, in a window, with
+   input and sound (above). What's left: particles, decals, shadows from
+   local lights on what moves, a game's own shaders (s&box's UI and HUD
+   shaders are ported to WGSL by hand), the UI's `border-shape` paths,
+   world panels and panel layers, reverb; and a frame's cost on a real GPU.
+5. **The browser**, after the desktop builds. A game is built for the web
+   ahead of time and served as any web game is: its C# compiled with the
+   engine to WebAssembly before it ships (no compiler in the page, no
+   hotload), its shaders translated and its textures converted then.
+   .NET and Rust both build to WebAssembly, the transport
+   is already WebTransport, and physics and the asset readers are pure
+   Rust. The seam is the hard part: .NET's browser runtime is built with
+   Emscripten and links its natives in statically, so `engine2` would have
+   to build for `wasm32-unknown-emscripten`, where wgpu 25 has only WebGL
+   (no WebGPU: the renderer uses storage buffers) and winit has no backend.
+   Then threads (SharedArrayBuffer), a frame loop the browser drives
+   instead of one that blocks, files fetched instead of read, and a 2 GB
+   heap. Expect a large download.
    Materials, textures and shaders only matter to a client.
 4. **A client.** It plays, in a window (above): models, maps lit as they
    were baked, the UI and HUD, sprites, lines, sound and input, drawn on
@@ -1301,6 +1494,12 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
   `Facepunch.ActionGraphs` (NuGet) declares no licence; ask before bundling it.
 - **The creator's own terms** with Facepunch decide where their game may
   run; read them for each game.
+- **A game's shaders.** The renderer is decided: our own, on wgpu
+  (Vulkan, Metal, DX12; WebGPU in a browser), not Bevy or Godot. What's
+  open is a game's own shaders: s&box compiles them with the closed
+  `vfx_vulkan`, and so far each one drawn here is ported to WGSL by hand.
+  A translator, or a game that brings its shaders as WGSL, is to be
+  decided.
 - **The renderer.** The client draws with wgpu directly (`render/`), each
   of s&box's public shaders ported as it's met, not on Bevy or Godot.
   Bevy (Rust, MIT/Apache, wasm) would fit a Rust `engine2`; Godot (MIT)

@@ -10,13 +10,16 @@
 #   sh tools/map.sh facepunch.flatgrass ../sandbox/Assets && sh tools/sandbox.sh ../sandbox scenes/sandbox.scene
 #   SBOX=../sbox-public sh spike.sh 120 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
 #   grep shimwatch target/spike/server.log
+# SHIMWATCH=0 leaves the watcher out (it breaks and blows up props, for the
+# tests): what tools/build.sh wants for a build players run.
 set -e
 dir=${1:?a Sandbox checkout}; scene=${2:-scenes/zoo.scene}
 here=$(cd "$(dirname "$0")" && pwd)
-cp "$here/sandbox/ShimWatch.cs" "$dir/Code/ShimWatch.cs"
-python3 - "$dir" "$scene" <<'PY'
+watch=${SHIMWATCH:-1}
+if [ "$watch" = 1 ]; then cp "$here/sandbox/ShimWatch.cs" "$dir/Code/ShimWatch.cs"; else rm -f "$dir/Code/ShimWatch.cs"; fi
+python3 - "$dir" "$scene" "$watch" <<'PY'
 import json, os, sys, uuid
-dir, scene = sys.argv[1], sys.argv[2]
+dir, scene, watch = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 p = f"{dir}/sandbox.sbproj"
 proj = json.load(open(p))
 proj["Metadata"]["DedicatedServerStartupScene"] = scene
@@ -34,7 +37,10 @@ for m in maps(d["GameObjects"]):
     if "." in (m.get("MapName") or "") and not m["MapName"].endswith(".vpk") and os.path.exists(f"{dir}/Assets/maps/{name}.vpk"):
         m["MapName"] = f"maps/{name}.vpk"
         json.dump(d, open(s, "w"), indent=2)
-if not any(g.get("Name") == "ShimWatch" for g in d["GameObjects"]):
+if not watch and any(g.get("Name") == "ShimWatch" for g in d["GameObjects"]):
+    d["GameObjects"] = [g for g in d["GameObjects"] if g.get("Name") != "ShimWatch"]
+    json.dump(d, open(s, "w"), indent=2)
+if watch and not any(g.get("Name") == "ShimWatch" for g in d["GameObjects"]):
     d["GameObjects"].append({"__guid": str(uuid.uuid4()), "Flags": 0, "Name": "ShimWatch", "Enabled": True,
                              "Components": [{"__type": "ShimWatch", "__guid": str(uuid.uuid4())}]})
     json.dump(d, open(s, "w"), indent=2)

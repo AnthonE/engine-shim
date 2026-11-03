@@ -1,8 +1,14 @@
 diff --git a/engine/Launcher/SboxServer/Launcher.cs b/engine/Launcher/SboxServer/Launcher.cs
-index f8cf0c29..1b388727 100644
+index f8cf0c29..9d8b732e 100644
 --- a/engine/Launcher/SboxServer/Launcher.cs
 +++ b/engine/Launcher/SboxServer/Launcher.cs
-@@ -22,6 +22,15 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -1,4 +1,5 @@
+ ﻿using System;
++using System.Linq;
+ using System.Threading.Tasks;
+ 
+ namespace Sandbox;
+@@ -22,6 +23,15 @@ public class DedicatedServerAppSystem : AppSystem
  
  	public override void Init()
  	{
@@ -18,7 +24,7 @@ index f8cf0c29..1b388727 100644
  		// Redirecting console output (docker/wine/etc..) won't support this overlay, so don't bother with it
  		if ( !Console.IsOutputRedirected )
  		{
-@@ -43,14 +52,23 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -43,14 +53,23 @@ public class DedicatedServerAppSystem : AppSystem
  
  		CreateGame();
  
@@ -43,10 +49,22 @@ index f8cf0c29..1b388727 100644
  		// No game specified, show some help
  		if ( !Environment.CommandLine.Contains( "game " ) )
  		{
-@@ -60,9 +78,26 @@ public class DedicatedServerAppSystem : AppSystem
+@@ -60,9 +79,44 @@ public class DedicatedServerAppSystem : AppSystem
  		console?.Update();
  	}
  
++	static async void ShimJoinBest()
++	{
++		using var list = new Sandbox.Services.ServerList();
++		list.Query();
++		while ( list.IsQuerying ) await System.Threading.Tasks.Task.Yield();
++		var best = list.Where( x => !x.HasPassword && (x.MaxPlayers <= 0 || x.Players < x.MaxPlayers) )
++			.OrderByDescending( x => x.Players ).ThenBy( x => x.Ping ).FirstOrDefault();
++		if ( string.IsNullOrEmpty( best.IPAddressAndPort ) ) { System.Console.WriteLine( $"engine-shim: no server to join ({list.Count} listed)" ); return; }
++		System.Console.WriteLine( $"engine-shim: joining {best.Name} at {best.IPAddressAndPort} ({best.Players}/{best.MaxPlayers}, of {list.Count})" );
++		ConVarSystem.Run( $"connect {best.IPAddressAndPort}" );
++	}
++
 +	string shimGame;
 +	string shimClient;
 +	int shimFrames;
@@ -66,12 +84,18 @@ index f8cf0c29..1b388727 100644
 +		}
 +		// engine-shim: +shimrun <command> runs a console command on a player first (the server browser's `servers`, say)
 +		if ( shimClient is not null && shimFrames == 19 && Sandbox.Utility.CommandLine.GetSwitch( "+shimrun", null ) is { } shimRun ) { System.Console.WriteLine( $"engine-shim: running {shimRun}" ); ConVarSystem.Run( shimRun ); }
-+		if ( shimClient is not null && ++shimFrames == 30 ) { System.Console.WriteLine( $"engine-shim: a player, dedicated={Application.IsDedicatedServer} headless={Application.IsHeadless}, connecting to {shimClient}" ); ConVarSystem.Run( $"connect {shimClient}" ); }
++		if ( shimClient is not null && ++shimFrames == 30 )
++		{
++			System.Console.WriteLine( $"engine-shim: a player, dedicated={Application.IsDedicatedServer} headless={Application.IsHeadless}, connecting to {shimClient}" );
++			// engine-shim: +shimclient best (or empty: a launcher's {server} with none chosen, "" on Windows) joins the busiest server on the list (ENGINE2_SERVER_LIST) that has room and no password
++			var target = shimClient.Trim( '"', ' ' );
++			if ( target is "" or "best" ) ShimJoinBest(); else ConVarSystem.Run( $"connect {target}" );
++		}
  
  		return base.RunFrame();
  	}
 diff --git a/engine/Sandbox.AppSystem/AppSystem.cs b/engine/Sandbox.AppSystem/AppSystem.cs
-index bde38e73..a528979b 100644
+index bde38e73..32b08b96 100644
 --- a/engine/Sandbox.AppSystem/AppSystem.cs
 +++ b/engine/Sandbox.AppSystem/AppSystem.cs
 @@ -144,6 +144,7 @@ public class AppSystem
@@ -82,6 +106,16 @@ index bde38e73..a528979b 100644
  
  			CrashShutdown();
  
+@@ -467,6 +468,9 @@ public class AppSystem
+ 			return;
+ 
+ 		var dllName = $"{Environment.CurrentDirectory}\\bin\\win64\\steam_api64.dll";
++		// engine-shim: with the open native engine there's no Valve Steam API beside it; Steam's
++		// imports go unanswered, as on Linux, where this is never loaded
++		if ( !System.IO.File.Exists( dllName ) ) return;
+ 		if ( !NativeLibrary.TryLoad( dllName, out steamApiDll ) )
+ 		{
+ 			throw new System.Exception( "Couldn't load bin/win64/steam_api64.dll" );
 diff --git a/engine/Sandbox.Engine/Core/Windowing/GameWindow.cs b/engine/Sandbox.Engine/Core/Windowing/GameWindow.cs
 index 21880bb7..a96553c0 100644
 --- a/engine/Sandbox.Engine/Core/Windowing/GameWindow.cs
