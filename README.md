@@ -1357,7 +1357,20 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 4. **A client.** It plays, in a window (above): models, maps lit as they
    were baked, the UI and HUD, sprites, lines, sound and input, drawn on
    wgpu from what s&box's public shaders say, decals laid into surfaces,
-   local lights and their shadows. Next: a game's own shaders.
+   local lights and their shadows. Next: a game's own shaders. There's
+   no running them in general (s&box's shader compiler is Facepunch's,
+   and a shader leans on its constant buffers and bindless tables), so
+   each is ported as it's met, as s&box's own were. Sandbox ships ten:
+   its HUD's two (ported), its physgun's and toolgun's screens (on the
+   viewmodel, always in view), the TV's CRT, the duplicator's blueprint
+   overlay, a snap grid, a HUD icon, and two post-process effects (a
+   highlight and the sniper's scope). The screens want three things
+   first: a mesh's material overridden by its slot
+   (`SetMaterialOverrideByIndex`), an object's own render attributes
+   reaching its material (their graph texture, the render target painted
+   with their picture, their colours), and the command list an object
+   runs before it's drawn (`SceneSystem.OnBeforeRender`, for one flagged
+   `ExecuteBefore`), which paints that render target.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
    download.
 
