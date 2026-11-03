@@ -1202,7 +1202,11 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    local lights on what moves, a game's own shaders (s&box's UI and HUD
    shaders are ported to WGSL by hand), the UI's `border-shape` paths,
    world panels and panel layers, reverb; and a frame's cost on a real GPU.
-5. **The browser.** .NET and Rust both build to WebAssembly, the transport
+5. **The browser**, after the desktop builds. A game is built for the web
+   ahead of time and served as any web game is: its C# compiled with the
+   engine to WebAssembly before it ships (no compiler in the page, no
+   hotload), its shaders translated and its textures converted then.
+   .NET and Rust both build to WebAssembly, the transport
    is already WebTransport, and physics and the asset readers are pure
    Rust. The seam is the hard part: .NET's browser runtime is built with
    Emscripten and links its natives in statically, so `engine2` would have
