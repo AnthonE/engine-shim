@@ -1100,6 +1100,52 @@ Not yet: `border-shape`'s shapes and
 paths (ShapeIndex; drawn as the rounded rect), world panels (a nameplate in
 the world), and panel layers (`filter:`, `mask-image`).
 
+## A community game: Ape Tavern's Grubs
+
+Grubs (github.com/apetavern/grubs, MIT) is a Worms-like artillery game,
+not Facepunch's: its terrain is a 2D signed-distance field (Ziks'
+`libsdf`) built, meshed and carved at runtime, its sky, water and effects
+its own shader graphs. Its repository has the code and source assets; the
+compiled ones (models, materials, textures) are in its published package
+on sbox.game, fetched as Sandbox's map is, never committed here.
+
+```sh
+git clone https://github.com/apetavern/grubs ../grubs
+cp -rn ../grubs/assets/. ../grubs/Assets/      # see below
+sh tools/package.sh apetavern.grubs ../content-grubs '(_c|\.vpk)$'
+sh tools/package.sh apetavern.gr_beach ../content-grubs '(_c|\.vpk)$'
+sh tools/compile.sh ../grubs scene prefab geq sound sdflayer vpcf
+ENGINE2_CONTENT=$PWD/../content-grubs SBOX=../sbox-public sh spike.sh 600 +shimgame $PWD/../grubs/.sbproj +shimhost
+# once "Server started!":
+(cd ../sbox-public/game && ENGINE2_CONTENT=$PWD/../../content-grubs ./sbox-server +shimclient 127.0.0.1:27015 +shimwindow +instanceid 2)
+```
+
+Measured, with nothing in this library written for it: its server loads
+the game in 9.8 s with no exceptions, starts its Free For All mode, builds
+the terrain's mesh and collision (`IPhysicsShape_UpdateMeshShape`) and
+listens; a player joins in a window and gets the game's code from it.
+
+Two things it needed:
+
+- A camera drawn into a texture (`CCameraRenderer_RenderToTexture`, for a
+  `ScenePanel` or a camera's `RenderTarget`). Grubs' landing screen is a
+  ScenePanel showing its `main_menu.scene`, and its lobby a camera's
+  preview of the terrain; until drawn, a render target is the magenta
+  managed makes it with, and the whole screen was. Now drawn as
+  `RenderToBitmap` is and written into the texture in its format: the
+  menu's scene (the grass, the barrel, the revolver, the toolbox) fills
+  the window, 310 ms a frame on lavapipe with the preview drawn too.
+- Its repository has both `Assets/` and `assets/`, one folder on Windows
+  and two on Linux, where only `Assets/` is mounted: copying one into the
+  other finds the two particle prefabs that were missing.
+
+What it doesn't do yet: the landing screen's panels (its buttons, its
+text) use `filter:` and drop shadows, which s&box draws into panel layers
+and composites with `ui_filter` and `ui_dropshadow`; those aren't drawn
+here (below), so the menu shows its scene and none of its UI, and a game
+isn't started from it. Its own shader graphs (the sky, water, fire) are
+drawn as plain materials.
+
 ## A build players install
 
 `tools/build.sh` makes a game into one folder that runs on a Linux machine

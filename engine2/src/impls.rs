@@ -2873,6 +2873,12 @@ pub unsafe fn CCameraRenderer_SetRenderAttributes(camera: usize, attrs: usize) {
 pub unsafe fn CCameraRenderer_RenderToBitmap(camera: usize, pixels: usize, width: i32, height: i32, bpp: i32) {
     crate::camera::to_bitmap(camera, pixels, width, height, bpp)
 }
+/// The camera's view drawn into a texture managed made (a ScenePanel's,
+/// a camera's RenderTarget): until it is, a render target stays the
+/// magenta managed made it with. Non-zero when it was drawn.
+pub unsafe fn CCameraRenderer_RenderToTexture(camera: usize, texture: usize, _parent_view: usize, _depth: usize) -> i32 {
+    crate::camera::to_texture(camera, texture) as i32
+}
 pub unsafe fn CSceneObject_GetModelHandle(obj: usize) -> usize { animation::model_of(obj) }
 pub unsafe fn CScnnmtblbjct_GetModelHandle(obj: usize) -> usize { animation::model_of(obj) }
 /// How many animation events the object's sequences passed since managed last heard.

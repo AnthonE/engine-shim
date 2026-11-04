@@ -453,6 +453,19 @@ mod draw {
         crate::trace::note(&said);
     }
 
+    /// Camera `camera`'s view drawn into a texture managed made (a render
+    /// target: a ScenePanel's, a camera's `RenderTarget`), at the texture's
+    /// size. Drawn and read back as `to_bitmap` is, then written into the
+    /// texture in its own format, which bumps its version so the UI and the
+    /// renderer take the new pixels. False where the texture isn't one
+    /// managed made or its format isn't one written here.
+    pub fn to_texture(camera: usize, texture: usize) -> bool {
+        let Some((width, height)) = crate::gpu::texture_size(texture) else { return false };
+        let Some((image, said)) = frame(camera, width, height) else { return false };
+        crate::trace::note(&said);
+        crate::gpu::write_rgba(texture, &image)
+    }
+
     /// The renderer the cameras draw with (a window's surface shares its device).
     pub fn shared_renderer() -> Option<&'static Renderer> { renderer() }
 
@@ -651,13 +664,15 @@ mod draw {
 }
 
 #[cfg(feature = "render")]
-pub use draw::{frame, frame_into, shared_renderer, to_bitmap};
+pub use draw::{frame, frame_into, shared_renderer, to_bitmap, to_texture};
 #[cfg(feature = "render")]
 #[allow(unused_imports)]
 pub use draw::probe_volumes;
 
 #[cfg(not(feature = "render"))]
 pub fn to_bitmap(_camera: usize, _pixels: usize, _width: i32, _height: i32, _bpp: i32) {}
+#[cfg(not(feature = "render"))]
+pub fn to_texture(_camera: usize, _texture: usize) -> bool { false }
 
 #[cfg(test)]
 mod tag_tests {
