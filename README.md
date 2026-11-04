@@ -981,8 +981,20 @@ about, ms a frame:
 
 Native's part of a frame is now about 2 ms. `managed` in the last column is
 mostly waiting: the display paces the frame there, and the main thread uses
-36% of a core. The zoo is a small level; flatgrass isn't measured yet, nor
-is what the new pacing does to a server.
+36% of a core.
+
+On flatgrass, a real map (262 objects, its sky and lightmaps drawn), at
+1280x720 and nobody moving, it's 59 frames a second too. Past loading (4,080
+frames): 16.9 ms a frame on average, p95 17.5 to 30, 80 at worst, 4 of 68
+stretches of 60 frames holding a frame over 33 ms. Native's part is about
+10 ms (record 5.2, UI and its tonemap 2.2, gather 1.1, exposure 1.1) and
+the main thread uses 71% of a core. Each object gets two new buffers and a
+bind group every frame, and what's off screen is drawn too: both are next.
+The server holds 60 ticks a second (598 in ten seconds), no thread of its
+over 9% of a core. Getting in is the slow part: the first frame's wait is
+49 s (38 in the zoo), mostly managed, with 147 packages installed in that
+run, then freezes of 2.5 s and 7 s as the world first draws. Not measured
+yet: walking the map, or a crowd of props.
 
 **The UI and HUD** (`engine2/src/gpu.rs`). s&box draws all of it with one
 bindless shader (`ui_cssbox_batched.shader`, public, about 3,000 lines with
@@ -1535,8 +1547,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    input and sound (above). What's left: particles, decals, shadows from
    local lights on what moves, a game's own shaders (s&box's UI and HUD
    shaders are ported to WGSL by hand), the UI's `border-shape` paths,
-   world panels and panel layers, reverb; and a frame's cost on a real map
-   on a real GPU (above: the zoo only).
+   world panels and panel layers, reverb; and a frame's cost in a crowd of
+   props on a real GPU (above: flatgrass standing still).
 5. **The browser**, after the desktop builds. A game is built for the web
    ahead of time and served as any web game is: its C# compiled with the
    engine to WebAssembly before it ships (no compiler in the page, no
