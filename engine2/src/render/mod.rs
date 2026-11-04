@@ -11,6 +11,7 @@ pub mod sprites;
 pub mod ui;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::assets::{material, mesh, resource::Resource, texture};
@@ -203,6 +204,11 @@ pub struct Renderer {
     tonemap_shader: wgpu::ShaderModule,
     tonemap_pipelines: Mutex<HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>>,
     tonemap_layout: wgpu::BindGroupLayout,
+    window_exposure: Mutex<WindowExposure>,
+    /// what a window's frames are drawn into, kept from frame to frame
+    window_targets: Mutex<Option<FrameTargets>>,
+    /// the sun's shadow map, by its size
+    shadow_maps: Mutex<HashMap<u32, wgpu::TextureView>>,
     glass_view_layout: wgpu::BindGroupLayout,
     glass_layout: wgpu::BindGroupLayout,
     view_layout: wgpu::BindGroupLayout,
@@ -390,7 +396,7 @@ impl Renderer {
         let ui = ui::Ui::new(&device, &queue);
         let sprites = sprites::Sprites::new(&device, &queue);
         let lines = lines::Lines::new(&device, &queue);
-        Ok(Renderer { instance, ui, sprites, lines, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
+        Ok(Renderer { instance, ui, sprites, lines, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), window_exposure: Default::default(), window_targets: Default::default(), shadow_maps: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -792,10 +798,10 @@ impl Renderer {
         let d = &self.device;
         let view_buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("view"), contents: bytemuck::bytes_of(&uniform), usage: wgpu::BufferUsages::UNIFORM });
         let shadow_size = if shadow.is_some() { SHADOW_SIZE } else { 1 };
-        let shadow_map = d.create_texture(&wgpu::TextureDescriptor {
+        let shadow_map = self.shadow_maps.lock().unwrap().entry(shadow_size).or_insert_with(|| d.create_texture(&wgpu::TextureDescriptor {
             label: Some("shadow"), size: wgpu::Extent3d { width: shadow_size, height: shadow_size, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
             dimension: wgpu::TextureDimension::D2, format: DEPTH, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
-        }).create_view(&Default::default());
+        }).create_view(&Default::default())).clone();
         let view_group = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("view"), layout: &self.view_layout, entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() },
             at(2, &shadow_map),
@@ -827,11 +833,20 @@ impl Renderer {
             label: None, size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: samples,
             dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[],
         });
-        let resolved = target(COLOR, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING);
         // drawn multisampled and resolved into `resolved`; with one sample, into it
         let multisampled = samples() > 1;
-        let msaa = if multisampled { target(COLOR, samples(), wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default()) } else { resolved.create_view(&Default::default()) };
-        let depth = target(DEPTH, samples(), wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
+        let new_targets = || {
+            let resolved = target(COLOR, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING);
+            let msaa = if multisampled { target(COLOR, samples(), wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default()) } else { resolved.create_view(&Default::default()) };
+            let depth = target(DEPTH, samples(), wgpu::TextureUsages::RENDER_ATTACHMENT).create_view(&Default::default());
+            FrameTargets { size: (width, height), resolved, msaa, depth }
+        };
+        // a window's frames are the same size, one after the other
+        let FrameTargets { resolved, msaa, depth, .. } = if target_view.is_some() {
+            let mut kept = self.window_targets.lock().unwrap();
+            if kept.as_ref().is_none_or(|t| t.size != (width, height)) { *kept = Some(new_targets()); }
+            kept.clone().unwrap()
+        } else { new_targets() };
         // what's drawn over what's behind it, farthest first
         let mut later: Vec<(f32, usize, usize, usize)> = Vec::new();
         for (k, o) in objects.iter().enumerate() {
@@ -996,33 +1011,62 @@ impl Renderer {
             self.sprites.draw(self, &mut pass, &u, &view.sprites, samples());
         }
         profile.mark(&mut encoder, "sprites");
+        crate::trace::mark("record");
         // its exposure: as asked, or from what's been drawn
         let debug = std::env::var("RENDER_DEBUG").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0) != 0.0;
+        let row = (width * 8).div_ceil(256) * 256;
+        let copy_to = |encoder: &mut wgpu::CommandEncoder, buffer: &wgpu::Buffer| encoder.copy_texture_to_buffer(resolved.as_image_copy(), wgpu::TexelCopyBufferInfo { buffer, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(height) } }, wgpu::Extent3d { width, height, depth_or_array_layers: 1 });
         let exposure = match view.exposure {
             Exposure::Fixed(e) => e,
+            // a window: what was last measured, and measuring again if that's done
+            Exposure::Auto { min, max, compensation } if target_view.is_some() => {
+                let mut all = self.window_exposure.lock().unwrap();
+                let w = &mut *all;
+                let _ = d.poll(wgpu::PollType::Poll);
+                if w.copy.as_ref().is_some_and(|c| c.size != (width, height)) { w.copy = None; }
+                let copy = w.copy.get_or_insert_with(|| ExposureCopy {
+                    buffer: d.create_buffer(&wgpu::BufferDescriptor { label: Some("exposure"), size: (row * height) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false }),
+                    size: (width, height),
+                    state: Default::default(),
+                    copied: None,
+                });
+                if copy.state.load(Ordering::Acquire) == EXPOSURE_MAPPED {
+                    copy.state.store(EXPOSURE_READING, Ordering::Release);
+                    let (buffer, state, bright) = (copy.buffer.clone(), copy.state.clone(), w.bright.clone());
+                    std::thread::spawn(move || {
+                        {
+                            let data = buffer.slice(..).get_mapped_range();
+                            let found = brightest(&mut luminances(&data, row as usize, width as usize, height as usize));
+                            bright.store(found.unwrap_or(f32::NAN).to_bits(), Ordering::Relaxed);
+                        }
+                        buffer.unmap();
+                        state.store(EXPOSURE_FREE, Ordering::Release);
+                    });
+                }
+                if copy.state.load(Ordering::Acquire) == EXPOSURE_FREE && copy.copied.is_none_or(|at| at.elapsed() >= EXPOSURE_EVERY) {
+                    copy_to(&mut encoder, &copy.buffer);
+                    copy.state.store(EXPOSURE_COPIED, Ordering::Release);
+                    copy.copied = Some(std::time::Instant::now());
+                }
+                let bright = f32::from_bits(w.bright.load(Ordering::Relaxed));
+                exposure_for((!bright.is_nan()).then_some(bright), min, max, compensation)
+            }
             Exposure::Auto { min, max, compensation } => {
-                let row = (width * 8).div_ceil(256) * 256;
                 let readback = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * height) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
-                encoder.copy_texture_to_buffer(resolved.as_image_copy(), wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(height) } }, wgpu::Extent3d { width, height, depth_or_array_layers: 1 });
+                copy_to(&mut encoder, &readback);
                 self.queue.submit([std::mem::replace(&mut encoder, d.create_command_encoder(&Default::default())).finish()]);
                 let slice = readback.slice(..);
                 slice.map_async(wgpu::MapMode::Read, |_| {});
                 let _ = d.poll(wgpu::PollType::Wait);
                 let data = slice.get_mapped_range();
-                let h = |at: usize| crate::assets::mesh::half(u16::from_le_bytes([data[at], data[at + 1]]));
-                // every other pixel that's drawn on (not the clear of a model's frame)
-                let mut lum: Vec<f32> = (0..height as usize).step_by(2).flat_map(|y| (0..width as usize).step_by(2).map(move |x| y * row as usize + x * 8))
-                    .filter(|&at| h(at + 6) > 0.0)
-                    .map(|at| 0.2126 * h(at) + 0.7152 * h(at + 2) + 0.0722 * h(at + 4))
-                    .filter(|l| l.is_finite())
-                    .collect();
-                auto_exposure(&mut lum, min, max, compensation)
+                auto_exposure(&mut luminances(&data, row as usize, width as usize, height as usize), min, max, compensation)
             }
         };
         profile.mark(&mut encoder, "exposure");
-        let shown = target(SHOWN, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
-        let shown_view = shown.create_view(&Default::default());
-        let (out_view, out_format) = target_view.unwrap_or((&shown_view, SHOWN));
+        crate::trace::mark("exposure");
+        let shown = target_view.is_none().then(|| target(SHOWN, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC));
+        let shown_view = shown.as_ref().map(|s| s.create_view(&Default::default()));
+        let (out_view, out_format) = target_view.unwrap_or_else(|| (shown_view.as_ref().unwrap(), SHOWN));
         {
             let curve = match view.tonemap { Tonemap::Linear => 0.0, Tonemap::Hable => 1.0, Tonemap::Aces => 2.0, Tonemap::ReinhardJodie => 3.0, Tonemap::Agx => 4.0 };
             let u = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("tonemap"), contents: bytemuck::cast_slice(&[exposure, curve, debug as i32 as f32, 0.0]), usage: wgpu::BufferUsages::UNIFORM });
@@ -1043,11 +1087,18 @@ impl Renderer {
         }
         if target_view.is_some() {
             self.queue.submit([encoder.finish()]);
+            // what was copied is mapped once it's there, for a later frame to read
+            if let Some(copy) = self.window_exposure.lock().unwrap().copy.as_ref().filter(|c| c.state.load(Ordering::Acquire) == EXPOSURE_COPIED) {
+                let state = copy.state.clone();
+                state.store(EXPOSURE_MAPPING, Ordering::Release);
+                copy.buffer.slice(..).map_async(wgpu::MapMode::Read, move |done| state.store(if done.is_ok() { EXPOSURE_MAPPED } else { EXPOSURE_FREE }, Ordering::Release));
+            }
+            crate::trace::mark("tonemap");
             profile.mark_submitted("tonemap");
             profile.say(width, height, objects.len());
             return Vec::new();
         }
-        let resolved = shown;
+        let resolved = shown.unwrap();
         // read it back, a row at a time as copies align them
         let row = (width * 4).div_ceil(256) * 256;
         let readback = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * height) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
@@ -1365,12 +1416,73 @@ impl Default for Exposure {
 /// mat_tonemap_percent_target 60): what puts the pixel 2% of them are
 /// brighter than at 60% of white, within the range. None drawn: 1.
 fn auto_exposure(lum: &mut [f32], min: f32, max: f32, compensation: f32) -> f32 {
-    if lum.is_empty() { return 1.0; }
+    exposure_for(brightest(lum), min, max, compensation)
+}
+
+/// The luminance 2% of these are brighter than, if there are any.
+fn brightest(lum: &mut [f32]) -> Option<f32> {
+    if lum.is_empty() { return None; }
     let k = ((lum.len() as f32) * 0.98) as usize;
     let k = k.min(lum.len() - 1);
     let (_, bright, _) = lum.select_nth_unstable_by(k, |a, b| a.total_cmp(b));
+    Some(*bright)
+}
+
+fn exposure_for(bright: Option<f32>, min: f32, max: f32, compensation: f32) -> f32 {
+    let Some(bright) = bright else { return 1.0 };
     (0.6 / bright.max(1e-4)).clamp(min, max) * 2f32.powf(compensation)
 }
+
+/// The luminances of a frame read back (RGBA, half floats, `row` bytes a
+/// row): of the pixels that are drawn on (not the clear of a model's frame),
+/// every other one, and fewer across a large frame, about 320 by its width.
+fn luminances(data: &[u8], row: usize, width: usize, height: usize) -> Vec<f32> {
+    let h = |at: usize| crate::assets::mesh::half(u16::from_le_bytes([data[at], data[at + 1]]));
+    let step = (width / 320).max(2);
+    (0..height).step_by(step).flat_map(|y| (0..width).step_by(step).map(move |x| y * row + x * 8))
+        .filter(|&at| h(at + 6) > 0.0)
+        .map(|at| 0.2126 * h(at) + 0.7152 * h(at + 2) + 0.0722 * h(at + 4))
+        .filter(|l| l.is_finite())
+        .collect()
+}
+
+/// What a frame is drawn into before it's shown.
+#[derive(Clone)]
+struct FrameTargets {
+    size: (u32, u32),
+    resolved: wgpu::Texture,
+    msaa: wgpu::TextureView,
+    depth: wgpu::TextureView,
+}
+
+/// A window's auto exposure, measured without stopping for it: now and then a
+/// frame copies what it drew, a thread of its own reads that, and each frame
+/// shows with what was last read. So it's a few frames old, and the CPU and
+/// GPU keep working side by side. (One exposure, for the one view a window's
+/// frame is drawn from.)
+struct WindowExposure {
+    copy: Option<ExposureCopy>,
+    /// `brightest`, as a float's bits (NaN: nothing measured)
+    bright: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl Default for WindowExposure {
+    fn default() -> Self { WindowExposure { copy: None, bright: Arc::new(f32::NAN.to_bits().into()) } }
+}
+
+struct ExposureCopy {
+    buffer: wgpu::Buffer,
+    size: (u32, u32),
+    state: Arc<std::sync::atomic::AtomicU8>,
+    copied: Option<std::time::Instant>,
+}
+
+const EXPOSURE_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
+const EXPOSURE_FREE: u8 = 0;
+const EXPOSURE_COPIED: u8 = 1;
+const EXPOSURE_MAPPING: u8 = 2;
+const EXPOSURE_MAPPED: u8 = 3;
+const EXPOSURE_READING: u8 = 4;
 
 /// A sky on the GPU (Renderer::sky).
 pub struct Sky {
