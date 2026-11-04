@@ -4257,7 +4257,7 @@ unsafe extern "C" fn s2874() -> i32 { hit(2874); unsafe { crate::impls::g_pAudio
 unsafe extern "C" fn s2875(_a0: usize) { hit(2875); unsafe { crate::impls::g_pAudioDevice_SendOutput(_a0) } }
 unsafe extern "C" fn s2876(_a0: usize) -> usize { hit(2876); crate::trace::object(2876) }
 unsafe extern "C" fn s2877(_a0: usize) { hit(2877);  }
-unsafe extern "C" fn s2878() { hit(2878);  }
+unsafe extern "C" fn s2878() { hit(2878); unsafe { crate::impls::g_pngnSrvcMgr_ExitMainLoop() } }
 unsafe extern "C" fn s2879(_a0: usize, _a1: usize) -> usize { hit(2879); unsafe { crate::impls::g_pFllFlSystm_GetSymLink(_a0, _a1) } }
 unsafe extern "C" fn s2880(_a0: usize, _a1: usize, _a2: usize) { hit(2880); unsafe { crate::impls::g_pFllFlSystm_AddSymLink(_a0, _a1, _a2) } }
 unsafe extern "C" fn s2881(_a0: usize, _a1: usize) { hit(2881); unsafe { crate::impls::g_pFllFlSystm_RemoveSymLink(_a0, _a1) } }

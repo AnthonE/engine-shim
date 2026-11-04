@@ -5,7 +5,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{CStr, CString};
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// A string for managed to read: native keeps it (leaked, as the engine's
@@ -74,9 +74,15 @@ pub unsafe fn CMtrlSystm2ppSys_GetContentPath(_self: usize) -> usize { global_Ge
 
 // ---- the frame
 
+/// Managed wants out (Application.WantsExit: the window closed, `quit`):
+/// the frame says so to the loop.
+static EXIT_MAIN_LOOP: AtomicBool = AtomicBool::new(false);
+pub unsafe fn g_pngnSrvcMgr_ExitMainLoop() { EXIT_MAIN_LOOP.store(true, Ordering::Relaxed) }
+
 /// One engine frame: true to keep running. The engine paces the loop; the
 /// stub at 60 Hz, as a dedicated server's default tick would.
 pub unsafe fn global_SourceEngineFrame(_app_system: usize, _time: f64, _previous: f64) -> i32 {
+    if EXIT_MAIN_LOOP.load(Ordering::Relaxed) { return 0; }
     crate::elo::TICK.fetch_add(1, Ordering::Relaxed);
     // a client with a window: its output, as native's frame asks for it
     // (EngineLoop.OnClientOutput: every view drawn to its swap chain), then shown
