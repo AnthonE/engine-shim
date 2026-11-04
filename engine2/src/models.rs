@@ -323,7 +323,8 @@ impl Draft {
             let objects = s.map(|s| vec![SceneObject {
                 min: Vector::new(s.min[0], s.min[1], s.min[2]),
                 max: Vector::new(s.max[0], s.max[1], s.max[2]),
-                draws: s.draws.iter().map(|d| DrawCall { primitive: d.primitive, base_vertex: d.start_vertex, vertices: d.vertex_count, start_index: d.start_index, indices: d.index_count, instances: 1, uv_density: s.uv_density }).collect(),
+                draws: s.draws.iter().map(|d| DrawCall { primitive: d.primitive, base_vertex: d.start_vertex, vertices: d.vertex_count, start_index: d.start_index, indices: d.index_count, instances: 1, uv_density: s.uv_density,
+                    material: crate::camera::material_name(d.material).unwrap_or_default(), material_object: d.material }).collect(),
             }]).unwrap_or_default();
             RenderMesh { name: cs(""), objects, hitbox_sets: Vec::new(), attachments: Vec::new() }
         }).collect();
@@ -721,6 +722,44 @@ mod tests {
         let (lo, hi) = part.hulls.iter().map(|&h| all.hull(h).unwrap().bounds()).fold((Vector::splat(f32::MAX), Vector::splat(f32::MIN)), |(a, b), (c, d)| (a.min(c), b.max(d)));
         // a washing machine: about 30 wide, 28 deep, 40 tall
         assert!((hi - lo).z > 30.0 && (hi - lo).x > 20.0, "{lo:?} {hi:?}");
+    }
+
+    #[test]
+    fn a_model_names_its_materials_as_managed_indexes_them() {
+        // the first compiled model with materials in the content folders (ENGINE2_CONTENT), if any
+        let Ok(roots) = std::env::var("ENGINE2_CONTENT") else { return };
+        fn find(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.is_dir() { find(&p, out) } else if p.to_string_lossy().ends_with(".vmdl_c") { out.push(p) }
+            }
+        }
+        let mut files = Vec::new();
+        for root in roots.split(':') { find(std::path::Path::new(root), &mut files); }
+        for path in files.iter().take(40) {
+            let root = roots.split(':').find(|r| path.starts_with(r)).unwrap();
+            let name = path.strip_prefix(root).unwrap().to_string_lossy().trim_end_matches("_c").to_string();
+            crate::fs::add_link(&format!("{name}_c"), path.to_str().unwrap());
+            let m = load(&name);
+            let Some(f) = file(m) else { continue };
+            let Some(group) = f.group_materials.first().filter(|g| !g.is_empty()) else { continue };
+            unsafe {
+                assert_eq!(crate::impls::CModel_GetMaterialIndexCount(m), group.len() as i32, "{name}");
+                for (i, want) in group.iter().enumerate() {
+                    let got = crate::impls::CModel_GetMaterialByIndex(m, i as i32);
+                    assert_ne!(got, 0, "{name} material {i}");
+                    assert_eq!(crate::camera::material_name(got).as_deref(), Some(want.as_str()), "{name} material {i}");
+                    assert_eq!(crate::impls::CModel_GetMaterialInGroup(m, 0, i as i32), got, "one object a material");
+                }
+                assert_eq!(crate::impls::CModel_GetMaterialByIndex(m, group.len() as i32), 0, "past the end: none");
+                // a draw call's material is one of the model's
+                let drawn = crate::impls::CModel_GetMaterial(m, 0, 0, 0);
+                if drawn != 0 { assert!(group.iter().any(|g| crate::fs::normal(g) == crate::fs::normal(&crate::camera::material_name(drawn).unwrap()))); }
+            }
+            eprintln!("{name}: {} materials ({})", group.len(), group.join(", "));
+            return;
+        }
+        eprintln!("no model with materials found: skipped");
     }
 
     #[test]

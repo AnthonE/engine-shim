@@ -2532,13 +2532,42 @@ pub unsafe fn CModel_GetNumSceneObjects(model: usize, mesh: i32) -> i32 {
 pub unsafe fn CModel_GetNumDrawCalls(model: usize, mesh: i32, object: i32) -> i32 {
     file(model).and_then(|f| at(&f.meshes, mesh)).and_then(|m| at(&m.objects, object)).map(|o| o.draws.len() as i32).unwrap_or(0)
 }
-/// Materials aren't loaded on a server: none.
-pub unsafe fn CModel_GetMaterial(_model: usize, _mesh: i32, _object: i32, _draw: i32) -> usize { 0 }
-pub unsafe fn CModel_GetDrawCallMaterial(_model: usize, _mesh: i32, _draw: i32) -> usize { 0 }
-pub unsafe fn CModel_GetMaterialIndexCount(_model: usize) -> i32 { 0 }
-pub unsafe fn CModel_GetMaterialByIndex(_model: usize, _i: i32) -> usize { 0 }
-pub unsafe fn CModel_GetMaterialInGroup(_model: usize, _group: i32, _i: i32) -> usize { 0 }
-pub unsafe fn CModel_GetNumMaterialsInGroup(_model: usize, _group: i32) -> i32 { 0 }
+// A model's materials, as managed indexes them (Model.Materials,
+// ModelRenderer.Materials): its first material group's, in order, each
+// the material object of that name (camera::material: found or made by
+// name, as Material.Load's). A model with no groups has its draw calls'
+// materials, each once, in the order its meshes draw them.
+
+/// The model's materials, in managed's order: material objects.
+fn model_materials(f: &ModelFile) -> Vec<usize> {
+    if let Some(first) = f.group_materials.first().filter(|g| !g.is_empty()) { return first.iter().map(|n| material_named(n)).collect(); }
+    let mut out: Vec<usize> = Vec::new();
+    for d in f.meshes.iter().flat_map(|m| &m.objects).flat_map(|o| &o.draws) {
+        let m = draw_material(d);
+        if m != 0 && !out.contains(&m) { out.push(m); }
+    }
+    out
+}
+fn material_named(name: &str) -> usize { if name.is_empty() { 0 } else { crate::camera::material(name) } }
+/// A draw call's material: the object it was given, else the one its name finds.
+fn draw_material(d: &crate::assets::model::DrawCall) -> usize { if d.material_object != 0 { d.material_object } else { material_named(&d.material) } }
+pub unsafe fn CModel_GetMaterial(model: usize, mesh: i32, object: i32, draw: i32) -> usize {
+    file(model).and_then(|f| at(&f.meshes, mesh).and_then(|m| at(&m.objects, object)).and_then(|o| at(&o.draws, draw)).map(draw_material)).unwrap_or(0)
+}
+/// A mesh's draw call, counted across its scene objects.
+pub unsafe fn CModel_GetDrawCallMaterial(model: usize, mesh: i32, draw: i32) -> usize {
+    file(model).and_then(|f| at(&f.meshes, mesh).and_then(|m| m.objects.iter().flat_map(|o| &o.draws).nth(draw.max(0) as usize)).map(draw_material)).unwrap_or(0)
+}
+pub unsafe fn CModel_GetMaterialIndexCount(model: usize) -> i32 { file(model).map(|f| model_materials(f).len() as i32).unwrap_or(0) }
+pub unsafe fn CModel_GetMaterialByIndex(model: usize, i: i32) -> usize {
+    file(model).and_then(|f| model_materials(f).get(i.max(0) as usize).copied()).unwrap_or(0)
+}
+pub unsafe fn CModel_GetMaterialInGroup(model: usize, group: i32, i: i32) -> usize {
+    file(model).and_then(|f| at(&f.group_materials, group).and_then(|g| g.get(i.max(0) as usize)).map(|n| material_named(n))).unwrap_or(0)
+}
+pub unsafe fn CModel_GetNumMaterialsInGroup(model: usize, group: i32) -> i32 {
+    file(model).and_then(|f| at(&f.group_materials, group).map(|g| g.len() as i32)).unwrap_or(0)
+}
 pub unsafe fn CModel_GetNumMaterialGroups(model: usize) -> i32 { file(model).map(|f| f.material_groups.len() as i32).unwrap_or(0) }
 pub unsafe fn CModel_GetMaterialGroupName(model: usize, i: i32) -> usize {
     file(model).and_then(|f| at(&f.material_groups, i)).map(|g| ptr(g)).unwrap_or(ptr(c""))

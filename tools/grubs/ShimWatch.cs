@@ -1,6 +1,7 @@
 using Grubs;
 using Grubs.Systems.GameMode;
 using Grubs.Systems.Pawn;
+using Sandbox.Sdf;
 
 /// <summary>
 /// For a Grubs server with no one to press its buttons: once a player has
@@ -9,7 +10,9 @@ using Grubs.Systems.Pawn;
 /// player, ammo without end); a dedicated server is the host, so no player
 /// is shown START or SANDBOX. Then says every two seconds what the match is
 /// doing: its state, whose turn and how long is left, and each grub (where,
-/// its health, whether it's on the ground).
+/// its health, whether it's on the ground). And on the server and on each
+/// player, how many times the terrain has been carved (Sdf2DWorld's
+/// modifications: an explosion's crater, made by the host, sent to players).
 /// </summary>
 public sealed class ShimWatch : Component
 {
@@ -17,10 +20,19 @@ public sealed class ShimWatch : Component
 	TimeSince _seen;
 	bool _waiting;
 
+	int _carved = -1;
+
 	protected override void OnUpdate()
 	{
-		if ( !Networking.IsHost || _last < 2 ) return;
+		if ( _last < 2 ) return;
 		_last = 0;
+		var carved = Scene.GetAllComponents<Sdf2DWorld>().Sum( w => w.ModificationCount );
+		if ( carved != _carved )
+		{
+			Log.Info( $"shimwatch: terrain carved {carved} times ({(Networking.IsHost ? "host" : "player")})" );
+			_carved = carved;
+		}
+		if ( !Networking.IsHost ) return;
 		if ( BaseGameMode.Current is not FreeForAll ffa ) { Log.Info( "shimwatch: no Free For All mode yet" ); return; }
 
 		var players = Player.All.ToList();

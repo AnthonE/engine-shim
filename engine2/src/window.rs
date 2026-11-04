@@ -167,6 +167,16 @@ fn push(e: Event) {
     windows().events.push_back(e);
 }
 
+/// ENGINE2_INPUT_DEBUG: each focus change, crossing, key and button the
+/// window gets, as winit gives it, into the trace.
+fn input_note(what: impl FnOnce() -> String) {
+    static ON: OnceLock<bool> = OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("ENGINE2_INPUT_DEBUG").is_some()) {
+        let t = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f32();
+        crate::trace::note(&format!("input {t:.3}: {}", what()));
+    }
+}
+
 pub fn set_error(e: &str) {
     windows().error = CString::new(e.replace('\0', "")).unwrap_or_default();
 }
@@ -231,6 +241,11 @@ impl ApplicationHandler<Request> for App {
         let Some(p) = windows().by_id.get(&id).copied() else { return };
         let Some(w) = get(p) else { return };
         let wid = w.id;
+        match &event {
+            WindowEvent::Focused(_) | WindowEvent::CursorEntered { .. } | WindowEvent::CursorLeft { .. } | WindowEvent::MouseInput { .. } => input_note(|| format!("{event:?}")),
+            WindowEvent::KeyboardInput { event: k, .. } => input_note(|| format!("key {:?} {:?}{}", k.physical_key, k.state, if k.repeat { " (repeat)" } else { "" })),
+            _ => {}
+        }
         match event {
             WindowEvent::Resized(size) => {
                 for kind in [WINDOW_RESIZED, WINDOW_PIXEL_SIZE_CHANGED] {
@@ -452,8 +467,14 @@ pub fn show(p: usize, visible: bool) -> bool {
 }
 
 /// Mouse look: the cursor held and hidden, the device's motion sent.
+/// Relative mode (mouse look): the cursor held and hidden, its motion sent
+/// as the device's own. Leaving it, where the cursor now is is sent as a
+/// motion: while held, the window's own motion isn't sent, and the cursor
+/// may have moved, so without it managed (the UI shown as the mode ends:
+/// an inventory, a menu) would take the cursor to be where it was before
+/// the mode began, until it next moved.
 pub fn set_relative(p: usize, on: bool) -> bool {
-    with(p, |w, s| {
+    let left = with(p, |w, s| {
         if on {
             let held = w.window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| w.window.set_cursor_grab(CursorGrabMode::Confined));
             if held.is_err() { crate::trace::note("window: the cursor can't be held here; relative motion still sent"); }
@@ -461,9 +482,20 @@ pub fn set_relative(p: usize, on: bool) -> bool {
             let _ = w.window.set_cursor_grab(CursorGrabMode::None);
         }
         w.window.set_cursor_visible(!on);
+        let was = s.relative;
         s.relative = on;
-        true
-    }).unwrap_or(false)
+        (w.id, was && !on, s.buttons, s.mouse)
+    });
+    let Some((wid, left, buttons, (x, y))) = left else { return false };
+    input_note(|| format!("relative mode {}", if on { "on" } else { "off" }));
+    if left {
+        let mut e = Event::new(MOUSE_MOTION, wid);
+        e.put_u32(24, buttons);
+        e.put_f32(28, x);
+        e.put_f32(32, y);
+        push(e);
+    }
+    true
 }
 
 pub fn relative(p: usize) -> bool {
