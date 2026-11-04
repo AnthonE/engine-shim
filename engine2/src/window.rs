@@ -468,13 +468,11 @@ pub fn show(p: usize, visible: bool) -> bool {
 
 /// Mouse look: the cursor held and hidden, the device's motion sent.
 /// Relative mode (mouse look): the cursor held and hidden, its motion sent
-/// as the device's own. Leaving it, where the cursor now is is sent as a
-/// motion: while held, the window's own motion isn't sent, and the cursor
-/// may have moved, so without it managed (the UI shown as the mode ends:
-/// an inventory, a menu) would take the cursor to be where it was before
-/// the mode began, until it next moved.
+/// as the device's own. Leaving it, managed puts the cursor back where it
+/// was when the mode began (InputRouter's SetCursorPosition), and the warp's
+/// own motion tells it so, as SDL's would.
 pub fn set_relative(p: usize, on: bool) -> bool {
-    let left = with(p, |w, s| {
+    let set = with(p, |w, s| {
         if on {
             let held = w.window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| w.window.set_cursor_grab(CursorGrabMode::Confined));
             if held.is_err() { crate::trace::note("window: the cursor can't be held here; relative motion still sent"); }
@@ -482,20 +480,11 @@ pub fn set_relative(p: usize, on: bool) -> bool {
             let _ = w.window.set_cursor_grab(CursorGrabMode::None);
         }
         w.window.set_cursor_visible(!on);
-        let was = s.relative;
         s.relative = on;
-        (w.id, was && !on, s.buttons, s.mouse)
-    });
-    let Some((wid, left, buttons, (x, y))) = left else { return false };
+        true
+    }).unwrap_or(false);
     input_note(|| format!("relative mode {}", if on { "on" } else { "off" }));
-    if left {
-        let mut e = Event::new(MOUSE_MOTION, wid);
-        e.put_u32(24, buttons);
-        e.put_f32(28, x);
-        e.put_f32(32, y);
-        push(e);
-    }
-    true
+    set
 }
 
 pub fn relative(p: usize) -> bool {

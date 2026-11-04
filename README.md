@@ -1252,15 +1252,41 @@ opened with Q and the bazooka equipped from it ("Attempting to equip
 Bazooka"), a grub walked by holding D (x -852 to -837, as the server saw
 it), a health crate picked up (150 to 175).
 
-Not yet: a weapon fired and the terrain carved. The input driven by
-xdotool stopped arriving partway through a run (keys and clicks both,
-with the window focused), not yet told apart from Xvfb's; and a press and
-release inside one frame (300 ms here) is missed, which a hand on a real
-GPU wouldn't do. The inventory's icons (`models/weapons/*.vmdl.png`)
-aren't found by `Image.Load` on a player, which reads managed's own file
-system, not `ENGINE2_CONTENT`. Its own shader graphs (the terrain's
-triplanar, the sky, water, fire) are drawn as plain materials: the
-terrain grey, the water pink.
+A weapon fired, and the terrain carved. Firing first threw in Grubs'
+charge gauge (`Materials.GetOriginal(0)` was null): a model's materials
+(`Model.Materials`, `CModel_GetMaterialIndexCount` and its kin) were
+answered with none. They're its first material group's now, each the
+material object of its name (or, in a model built at runtime, the one a
+draw was given). Measured: the bazooka equipped from the inventory,
+charged (the gauge at its muzzle), fired, its rocket in flight and its
+explosion; the terrain carved 3 times before (the map's making) and 9 after,
+on the server and on the player alike (`ShimWatch` counts Sdf2DWorld's
+modifications on each, so the crater reached the player over the network).
+
+Driving a window under Xvfb, what looked like input going missing wasn't
+this library's (`ENGINE2_INPUT_DEBUG=1` traces each focus change,
+crossing, key, button and relative-mode change the window gets):
+
+- With no window manager, no window is ever given the keyboard's focus:
+  winit says `Focused(false)`, keys reach no window, and managed, whose
+  game takes keys only while its window has focus, hears none. `xdotool
+  windowfocus` gives it; a desktop's window manager does at start.
+- Xvfb repeats a held key: a toggle (the inventory's Q) held a second
+  toggles it several times. `xset r off`.
+- A press and its release inside one frame (300 ms on lavapipe) is a
+  button down and up before the game looks: managed's per-frame input,
+  s&box's own behaviour, not missed here. Hold for longer than a frame.
+- While the game shows a cursor (an inventory open, and for a moment after
+  while the pointer is over it), a click is the UI's, and a motion made
+  while the mouse is captured is undone when it's released (managed puts
+  the cursor back where capture began). Move off the UI and wait for
+  `relative mode on` in the trace before firing.
+
+The inventory's icons (`models/weapons/*.vmdl.png`) aren't found by
+`Image.Load` on a player, which reads managed's own file system, not
+`ENGINE2_CONTENT`. Its own shader graphs (the terrain's triplanar, the
+sky, water, fire) are drawn as plain materials: the terrain grey, the
+water pink.
 
 ## A build players install
 
