@@ -467,6 +467,42 @@ pub fn texture_rgba(t: usize) -> Option<(u32, u32, u64, Vec<u8>)> {
     Some((w, h, x.version, px))
 }
 
+/// A texture managed made: its size, for drawing into it.
+pub fn texture_size(t: usize) -> Option<(i32, i32)> {
+    device().textures.get(&t).map(|x| (x.desc.width as i32, x.desc.height as i32))
+}
+
+/// RGBA8 (straight alpha, top row first, the texture's size) written over a
+/// texture managed made, in its own format: what `texture_rgba` reads back.
+/// False for a format not written here.
+pub fn write_rgba(t: usize, rgba: &[u8]) -> bool {
+    let mut d = device();
+    let Some(x) = d.textures.get_mut(&t) else { return false };
+    let n = x.desc.width as usize * x.desc.height as usize;
+    if rgba.len() < n * 4 { return false; }
+    let s = &rgba[..n * 4];
+    let px: Vec<u8> = match x.desc.format {
+        0 | 42 | 55 | 81 => s.to_vec(),
+        1 | 43 => s.chunks_exact(4).flat_map(|c| [c[3], c[2], c[1], c[0]]).collect(),
+        11 | 44 => s.chunks_exact(4).flat_map(|c| [c[3], c[0], c[1], c[2]]).collect(),
+        12 | 16 | 41 | 45 | 51 | 52 | 82 | 83 => s.chunks_exact(4).flat_map(|c| [c[2], c[1], c[0], c[3]]).collect(),
+        24 => s.iter().flat_map(|&c| f32_to_half(c as f32 / 255.0).to_le_bytes()).collect(),
+        _ => return false,
+    };
+    if x.data.len() != px.len() { return false; }
+    x.data = px;
+    x.version += 1;
+    true
+}
+
+/// A float as IEEE half, for values in 0..=1 (no infinities or NaNs needed).
+fn f32_to_half(v: f32) -> u16 {
+    let b = v.clamp(0.0, 65504.0).to_bits();
+    let exp = ((b >> 23) & 0xff) as i32 - 127 + 15;
+    let frac = (b >> 13) & 0x3ff;
+    if exp <= 0 { if exp < -10 { 0 } else { (((b & 0x7f_ffff) | 0x80_0000) >> (14 - exp)) as u16 } } else { ((exp as u32) << 10 | frac) as u16 }
+}
+
 fn half_to_f32(h: u16) -> f32 {
     let (sign, exp, frac) = ((h >> 15) as u32, ((h >> 10) & 0x1f) as u32, (h & 0x3ff) as u32);
     let s = if sign == 1 { -1.0 } else { 1.0 };
@@ -659,5 +695,29 @@ mod tests {
         let i = sampler_index(clamp);
         assert_eq!(samplers_by_index()[i as usize].address, [2, 2, 2]);
         assert!((half_to_f32(0x3c00) - 1.0).abs() < 1e-6 && (half_to_f32(0x3800) - 0.5).abs() < 1e-6 && half_to_f32(0x0001) > 0.0);
+    }
+
+    #[test]
+    fn a_camera_writes_a_render_target_in_its_format() {
+        // what a camera drew, 2x1 RGBA: orange, then half-transparent blue
+        let drawn = [255u8, 128, 0, 255, 0, 0, 255, 128];
+        // RGBA8888 (0), BGRA8888 (12), RGBA16161616F (24): each reads back as drawn
+        for format in [0u8, 12, 24] {
+            let mut config = [0u8; 44];
+            config[0] = 2; config[2] = 1; config[4] = 1; config[6] = 1; config[12] = format; config[16] = RENDER_TARGET as u8;
+            let t = create_texture("test target", true, &config, &[]);
+            assert_eq!(texture_size(t), Some((2, 1)));
+            assert!(write_rgba(t, &drawn), "format {format}");
+            let (_, _, version, px) = texture_rgba(t).unwrap();
+            assert_eq!(version, 1, "bumped, so the GPU's copy is stale");
+            assert_eq!(px, drawn, "format {format}");
+        }
+        // too few pixels, or a texture managed never made: nothing written
+        let mut config = [0u8; 44];
+        config[0] = 2; config[2] = 1;
+        let t = create_texture("test short", true, &config, &[]);
+        assert!(!write_rgba(t, &drawn[..4]) && !write_rgba(0xdead, &drawn));
+        assert_eq!(f32_to_half(1.0), 0x3c00);
+        assert_eq!(f32_to_half(0.5), 0x3800);
     }
 }

@@ -66,6 +66,10 @@ pub struct DrawCall {
     pub indices: i32,
     pub instances: i32,
     pub uv_density: f32,
+    /// the material it draws with, by name (m_material)
+    pub material: String,
+    /// or, in a model built at runtime, the material object it was given
+    pub material_object: usize,
 }
 
 pub struct SceneObject {
@@ -113,6 +117,9 @@ pub struct ModelFile {
     pub body_parts: Vec<BodyPart>,
     pub lod_switch: Vec<f32>,
     pub material_groups: Vec<CString>,
+    /// each material group's materials, by name: the first group's are the
+    /// model's materials, in the order managed indexes them (Model.Materials)
+    pub group_materials: Vec<Vec<String>>,
     pub sequences: Vec<CString>,
     pub animations: Vec<CString>,
     /// the animations decoded, for playing
@@ -225,6 +232,8 @@ pub fn render_mesh(name: &str, m: &Value) -> RenderMesh {
             indices: d.i64("m_nIndexCount") as i32,
             instances: d.i64("m_nInstanceCount") as i32,
             uv_density: d.f32("m_flUvDensity"),
+            material: d.get("m_material").and_then(Value::as_str).unwrap_or("").to_string(),
+            material_object: 0,
         }).collect(),
     }).collect();
     let hitbox_sets = m.get("m_hitboxsets").map(Value::as_array).unwrap_or(&[]).iter().map(|kv| {
@@ -313,6 +322,8 @@ pub fn read(r: &Resource, read_compiled: impl Fn(&str) -> Option<Vec<u8>>) -> Re
         default_mask: data.i64("m_nDefaultMeshGroupMask") as u64,
         lod_switch: data.get("m_lodGroupSwitchDistances").map(Value::floats).unwrap_or_default(),
         material_groups: data.get("m_materialGroups").map(Value::as_array).unwrap_or(&[]).iter().map(|g| cs(str_of(g, "m_name"))).collect(),
+        group_materials: data.get("m_materialGroups").map(Value::as_array).unwrap_or(&[]).iter()
+            .map(|g| g.get("m_materials").map(Value::as_array).unwrap_or(&[]).iter().map(|m| m.as_str().unwrap_or("").to_string()).collect()).collect(),
         ..Default::default()
     };
     m.body_parts = body_parts(&m.mesh_groups);

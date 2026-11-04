@@ -167,6 +167,16 @@ fn push(e: Event) {
     windows().events.push_back(e);
 }
 
+/// ENGINE2_INPUT_DEBUG: each focus change, crossing, key and button the
+/// window gets, as winit gives it, into the trace.
+fn input_note(what: impl FnOnce() -> String) {
+    static ON: OnceLock<bool> = OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("ENGINE2_INPUT_DEBUG").is_some()) {
+        let t = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f32();
+        crate::trace::note(&format!("input {t:.3}: {}", what()));
+    }
+}
+
 pub fn set_error(e: &str) {
     windows().error = CString::new(e.replace('\0', "")).unwrap_or_default();
 }
@@ -231,6 +241,11 @@ impl ApplicationHandler<Request> for App {
         let Some(p) = windows().by_id.get(&id).copied() else { return };
         let Some(w) = get(p) else { return };
         let wid = w.id;
+        match &event {
+            WindowEvent::Focused(_) | WindowEvent::CursorEntered { .. } | WindowEvent::CursorLeft { .. } | WindowEvent::MouseInput { .. } => input_note(|| format!("{event:?}")),
+            WindowEvent::KeyboardInput { event: k, .. } => input_note(|| format!("key {:?} {:?}{}", k.physical_key, k.state, if k.repeat { " (repeat)" } else { "" })),
+            _ => {}
+        }
         match event {
             WindowEvent::Resized(size) => {
                 for kind in [WINDOW_RESIZED, WINDOW_PIXEL_SIZE_CHANGED] {
@@ -452,8 +467,12 @@ pub fn show(p: usize, visible: bool) -> bool {
 }
 
 /// Mouse look: the cursor held and hidden, the device's motion sent.
+/// Relative mode (mouse look): the cursor held and hidden, its motion sent
+/// as the device's own. Leaving it, managed puts the cursor back where it
+/// was when the mode began (InputRouter's SetCursorPosition), and the warp's
+/// own motion tells it so, as SDL's would.
 pub fn set_relative(p: usize, on: bool) -> bool {
-    with(p, |w, s| {
+    let set = with(p, |w, s| {
         if on {
             let held = w.window.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| w.window.set_cursor_grab(CursorGrabMode::Confined));
             if held.is_err() { crate::trace::note("window: the cursor can't be held here; relative motion still sent"); }
@@ -463,7 +482,9 @@ pub fn set_relative(p: usize, on: bool) -> bool {
         w.window.set_cursor_visible(!on);
         s.relative = on;
         true
-    }).unwrap_or(false)
+    }).unwrap_or(false);
+    input_note(|| format!("relative mode {}", if on { "on" } else { "off" }));
+    set
 }
 
 pub fn relative(p: usize) -> bool {
@@ -661,6 +682,9 @@ fn to_draw(draws: &[crate::gpu::Draw]) -> Vec<crate::render::ui::UiItem> {
             else if shader.contains("ui_backdropfilter") { backdrop(d).map(UiItem::Backdrop) }
             else if shader.ends_with("hud_glow.shader") { quad(d, QuadShader::Glow).map(UiItem::Quad) }
             else if shader.ends_with("hud_composite.shader") { quad(d, QuadShader::Composite).map(UiItem::Quad) }
+            else if shader.ends_with("ui_filter.shader") { layer_quad(d, QuadShader::Filter).map(UiItem::Quad) }
+            else if shader.ends_with("ui_dropshadow.shader") { layer_quad(d, QuadShader::DropShadow).map(UiItem::Quad) }
+            else if shader.ends_with("ui_borderwrap.shader") { layer_quad(d, QuadShader::BorderWrap).map(UiItem::Quad) }
             else { None };
         out.extend(item);
     }
@@ -719,8 +743,66 @@ fn quad(d: &crate::gpu::Draw, shader: crate::render::ui::QuadShader) -> Option<c
         gamma_output: f("UIGammaOutput", 0.0) != 0.0,
         textures: match shader {
             crate::render::ui::QuadShader::Glow => [glow_source, 0, 0],
-            crate::render::ui::QuadShader::Composite => [t("HudTexture"), t("GlowTexture"), t("FrameBufferCopyTexture")],
+            _ => [t("HudTexture"), t("GlowTexture"), t("FrameBufferCopyTexture")],
         },
+        filter: [0.0; 32],
+        blend: 0,
+    })
+}
+
+/// A panel layer composited (Painter.Composite, CompositeLayer): what's
+/// drawn into a layer (`filter:`, `mask-image`, a drop shadow, a border
+/// wrap) put on what's under it by ui_filter.shader, after a quad of
+/// ui_dropshadow.shader for each shadow and one of ui_borderwrap.shader for
+/// a border. Its vertices, and the attributes those shaders read (their
+/// defaults where unset), as hud.wgsl's Params take them.
+fn layer_quad(d: &crate::gpu::Draw, shader: crate::render::ui::QuadShader) -> Option<crate::render::ui::Quad> {
+    use crate::gpu::Val;
+    use crate::render::ui::QuadShader;
+    let get = |n: &str| d.attrs.get(&crate::string_token(n));
+    let f = |n: &str, dflt: f32| match get(n) { Some(Val::Float(x)) => *x, Some(Val::Int(x)) => *x as f32, Some(Val::Bool(b)) => *b as u8 as f32, Some(Val::Combo(c)) => *c as f32, _ => dflt };
+    let i = |n: &str| match get(n) { Some(Val::Int(x)) => *x, Some(Val::Combo(x)) => *x as i32, Some(Val::Bool(b)) => *b as i32, Some(Val::Float(x)) => *x as i32, _ => 0 };
+    let v2 = |n: &str| match get(n) { Some(Val::Vec2(x)) => *x, Some(Val::Vec3(x)) => [x[0], x[1]], Some(Val::Vec4(x)) => [x[0], x[1]], _ => [0.0; 2] };
+    let v4 = |n: &str, dflt: [f32; 4]| match get(n) { Some(Val::Vec4(x)) => *x, Some(Val::Vec3(x)) => [x[0], x[1], x[2], 1.0], _ => dflt };
+    let m = |n: &str| match get(n) { Some(Val::Matrix(x)) => *x, _ => IDENTITY };
+    let t = |n: &str| match get(n) { Some(Val::Texture(x)) => *x, _ => 0 };
+    let (pos, size) = (v2("BoxPosition"), v2("BoxSize"));
+    // the colour each draws: the filter's tint, the shadow's, the border's
+    let color = match shader {
+        QuadShader::DropShadow => v4("FilterDropShadowColor", [0.0, 0.0, 0.0, 1.0]),
+        QuadShader::BorderWrap => v4("FilterBorderWrapColor", [1.0; 4]),
+        _ => v4("FilterTint", [1.0; 4]),
+    };
+    let reach = match shader { QuadShader::BorderWrap => f("FilterBorderWrapWidth", 0.0), _ => f("FilterDropShadowBlur", 0.0) };
+    let offset = v2("FilterDropShadowOffset");
+    // the filter's blend is the layer's; a shadow's and a border's the default (alpha)
+    let blend = if shader == QuadShader::Filter { i("D_BLENDMODE").clamp(0, 3) as u8 } else { 0 };
+    let masked = shader == QuadShader::Filter && i("D_MASK_IMAGE") != 0 && t("MaskTexture") != 0;
+    // the mask's sampler, by bindless index: how it repeats, u and v
+    let address = crate::gpu::samplers_by_index().get(i("SamplerIndex").max(0) as usize).map(|s| s.address).unwrap_or([0; 3]);
+    let mask_pos = v4("MaskPos", [0.0, 0.0, 500.0, 100.0]);
+    let filter: crate::render::ui::LayerParams = [
+        pos[0], pos[1], size[0], size[1],
+        f("FilterBlur", 0.0), f("FilterSaturate", 1.0), f("FilterSepia", 0.0), f("FilterBrightness", 1.0),
+        f("FilterContrast", 1.0), f("FilterInvert", 0.0), f("FilterHueRotate", 0.0), f("PainterSourceGamma", 0.0),
+        color[0], color[1], color[2], color[3],
+        offset[0], offset[1], reach, blend as f32,
+        mask_pos[0], mask_pos[1], mask_pos[2], mask_pos[3],
+        masked as u8 as f32, i("MaskMode") as f32, i("MaskScope") as f32, f("MaskAngle", 0.0),
+        address[0] as f32, address[1] as f32, 0.0, 0.0,
+    ];
+    Some(crate::render::ui::Quad {
+        shader,
+        vertices: triangles(d)?,
+        transform: m("TransformMat"),
+        layer: m("LayerMat"),
+        glow: [0.0; 4],
+        hud: [0.0; 4],
+        scan: [0.0; 4],
+        gamma_output: f("UIGammaOutput", 0.0) != 0.0,
+        textures: [t("Texture"), if masked { t("MaskTexture") } else { 0 }, 0],
+        filter,
+        blend,
     })
 }
 

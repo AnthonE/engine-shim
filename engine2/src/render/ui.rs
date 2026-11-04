@@ -60,9 +60,26 @@ pub struct Target {
     pub format: i32,
 }
 
-/// Which of hud.wgsl's shaders a quad draws with.
+/// Which of hud.wgsl's shaders a quad draws with: Sandbox's HUD (its glow
+/// and composite), or a panel layer composited (ui_filter, ui_dropshadow,
+/// ui_borderwrap).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum QuadShader { Glow, Composite }
+pub enum QuadShader { Glow, Composite, Filter, DropShadow, BorderWrap }
+
+impl QuadShader {
+    /// A panel layer's composite: reads the layer (its first texture), drawn
+    /// only when it can.
+    pub fn reads_layer(self) -> bool { matches!(self, QuadShader::Composite | QuadShader::Filter | QuadShader::DropShadow | QuadShader::BorderWrap) }
+}
+
+/// A panel layer's composite (Painter.Composite), as hud.wgsl's Params take
+/// it, eight vec4s: BoxPosition and BoxSize; FilterBlur, FilterSaturate,
+/// FilterSepia, FilterBrightness; FilterContrast, FilterInvert,
+/// FilterHueRotate, PainterSourceGamma; FilterTint (or the drop shadow's or
+/// border's colour); FilterDropShadowOffset, its blur (or the border's
+/// width), D_BLENDMODE; MaskPos; D_MASK_IMAGE, MaskMode, MaskScope,
+/// MaskAngle; the mask sampler's address modes, u and v.
+pub type LayerParams = [f32; 32];
 
 /// A quad drawn with a game's own shader (hud.wgsl), and what it reads.
 pub struct Quad {
@@ -78,8 +95,13 @@ pub struct Quad {
     /// UIGammaOutput
     pub gamma_output: bool,
     /// the textures it reads, by managed's object: GlowSource or HudTexture,
-    /// GlowTexture, FrameBufferCopyTexture (a grab's)
+    /// GlowTexture, FrameBufferCopyTexture (a grab's); a panel layer's
+    /// composite: the layer, its mask
     pub textures: [usize; 3],
+    /// a panel layer's composite: what it does (zeros for the HUD's)
+    pub filter: LayerParams,
+    /// D_BLENDMODE, as common/blendmode.hlsl: 0 alpha, 1 multiply, 2 additive, 3 premultiplied
+    pub blend: u8,
 }
 
 /// A backdrop-filter's quad (ui_backdropfilter.shader), as managed drew it.
@@ -129,7 +151,7 @@ pub struct Ui {
     /// a game's own shaders (hud.wgsl): their bindings, and pipelines by shader, format and blend
     quad_shader: wgpu::ShaderModule,
     quad_layout: wgpu::BindGroupLayout,
-    quad_pipelines: Mutex<HashMap<(QuadShader, wgpu::TextureFormat), wgpu::RenderPipeline>>,
+    quad_pipelines: Mutex<HashMap<(QuadShader, wgpu::TextureFormat, u8), wgpu::RenderPipeline>>,
 }
 
 /// One thing the UI's encoder does, in order, and into what (None: the frame;
@@ -189,14 +211,7 @@ impl Ui {
     }
 
     fn pipeline(&self, device: &wgpu::Device, format: wgpu::TextureFormat, blend: u8) -> wgpu::RenderPipeline {
-        use wgpu::{BlendComponent as C, BlendFactor as F, BlendOperation::Add};
-        // as s&box's common/blendmode.hlsl sets them
-        let state = match blend {
-            1 => wgpu::BlendState { color: C { src_factor: F::Dst, dst_factor: F::Zero, operation: Add }, alpha: C { src_factor: F::One, dst_factor: F::Zero, operation: Add } },
-            2 => wgpu::BlendState { color: C { src_factor: F::SrcAlpha, dst_factor: F::One, operation: Add }, alpha: C { src_factor: F::One, dst_factor: F::One, operation: Add } },
-            3 => wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
-            _ => wgpu::BlendState::ALPHA_BLENDING,
-        };
+        let state = blend_state(blend);
         let mut all = self.pipelines.lock().unwrap();
         all.entry((format, blend)).or_insert_with(|| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("ui"),
@@ -290,12 +305,19 @@ impl Ui {
         texture
     }
 
-    /// A game's own shader's pipeline (hud.wgsl), for a target's format.
-    fn quad_pipeline(&self, device: &wgpu::Device, shader: QuadShader, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+    /// A game's own shader's pipeline (hud.wgsl), for a target's format and a blend mode.
+    fn quad_pipeline(&self, device: &wgpu::Device, shader: QuadShader, format: wgpu::TextureFormat, blend: u8) -> wgpu::RenderPipeline {
         let mut all = self.quad_pipelines.lock().unwrap();
-        all.entry((shader, format)).or_insert_with(|| {
-            // hud_glow writes without blending; hud_composite as D_BLENDMODE Normal
-            let (vs, fs, blend) = match shader { QuadShader::Glow => ("vs_blit", "fs_glow", None), QuadShader::Composite => ("vs_ui", "fs_composite", Some(wgpu::BlendState::ALPHA_BLENDING)) };
+        all.entry((shader, format, blend)).or_insert_with(|| {
+            // hud_glow writes without blending; the rest blend as their D_BLENDMODE says
+            let (vs, fs) = match shader {
+                QuadShader::Glow => ("vs_blit", "fs_glow"),
+                QuadShader::Composite => ("vs_ui", "fs_composite"),
+                QuadShader::Filter => ("vs_ui", "fs_filter"),
+                QuadShader::DropShadow => ("vs_ui", "fs_dropshadow"),
+                QuadShader::BorderWrap => ("vs_ui", "fs_borderwrap"),
+            };
+            let blend = (shader != QuadShader::Glow).then(|| blend_state(blend));
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(fs),
                 layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&self.quad_layout], push_constant_ranges: &[] })),
@@ -453,8 +475,8 @@ impl Ui {
                         if grab { if let Some(v) = grabs.get(&t).or(last_grab.as_ref()) { return Some(v.clone()); } }
                         self.texture_of(r, t).map(|x| x.0)
                     };
-                    let views = [read(q.textures[0], false), read(q.textures[1], false), read(q.textures[2], true)];
-                    if q.shader == QuadShader::Composite && views[0].is_none() { continue; }
+                    let views = [read(q.textures[0], false), read(q.textures[1], false), read(q.textures[2], q.shader == QuadShader::Composite)];
+                    if q.shader.reads_layer() && views[0].is_none() { continue; }
                     let grab_srgb = grab_formats.get(&q.textures[2]).copied().or(last_format).is_some_and(|f| f.is_srgb());
                     let mut u: Vec<f32> = vec![0.0, 0.0, w as f32, h as f32];
                     u.extend_from_slice(&q.layer);
@@ -464,6 +486,7 @@ impl Ui {
                     u.extend_from_slice(&q.scan);
                     // the grab's bytes are sRGB where its format doesn't decode them
                     u.extend_from_slice(&[(!grab_srgb) as u32 as f32, q.gamma_output as u32 as f32, 1.0, 1.0]);
+                    u.extend_from_slice(&q.filter);
                     let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("ui quad"), contents: bytemuck::cast_slice(&u), usage: wgpu::BufferUsages::UNIFORM });
                     let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("ui quad vertices"), contents: bytemuck::cast_slice(&q.vertices), usage: wgpu::BufferUsages::STORAGE });
                     let view = |k: usize| views[k].as_ref().unwrap_or(&self.blank);
@@ -475,7 +498,7 @@ impl Ui {
                         wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(view(2)) },
                         wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                     ] });
-                    steps.push(Step::Draw { into: at, pipeline: self.quad_pipeline(device, q.shader, fmt), group, vertices: q.vertices.len() as u32, instances: 1 });
+                    steps.push(Step::Draw { into: at, pipeline: self.quad_pipeline(device, q.shader, fmt, q.blend), group, vertices: q.vertices.len() as u32, instances: 1 });
                 }
             }
         }
@@ -540,6 +563,18 @@ impl Ui {
 /// (gamma-encoded, so not sRGB).
 pub fn target_format(format: i32) -> wgpu::TextureFormat {
     match format { 24 | 25 => wgpu::TextureFormat::Rgba16Float, _ => wgpu::TextureFormat::Rgba8Unorm }
+}
+
+/// D_BLENDMODE's blend, as s&box's common/blendmode.hlsl sets it: 0 alpha,
+/// 1 multiply, 2 additive, 3 premultiplied alpha.
+fn blend_state(blend: u8) -> wgpu::BlendState {
+    use wgpu::{BlendComponent as C, BlendFactor as F, BlendOperation::Add};
+    match blend {
+        1 => wgpu::BlendState { color: C { src_factor: F::Dst, dst_factor: F::Zero, operation: Add }, alpha: C { src_factor: F::One, dst_factor: F::Zero, operation: Add } },
+        2 => wgpu::BlendState { color: C { src_factor: F::SrcAlpha, dst_factor: F::One, operation: Add }, alpha: C { src_factor: F::One, dst_factor: F::One, operation: Add } },
+        3 => wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+        _ => wgpu::BlendState::ALPHA_BLENDING,
+    }
 }
 
 /// The bindless textures a box instance samples: its background image, its
@@ -705,12 +740,12 @@ mod tests {
             UiItem::Batch(paint),
             // what's past white, blurred across, into the glow
             UiItem::Target(Some(glow_t)),
-            UiItem::Quad(Quad { shader: QuadShader::Glow, vertices: blit, transform: identity, layer: identity, glow: [1.0 / fw, 0.0, 6.0, 1.0], hud: [0.0; 4], scan: [0.0; 4], gamma_output: false, textures: [hud, 0, 0] }),
+            UiItem::Quad(Quad { shader: QuadShader::Glow, vertices: blit, transform: identity, layer: identity, glow: [1.0 / fw, 0.0, 6.0, 1.0], hud: [0.0; 4], scan: [0.0; 4], gamma_output: false, textures: [hud, 0, 0], filter: [0.0; 32], blend: 0 }),
             // then over the frame: grabbed, and both read
             UiItem::Target(None),
             UiItem::Grab(7),
             UiItem::Quad(Quad { shader: QuadShader::Composite, vertices: region, transform: identity, layer: identity, glow: [0.0; 4], hud: [1.0 / fw, 1.0 / fh, 0.22, 1.0],
-                scan: [0.0, 2.0, 0.55, 0.04], gamma_output: true, textures: [hud, glow, 7] }),
+                scan: [0.0, 2.0, 0.55, 0.04], gamma_output: true, textures: [hud, glow, 7], filter: [0.0; 32], blend: 0 }),
         ];
         r.ui.draw(&r, &frame.create_view(&Default::default()), Some(&frame), wgpu::TextureFormat::Rgba8Unorm, w, h, &items);
         let px = read_back(&r, &frame, w, h);
@@ -720,6 +755,75 @@ mod tests {
         assert!((at(56, 16) as i32 - 128).abs() <= 2, "far from it, the frame as it was: {}", at(56, 16));
         assert!(at(25, 16) > at(28, 16) && at(28, 16) > 140, "beside it, its glow, fading: {} {}", at(25, 16), at(28, 16));
         assert!((at(16, 4) as i32 - 128).abs() <= 2, "above it the glow, blurred across only, adds nothing: {}", at(16, 4));
+    }
+
+    #[test]
+    fn a_panel_layer_is_composited_with_its_shadow_border_filter_and_mask() {
+        let Ok(r) = crate::render::Renderer::new() else { eprintln!("no adapter: skipped"); return };
+        let (w, h, s) = (64u32, 32u32, 32u32);
+        // the panel's layer: a 32x32 render target managed made (RGBA8888), a red box at 8..24 in it
+        let mut config = [0u8; 44];
+        config[0] = s as u8; config[2] = s as u8; config[4] = 1; config[6] = 1; config[16] = crate::gpu::RENDER_TARGET as u8;
+        let layer = crate::gpu::create_texture("panel layer", true, &config, &[]);
+        let layer_t = Target { texture: layer, width: s, height: s, format: 0 };
+        // the mask: white on the left half, black on the right (a texture managed made from an image)
+        let mut mconfig = [0u8; 44];
+        mconfig[0] = 4; mconfig[2] = 1; mconfig[4] = 1; mconfig[6] = 1;
+        let mask = crate::gpu::create_texture("mask", true, &mconfig, &[255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255]);
+        // the frame: mid grey
+        let frame = r.device.create_texture(&wgpu::TextureDescriptor {
+            label: None, size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+        });
+        r.queue.write_texture(frame.as_image_copy(), &vec![128u8; (w * h * 4) as usize], wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) }, wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 });
+        let identity = [1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+        let paint = UiDraw { boxes: instance([8.0, 8.0, 16.0, 16.0], [1.0, 0.0, 0.0, 1.0]), texts: vec![], glyph_table: vec![], glyph_curves: vec![], glyph_bands: vec![],
+            transforms: bytemuck::cast_slice(&identity).to_vec(), scissors: vec![], gradients: vec![], layer: identity, instance_offset: 0, instances: 1, blend: 0, opacity: None };
+        // the quad over the layer's place in the frame (0..32), one to one with it
+        let v = |x: f32, y: f32, u: f32, vv: f32| [x, y, u, vv, 1.0, 1.0, 1.0, 1.0];
+        let fs = s as f32;
+        let region = vec![v(0.0, 0.0, 0.0, 0.0), v(fs, 0.0, 1.0, 0.0), v(0.0, fs, 0.0, 1.0), v(fs, 0.0, 1.0, 0.0), v(0.0, fs, 0.0, 1.0), v(fs, fs, 1.0, 1.0)];
+        // as layer_quad lays them out (window.rs)
+        let params = |tint: [f32; 4], shadow: [f32; 4], saturate: f32, masked: bool| -> LayerParams {
+            let mut p = [0.0f32; 32];
+            p[0..4].copy_from_slice(&[0.0, 0.0, fs, fs]);
+            p[4..8].copy_from_slice(&[0.0, saturate, 0.0, 1.0]);
+            p[8..12].copy_from_slice(&[1.0, 0.0, 0.0, 0.0]);
+            p[12..16].copy_from_slice(&tint);
+            p[16..20].copy_from_slice(&shadow);
+            p[20..24].copy_from_slice(&[0.0, 0.0, fs, fs]);
+            p[24..28].copy_from_slice(&[masked as u8 as f32, 2.0, 0.0, 0.0]);
+            p[28..32].copy_from_slice(&[2.0, 2.0, 0.0, 0.0]);
+            p
+        };
+        let quad = |shader, filter, mask| UiItem::Quad(Quad { shader, vertices: region.clone(), transform: identity, layer: identity, glow: [0.0; 4], hud: [0.0; 4], scan: [0.0; 4],
+            gamma_output: true, textures: [layer, mask, 0], filter, blend: 0 });
+        let items = [
+            UiItem::Target(Some(layer_t)),
+            UiItem::Clear([0.0; 4]),
+            UiItem::Batch(paint),
+            UiItem::Target(None),
+            // drop-shadow(4px 4px 0 black), border-wrap(3px blue), then the layer: saturate(0), masked
+            quad(QuadShader::DropShadow, params([0.0, 0.0, 0.0, 1.0], [4.0, 4.0, 0.0, 0.0], 1.0, false), 0),
+            quad(QuadShader::BorderWrap, params([0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 3.0, 0.0], 1.0, false), 0),
+            quad(QuadShader::Filter, params([1.0; 4], [0.0; 4], 0.0, true), mask),
+        ];
+        r.ui.draw(&r, &frame.create_view(&Default::default()), Some(&frame), wgpu::TextureFormat::Rgba8Unorm, w, h, &items);
+        let px = read_back(&r, &frame, w, h);
+        let at = |x: u32, y: u32| { let i = ((y * w + x) * 4) as usize; [px[i], px[i + 1], px[i + 2]] };
+        eprintln!("panel layer: box {:?}, masked {:?}, border {:?}, shadow {:?}, beside {:?}, off it {:?}", at(10, 16), at(22, 16), at(6, 16), at(26, 26), at(30, 4), at(48, 16));
+        // the red box, saturate(0): grey at red's luminance (0.213, as sRGB values), r = g = b
+        let [r_, g, b] = at(10, 16);
+        assert!((r_ as i32 - 54).abs() <= 3 && r_ == g && g == b, "saturate(0) made the red grey: {:?}", at(10, 16));
+        // where the mask is black the box is gone, and the border-wrap under it shows (it fills the
+        // layer's shape grown by its width, the layer drawn over it)
+        assert_eq!(at(22, 16), [0, 0, 255], "masked out, the border beneath");
+        // two pixels left of the box, inside the border's 3: blue
+        assert_eq!(at(6, 16), [0, 0, 255], "border-wrap");
+        // below and right of the box, the shadow offset 4: black
+        assert_eq!(at(26, 26), [0, 0, 0], "drop-shadow");
+        // where neither reaches, and off the layer: the frame as it was
+        assert!(at(30, 4).iter().chain(at(48, 16).iter()).all(|&c| (c as i32 - 128).abs() <= 2), "untouched: {:?} {:?}", at(30, 4), at(48, 16));
     }
 
     #[test]
