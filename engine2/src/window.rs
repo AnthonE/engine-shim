@@ -567,6 +567,7 @@ pub fn draw_camera(camera: usize, sc: usize) {
     let (width, height) = size(window);
     if width <= 1 || height <= 1 { return; }
     let Some(r) = crate::camera::shared_renderer() else { return };
+    crate::trace::mark("output before");
     let began = std::time::Instant::now();
     let frame = with(window, |w, s| {
         surface_for(w, s, r, width as u32, height as u32)?;
@@ -581,6 +582,7 @@ pub fn draw_camera(camera: usize, sc: usize) {
         }
     }).flatten();
     let Some((frame, format)) = frame else { return };
+    crate::trace::mark("acquire");
     let view = frame.texture.create_view(&wgpu::TextureViewDescriptor { format: Some(format), ..Default::default() });
     let Some((_, said)) = crate::camera::frame_into(camera, width, height, Some((&view, format))) else { return };
     static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -617,6 +619,7 @@ pub fn draw_camera(camera: usize, sc: usize) {
             }
         }
     }
+    crate::trace::mark("ui");
     static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     if !ui.is_empty() && (SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 || n % 60 == 0) {
         let mut by: std::collections::BTreeMap<String, (usize, i32)> = Default::default();
@@ -858,7 +861,15 @@ pub fn present(sc: usize) -> bool {
     let Some(frame) = with(window, |_, s| s.frame.take()).flatten() else { return true };
     if let Some(w) = get(window) { w.window.pre_present_notify(); }
     frame.present();
+    PRESENTED.store(true, std::sync::atomic::Ordering::Relaxed);
     true
+}
+
+static PRESENTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether a frame has been shown since this was last asked.
+pub fn take_presented() -> bool {
+    PRESENTED.swap(false, std::sync::atomic::Ordering::Relaxed)
 }
 
 // ---- keys: winit's physical keys as SDL's scancodes (USB HID usages), and

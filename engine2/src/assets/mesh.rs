@@ -65,14 +65,16 @@ fn half_at(b: &[u8], at: usize) -> f32 {
 
 /// A half-precision float.
 pub fn half(h: u16) -> f32 {
-    let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
-    let exp = ((h >> 10) & 0x1f) as i32;
-    let frac = (h & 0x3ff) as f32;
-    sign * match exp {
-        0 => frac * 2f32.powi(-24),
-        31 => if frac == 0.0 { f32::INFINITY } else { f32::NAN },
-        e => (1.0 + frac / 1024.0) * 2f32.powi(e - 15),
-    }
+    let sign = ((h & 0x8000) as u32) << 16;
+    let exp = ((h >> 10) & 0x1f) as u32;
+    let frac = (h & 0x3ff) as u32;
+    f32::from_bits(match exp {
+        // too small for a half's exponent: its fraction, over 2^24
+        0 => sign | (frac as f32 * f32::from_bits(0x3380_0000)).to_bits(),
+        31 => sign | 0x7f80_0000 | (frac << 13),
+        // the same number in a float's fields (exponents biased 127, not 15)
+        e => sign | ((e + 112) << 23) | (frac << 13),
+    })
 }
 
 /// A buffer's header in the binary layout: its elements, their size, its
@@ -384,6 +386,22 @@ pub fn skins(r: &Resource) -> (u64, Vec<Vec<String>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every half there is, against what it means by the format's own sums.
+    #[test]
+    fn a_half_is_what_its_fields_say() {
+        for h in 0..=u16::MAX {
+            let sign = if h & 0x8000 != 0 { -1.0f32 } else { 1.0 };
+            let (exp, frac) = (((h >> 10) & 0x1f) as i32, (h & 0x3ff) as f32);
+            let want = sign * match exp {
+                0 => frac * 2f32.powi(-24),
+                31 => if frac == 0.0 { f32::INFINITY } else { f32::NAN },
+                e => (1.0 + frac / 1024.0) * 2f32.powi(e - 15),
+            };
+            let got = half(h);
+            assert!(got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan()), "{h:#06x}: {got} for {want}");
+        }
+    }
 
     /// A package's files fetched whole (tools/package.sh), if this machine
     /// has them: sbox.game's content, never copied here.
