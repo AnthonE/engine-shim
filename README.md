@@ -1096,9 +1096,27 @@ orange, haloed by their glow) where nothing did. And after post
 processing, the physgun's crosshair: its targeting dot at the middle of
 the screen, its beam's colour at a fifth of its opacity.
 
-Not yet: `border-shape`'s shapes and
-paths (ShapeIndex; drawn as the rounded rect), world panels (a nameplate in
-the world), and panel layers (`filter:`, `mask-image`).
+**Panel layers.** A panel with `filter:`, `mask-image` or a drop shadow
+is painted into a layer of its own (a render target, as the HUD's), then
+put on what's under it (`Painter.Composite`): a quad of
+`ui_dropshadow.shader` for each shadow, one of `ui_borderwrap.shader` for
+a `border-wrap`, then the layer through `ui_filter.shader`. The three are
+ported (`render/hud.wgsl`, from s&box's MIT shaders): CSS's colour filters
+on sRGB values in its order (contrast, sepia, invert, hue-rotate,
+saturate, brightness) and the tint, `mask-image` by luminance or alpha
+with its offset, size, angle and repeat, the shadow's offset alpha, the
+border's ring of 32 taps. s&box blurs from the layer's gaussian mip chain;
+a layer here has one level, so a blur is summed from it directly, taps
+0.6 sigma apart out to 3 sigma. Measured (`cargo test`, lavapipe): a red
+box in a layer, composited over grey with `drop-shadow(4px 4px 0 black)`,
+`border-wrap(3px blue)`, `saturate(0)` and a mask white on its left half:
+the box grey at red's luminance (54, 54, 54), gone where the mask is black
+(the border under it showing), blue two pixels outside it, black where the
+shadow falls, the grey untouched beyond.
+
+Not yet: `border-shape`'s shapes and paths (ShapeIndex; drawn as the
+rounded rect), world panels (a nameplate in the world), and a layer's
+clip (`PainterScissorIndex`: a composite isn't scissored).
 
 ## A community game: Ape Tavern's Grubs
 
@@ -1111,13 +1129,10 @@ on sbox.game, fetched as Sandbox's map is, never committed here.
 
 ```sh
 git clone https://github.com/apetavern/grubs ../grubs
-cp -rn ../grubs/assets/. ../grubs/Assets/      # see below
-sh tools/package.sh apetavern.grubs ../content-grubs '(_c|\.vpk)$'
-sh tools/package.sh apetavern.gr_beach ../content-grubs '(_c|\.vpk)$'
-sh tools/compile.sh ../grubs scene prefab geq sound sdflayer vpcf
+sh tools/grubs.sh ../grubs ../content-grubs     # SHIMWATCH=0: no watcher
 ENGINE2_CONTENT=$PWD/../content-grubs SBOX=../sbox-public sh spike.sh 600 +shimgame $PWD/../grubs/.sbproj +shimhost
 # once "Server started!":
-(cd ../sbox-public/game && ENGINE2_CONTENT=$PWD/../../content-grubs ./sbox-server +shimclient 127.0.0.1:27015 +shimwindow +instanceid 2)
+(cd ../sbox-public/game && ENGINE2_CONTENT=$PWD/../../content-grubs:$PWD/../../grubs/Assets ./sbox-server +shimclient 127.0.0.1:27015 +shimwindow +instanceid 2)
 ```
 
 Measured, with nothing in this library written for it: its server loads
@@ -1139,12 +1154,31 @@ Two things it needed:
   and two on Linux, where only `Assets/` is mounted: copying one into the
   other finds the two particle prefabs that were missing.
 
-What it doesn't do yet: the landing screen's panels (its buttons, its
-text) use `filter:` and drop shadows, which s&box draws into panel layers
-and composites with `ui_filter` and `ui_dropshadow`; those aren't drawn
-here (below), so the menu shows its scene and none of its UI, and a game
-isn't started from it. Its own shader graphs (the sky, water, fire) are
-drawn as plain materials.
+Its UI is panel layers throughout (drop shadows on most panels,
+`border-wrap` outlines, the team's health bar a `mask-image`), drawn now
+(above). Measured under Xvfb at 1280x720: the lobby ("Lobby", "Free For
+All", the player's card) over the menu's scene, and its terrain preview,
+a camera of the generated terrain drawn into a texture and composited
+through a layer. A dedicated server is the host, so no player is shown
+START; `tools/grubs.sh` puts a watcher in its scene
+(`tools/grubs/ShimWatch.cs`) that starts the match once a player has sat
+in the lobby, as the lobby's SANDBOX button does for a host alone. In the
+match: two grubs spawned (150 health) and standing on the terrain's
+collision, the turn and its clock, the HUD (the key hints, the turn's
+banner and countdown, the wind, the health bar at 100%), the inventory
+opened with Q and the bazooka equipped from it ("Attempting to equip
+Bazooka"), a grub walked by holding D (x -852 to -837, as the server saw
+it), a health crate picked up (150 to 175).
+
+Not yet: a weapon fired and the terrain carved. The input driven by
+xdotool stopped arriving partway through a run (keys and clicks both,
+with the window focused), not yet told apart from Xvfb's; and a press and
+release inside one frame (300 ms here) is missed, which a hand on a real
+GPU wouldn't do. The inventory's icons (`models/weapons/*.vmdl.png`)
+aren't found by `Image.Load` on a player, which reads managed's own file
+system, not `ENGINE2_CONTENT`. Its own shader graphs (the terrain's
+triplanar, the sky, water, fire) are drawn as plain materials: the
+terrain grey, the water pink.
 
 ## A build players install
 
@@ -1487,6 +1521,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/depot.py` | a build as the Elo Pros launcher installs it: its depot and manifest, and the files to serve |
 | `tools/publish.sh` | builds staged as the Elo Pros origin serves them: depots, the pointer that makes them live, the manifest |
 | `deploy/` | a game's server on the game box: `install-server.sh`, its systemd unit and settings, nginx's status locations, the certificate hook |
+| `tools/grubs.sh`, `tools/grubs/` | Ape Tavern's Grubs made ready to host here, and a watcher that starts its match |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
@@ -1509,7 +1544,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    input and sound (above). What's left: particles, decals, shadows from
    local lights on what moves, a game's own shaders (s&box's UI and HUD
    shaders are ported to WGSL by hand), the UI's `border-shape` paths,
-   world panels and panel layers, reverb; and a frame's cost on a real GPU.
+   world panels, reverb; and a frame's cost on a real GPU.
 5. **The browser**, after the desktop builds. A game is built for the web
    ahead of time and served as any web game is: its C# compiled with the
    engine to WebAssembly before it ships (no compiler in the page, no
