@@ -936,7 +936,7 @@ here), so a late frame waits for the next interval.
 Walking and looking work by hand too: the server saw the player go to
 `-155,-190` and `142,-35`, on the floor.
 
-With the watcher out and the player standing where they spawned (30 s
+With the watcher out and a person at spawn, then walking about (30 s
 sampled, so not the frames above): 31 frames a second, the `window frame`
 line 23 ms at the median and 30 at worst. `RENDER_PROFILE` says what that
 is, 23.5 ms on average over 48 samples:
@@ -951,11 +951,38 @@ is, 23.5 ms on average over 48 samples:
 | translucent | 0.8 |
 | tonemap | 0.2 |
 
-Drawing the frame is 8 ms. Auto exposure is the rest: each frame the whole
-HDR frame (7.4 MB at 1280x720) is copied to the CPU and waited for, and a
-quarter of its pixels read as half floats, on the frame's thread. How that
-splits between the wait and the reading isn't measured. An exposure a frame
-or two late needn't wait.
+Drawing the frame was 8 ms. Auto exposure was the rest: each frame the whole
+HDR frame (7.4 MB at 1280x720) was copied to the CPU and waited for, and a
+quarter of its pixels read as half floats, on the frame's thread.
+
+So a window's exposure no longer waits. Every 50 ms a frame copies what it
+drew, a thread of its own reads about 57,600 pixels of that, and each frame
+shows with what was last read, so it's a few frames old. (An image read back,
+a thumbnail say, still measures itself.) The half floats are read from their
+bits. A window's targets are kept from frame to frame. And the 60 Hz pacing
+counted from after managed's frame, so managed's time came on top of it: a
+frame now shown is paced by the display, and one that wasn't, like a server's
+frame, by what's left since the last frame ended.
+
+`ENGINE2_FRAME_TIMES` says where whole frames go, every 60 frames, only
+reading the clock. In the zoo at 1280x720, the watcher out, a person walking
+about, ms a frame:
+
+| | before | exposure not waited for | and the rest |
+| --- | --- | --- | --- |
+| frames a second | 28 | 39 | 59 |
+| whole frame | 35 | 25 | 16.7 |
+| managed | 9.4 | 8.6 | 14.2 |
+| gather | 0.7 | 0.2 | 0.1 |
+| record | 3.6 | 2.6 | 0.7 |
+| exposure | 18.3 | 2.5 | 0.2 |
+| tonemap and UI | 2.8 | 1.4 | 1.1 |
+| pacing | 0 | 9.7 | 0 |
+
+Native's part of a frame is now about 2 ms. `managed` in the last column is
+mostly waiting: the display paces the frame there, and the main thread uses
+36% of a core. The zoo is a small level; flatgrass isn't measured yet, nor
+is what the new pacing does to a server.
 
 **The UI and HUD** (`engine2/src/gpu.rs`). s&box draws all of it with one
 bindless shader (`ui_cssbox_batched.shader`, public, about 3,000 lines with
@@ -1508,8 +1535,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    input and sound (above). What's left: particles, decals, shadows from
    local lights on what moves, a game's own shaders (s&box's UI and HUD
    shaders are ported to WGSL by hand), the UI's `border-shape` paths,
-   world panels and panel layers, reverb; and auto exposure's read back,
-   most of a frame on a real GPU (above).
+   world panels and panel layers, reverb; and a frame's cost on a real map
+   on a real GPU (above: the zoo only).
 5. **The browser**, after the desktop builds. A game is built for the web
    ahead of time and served as any web game is: its C# compiled with the
    engine to WebAssembly before it ships (no compiler in the page, no
