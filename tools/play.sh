@@ -32,7 +32,7 @@ mkdir -p target/spike
 rm -f target/spike/server.log
 SBOX=$SBOX sh spike.sh 86400 +shimgame "$SANDBOX/sandbox.sbproj" +shimhost &
 server=$!
-trap 'kill $server 2>/dev/null; pkill -f "sbox-server +shimgame" 2>/dev/null || true' EXIT
+trap 'kill $server 2>/dev/null; pkill -f "sbox-server [+]shimgame" 2>/dev/null || true' EXIT
 until grep -q "Server started!" target/spike/server.log 2>/dev/null; do
 	kill -0 "$server" 2>/dev/null || { echo "the server stopped before it started"; tail -20 target/spike/server.log; exit 1; }
 	sleep 2

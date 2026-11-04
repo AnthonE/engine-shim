@@ -535,6 +535,21 @@ mod draw {
         frame_into(camera, width, height, None)
     }
 
+    /// A sky by its material. One that can't be had is said once, and looked
+    /// for again every few seconds (a package may yet bring it), not each frame.
+    fn sky_of(r: &Renderer, name: &str) -> Option<Arc<crate::render::Sky>> {
+        static MISSING: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
+        let missing = MISSING.get_or_init(Default::default);
+        if missing.lock().unwrap().get(name).is_some_and(|since| since.elapsed().as_secs() < 5) { return None; }
+        match r.sky(&EngineFiles, name) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                if missing.lock().unwrap().insert(name.to_string(), std::time::Instant::now()).is_none() { crate::trace::note(&format!("render: {e}")); }
+                None
+            }
+        }
+    }
+
     /// The view drawn into `target` (a window's frame) rather than read back:
     /// the image is empty then.
     pub fn frame_into(camera: usize, width: i32, height: i32, target: Option<(&wgpu::TextureView, wgpu::TextureFormat)>) -> Option<(Vec<u8>, String)> {
@@ -638,13 +653,10 @@ mod draw {
             for sky in crate::handles::made_with("SceneSkyBoxObject", *world) {
                 if !super::shown(sky) { continue; }
                 let Some(name) = super::material_name(super::sky_material(sky)) else { continue };
-                match r.sky(&EngineFiles, &name) {
-                    Ok(s) => {
-                        view.sky = Some(s);
-                        let t = crate::state::get::<S_Transform>(sky, PROP_Transform).f_Rotation.f__quat;
-                        if t.f_X != 0.0 || t.f_Y != 0.0 || t.f_Z != 0.0 || t.f_W != 0.0 { view.sky_rotation = Quat::from_xyzw(t.f_X, t.f_Y, t.f_Z, t.f_W).normalize(); }
-                    }
-                    Err(e) => crate::trace::note(&format!("render: {e}")),
+                if let Some(s) = sky_of(r, &name) {
+                    view.sky = Some(s);
+                    let t = crate::state::get::<S_Transform>(sky, PROP_Transform).f_Rotation.f__quat;
+                    if t.f_X != 0.0 || t.f_Y != 0.0 || t.f_Z != 0.0 || t.f_W != 0.0 { view.sky_rotation = Quat::from_xyzw(t.f_X, t.f_Y, t.f_Z, t.f_W).normalize(); }
                 }
             }
         }
@@ -653,6 +665,7 @@ mod draw {
         view.sprites = sprites;
         view.lines = lines;
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
+        crate::trace::mark("gather");
         let image = r.draw_into(&instances, &view, width as u32, height as u32, target);
         let mut said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes); {custom}", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
         if dump {

@@ -887,11 +887,17 @@ moving the mouse turns the view.
 sh tools/play.sh            # the zoo; or: sh tools/play.sh flatgrass 1920 1080
 ```
 
+`play.sh` hosts with `tools/sandbox/ShimWatch.cs` in, as the tests do: 20 s
+after the server starts it has broken the TV, and at 30 s blown up the oil
+drum beside the car, which leaves the level and falls for good.
+`SHIMWATCH=0 sh tools/play.sh` leaves the watcher out.
+
 And it's heard: a player's mix goes to the default sound card (cpal:
 ALSA, WASAPI, CoreAudio), queued no more than 150 ms ahead and converted
 to the card's rate; a machine with none notes so and carries on
-(`ENGINE2_AUDIO_DEVICE=none` to skip it). Tested here only to the card's
-door: no sound card in this container, the conversion by `cargo test`.
+(`ENGINE2_AUDIO_DEVICE=none` to skip it). Heard on a real machine's card
+through `tools/play.sh` (Linux, ALSA's default, by ear: nothing measures
+it); the conversion by `cargo test`.
 
 Each frame is drawn straight into the window's surface (its tonemap pass
 renders to the surface's sRGB view), nothing read back but what auto
@@ -913,6 +919,82 @@ a pipeline of its own, so a rasterizer can turn away what's hidden before
 shading it; in the zoo that changes nothing measurable (its floor and
 walls cover the frame about once), and what's left is shading each pixel
 on a CPU.
+
+**On a real GPU.** Measured in Sandbox's zoo at 1280x720 on an RTX 3060 Ti
+(NVIDIA 595.99), an i5-6600K's four cores shared with the server, over 13
+minutes of a person playing on a real display: about 23 frames a second
+(17,149 frames in 807 s, loading included; 23 over ten seconds sampled
+late), where lavapipe took a second a frame. The `window frame` line, from
+asking for the surface's texture to the end of the camera's frame (not the
+UI, the present or managed's own frame), was 26 ms at the median, 32 at
+p95, 37 at p99 and 55 at worst (570 samples, each 30th frame, leaving out
+the first two: 201 and 128 ms). The GPU was 27 and 34% busy when sampled,
+in a low power state (P5, 36 W), 214 MiB of its memory the client's; the
+client used 127% of a core and the server 55%. That points away from the
+GPU, towards the CPU's side of a frame, and the surface is Fifo (60 Hz
+here), so a late frame waits for the next interval.
+Walking and looking work by hand too: the server saw the player go to
+`-155,-190` and `142,-35`, on the floor.
+
+With the watcher out and a person at spawn, then walking about (30 s
+sampled, so not the frames above): 31 frames a second, the `window frame`
+line 23 ms at the median and 30 at worst. `RENDER_PROFILE` says what that
+is, 23.5 ms on average over 48 samples:
+
+| | ms |
+| --- | --- |
+| exposure | 15.5 (p95 17) |
+| setup | 3.3 |
+| opaque | 1.9 |
+| shadow | 0.9 |
+| sprites | 0.9 |
+| translucent | 0.8 |
+| tonemap | 0.2 |
+
+Drawing the frame was 8 ms. Auto exposure was the rest: each frame the whole
+HDR frame (7.4 MB at 1280x720) was copied to the CPU and waited for, and a
+quarter of its pixels read as half floats, on the frame's thread.
+
+So a window's exposure no longer waits. Every 50 ms a frame copies what it
+drew, a thread of its own reads about 57,600 pixels of that, and each frame
+shows with what was last read, so it's a few frames old. (An image read back,
+a thumbnail say, still measures itself.) The half floats are read from their
+bits. A window's targets are kept from frame to frame. And the 60 Hz pacing
+counted from after managed's frame, so managed's time came on top of it: a
+frame now shown is paced by the display, and one that wasn't, like a server's
+frame, by what's left since the last frame ended.
+
+`ENGINE2_FRAME_TIMES` says where whole frames go, every 60 frames, only
+reading the clock. In the zoo at 1280x720, the watcher out, a person walking
+about, ms a frame:
+
+| | before | exposure not waited for | and the rest |
+| --- | --- | --- | --- |
+| frames a second | 28 | 39 | 59 |
+| whole frame | 35 | 25 | 16.7 |
+| managed | 9.4 | 8.6 | 14.2 |
+| gather | 0.7 | 0.2 | 0.1 |
+| record | 3.6 | 2.6 | 0.7 |
+| exposure | 18.3 | 2.5 | 0.2 |
+| tonemap and UI | 2.8 | 1.4 | 1.1 |
+| pacing | 0 | 9.7 | 0 |
+
+Native's part of a frame is now about 2 ms. `managed` in the last column is
+mostly waiting: the display paces the frame there, and the main thread uses
+36% of a core.
+
+On flatgrass, a real map (262 objects, its sky and lightmaps drawn), at
+1280x720 and nobody moving, it's 59 frames a second too. Past loading (4,080
+frames): 16.9 ms a frame on average, p95 17.5 to 30, 80 at worst, 4 of 68
+stretches of 60 frames holding a frame over 33 ms. Native's part is about
+10 ms (record 5.2, UI and its tonemap 2.2, gather 1.1, exposure 1.1) and
+the main thread uses 71% of a core. Each object gets two new buffers and a
+bind group every frame, and what's off screen is drawn too: both are next.
+The server holds 60 ticks a second (598 in ten seconds), no thread of its
+over 9% of a core. Getting in is the slow part: the first frame's wait is
+49 s (38 in the zoo), mostly managed, with 147 packages installed in that
+run, then freezes of 2.5 s and 7 s as the world first draws. Not measured
+yet: walking the map, or a crowd of props.
 
 **The UI and HUD** (`engine2/src/gpu.rs`). s&box draws all of it with one
 bindless shader (`ui_cssbox_batched.shader`, public, about 3,000 lines with
@@ -1379,6 +1461,8 @@ On a fresh Linux machine with Rust, `tools/setup.sh` does all of the
 first block below: the .NET SDK if there's none, the checkout beside this
 one (`../sbox-public`), patched, its interop generated, the server built,
 the natives and reference assemblies in place.
+The locked dependencies want a recent Rust: 1.85 is too old, 1.97.1 builds
+them (`RUSTUP_TOOLCHAIN` chooses one without changing the default).
 Building on Linux wants ALSA's headers for the client's sound card
 (`apt-get install libasound2-dev`); a windowed client wants xkbcommon's X11
 library and a Vulkan driver at run time (`apt-get install
@@ -1544,7 +1628,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    input and sound (above). What's left: particles, decals, shadows from
    local lights on what moves, a game's own shaders (s&box's UI and HUD
    shaders are ported to WGSL by hand), the UI's `border-shape` paths,
-   world panels, reverb; and a frame's cost on a real GPU.
+   world panels, reverb; and a frame's cost in a crowd of props on a real
+   GPU (above: flatgrass standing still).
 5. **The browser**, after the desktop builds. A game is built for the web
    ahead of time and served as any web game is: its C# compiled with the
    engine to WebAssembly before it ships (no compiler in the page, no

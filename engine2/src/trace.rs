@@ -28,6 +28,50 @@ pub fn note(s: &str) {
     let _ = w.flush();
 }
 
+/// ENGINE2_FRAME_TIMES: where a windowed client's frames go, said every 60
+/// frames: each stage's average, and what whole frames took. It only reads
+/// the clock (RENDER_PROFILE waits for the GPU at each stage), so the frames
+/// it times are the frames a player gets.
+struct FrameTimes {
+    last: std::time::Instant,
+    stages: Vec<(&'static str, f64)>,
+    this_frame: f64,
+    frames: Vec<f64>,
+}
+
+fn frame_times() -> Option<&'static Mutex<FrameTimes>> {
+    static T: OnceLock<Option<Mutex<FrameTimes>>> = OnceLock::new();
+    T.get_or_init(|| std::env::var_os("ENGINE2_FRAME_TIMES").map(|_| Mutex::new(FrameTimes { last: std::time::Instant::now(), stages: Vec::new(), this_frame: 0.0, frames: Vec::new() }))).as_ref()
+}
+
+/// The time since the last mark was spent on `stage`.
+pub fn mark(stage: &'static str) {
+    let Some(t) = frame_times() else { return };
+    let mut t = t.lock().unwrap();
+    let ms = t.last.elapsed().as_secs_f64() * 1000.0;
+    t.last = std::time::Instant::now();
+    t.this_frame += ms;
+    match t.stages.iter_mut().find(|s| s.0 == stage) {
+        Some(s) => s.1 += ms,
+        None => t.stages.push((stage, ms)),
+    }
+}
+
+pub fn frame_done() {
+    let Some(t) = frame_times() else { return };
+    let mut t = t.lock().unwrap();
+    let whole = std::mem::take(&mut t.this_frame);
+    t.frames.push(whole);
+    if t.frames.len() < 60 { return; }
+    let n = t.frames.len() as f64;
+    let stages: Vec<String> = t.stages.iter().map(|(s, ms)| format!("{s} {:.1}", ms / n)).collect();
+    t.frames.sort_by(f64::total_cmp);
+    let at = |p: f64| t.frames[((n - 1.0) * p) as usize];
+    note(&format!("frame times: {:.1} ms mean, {:.1} p50, {:.1} p95, {:.1} max ({})", t.frames.iter().sum::<f64>() / n, at(0.5), at(0.95), at(1.0), stages.join(", ")));
+    t.frames.clear();
+    t.stages.clear();
+}
+
 extern "C" fn at_exit() {
     let mut w = out().lock().unwrap();
     let called: Vec<usize> = (0..SLOTS).filter(|&i| COUNTS[i].load(Ordering::Relaxed) > 0).collect();

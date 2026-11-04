@@ -5,7 +5,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{CStr, CString};
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// A string for managed to read: native keeps it (leaked, as the engine's
@@ -74,27 +74,45 @@ pub unsafe fn CMtrlSystm2ppSys_GetContentPath(_self: usize) -> usize { global_Ge
 
 // ---- the frame
 
+/// Managed wants out (Application.WantsExit: the window closed, `quit`):
+/// the frame says so to the loop.
+static EXIT_MAIN_LOOP: AtomicBool = AtomicBool::new(false);
+pub unsafe fn g_pngnSrvcMgr_ExitMainLoop() { EXIT_MAIN_LOOP.store(true, Ordering::Relaxed) }
+
 /// One engine frame: true to keep running. The engine paces the loop; the
 /// stub at 60 Hz, as a dedicated server's default tick would.
 pub unsafe fn global_SourceEngineFrame(_app_system: usize, _time: f64, _previous: f64) -> i32 {
+    if EXIT_MAIN_LOOP.load(Ordering::Relaxed) { return 0; }
+    crate::trace::mark("managed");
     crate::elo::TICK.fetch_add(1, Ordering::Relaxed);
     // a client with a window: its output, as native's frame asks for it
     // (EngineLoop.OnClientOutput: every view drawn to its swap chain), then shown
     if win::window_of_swap_chain(MAIN_SWAP_CHAIN.load(Ordering::Relaxed) as usize) != 0 {
-        let began = std::time::Instant::now();
-        for slot in [crate::slots::M_Sandbox_EngineLoop_OnClientOutput, crate::slots::M_SandboxEngine_GameWindow_Present] {
+        for (slot, stage) in [(crate::slots::M_Sandbox_EngineLoop_OnClientOutput, "output after"), (crate::slots::M_SandboxEngine_GameWindow_Present, "present")] {
             let f = crate::managed(slot);
             if f != 0 {
                 let f: extern "C" fn() -> i32 = unsafe { std::mem::transmute(f) };
                 f();
             }
+            crate::trace::mark(stage);
         }
-        // what's left of the frame's 60th of a second
-        if let Some(rest) = std::time::Duration::from_micros(16_667).checked_sub(began.elapsed()) { std::thread::sleep(rest) }
+        // a frame shown is paced by the display; one that wasn't (a minimized
+        // window), as a server's is
+        if !win::take_presented() { pace_60hz(); }
+        crate::trace::mark("pacing");
+        crate::trace::frame_done();
         return 1;
     }
-    std::thread::sleep(std::time::Duration::from_micros(16_667));
+    pace_60hz();
     1
+}
+
+/// What's left of a 60th of a second since the last frame ended.
+fn pace_60hz() {
+    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap();
+    if let Some(rest) = last.and_then(|l| std::time::Duration::from_micros(16_667).checked_sub(l.elapsed())) { std::thread::sleep(rest) }
+    *last = Some(std::time::Instant::now());
 }
 
 /// The swap chain the scene system draws its main views to (SetMainSwapChain).
@@ -165,6 +183,7 @@ mod win {
     pub fn window_of_swap_chain(_: usize) -> usize { 0 }
     pub fn draw_camera(_: usize, _: usize) {}
     pub fn present(_: usize) -> bool { true }
+    pub fn take_presented() -> bool { false }
     pub fn set_error(_: &str) {}
     pub fn error_ptr() -> usize { c"".as_ptr() as usize }
     pub fn key_name(_: u32) -> String { String::new() }
