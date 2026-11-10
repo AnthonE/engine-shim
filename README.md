@@ -1468,7 +1468,7 @@ a graph needs none of s&box's lighting here:
 
 - **Translated** (`shadergraph.rs`). Each node as `GraphCompiler`
   compiles it, into WGSL: the same inputs in the same order, the same
-  defaults, the same casts between one and four components. 81 kinds of
+  defaults, the same casts between one and four components. 80 kinds of
   node: the arithmetic, the vector ones, textures (plain and triplanar,
   colour and normal), parameters, branches, time, the noises, the blend
   modes, tile and offset, normals between tangent, object and world
