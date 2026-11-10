@@ -487,6 +487,11 @@ pub unsafe fn RndrPplnTls_GetTargetHeight(v: usize, _target: usize) -> i32 { gpu
 
 pub unsafe fn RenderTools_SetRenderState(ctx: usize, attrs: usize, mode: usize, _layout: usize, _stats: usize) -> i32 { gpu::set_state(ctx, attrs, mode) as i32 }
 pub unsafe fn IRenderContext_GetAttributesPtrForModify(_ctx: usize) -> usize { gpu::new_attrs() }
+/// A scene object's own attributes (SceneObject.Attributes): one set per
+/// object, kept, so what a game sets on it is there when it's drawn.
+pub unsafe fn CSceneObject_GetAttributesPtrForModify(obj: usize) -> usize { gpu::object_attrs(obj) }
+pub unsafe fn CScnnmtblbjct_GetAttributesPtrForModify(obj: usize) -> usize { gpu::object_attrs(obj) }
+pub unsafe fn CDynmcScnbjct_GetAttributesPtrForModify(obj: usize) -> usize { gpu::object_attrs(obj) }
 pub unsafe fn IRenderContext_BindIndexBuffer(ctx: usize, b: usize, offset: i32) -> i32 { gpu::with_context(ctx, |c| c.index_buffer = Some((b, 2, offset))); 1 }
 pub unsafe fn IRenderContext_BindIndexBuffer_1(ctx: usize, b: usize, size: i32, offset: i32) -> i32 { gpu::with_context(ctx, |c| c.index_buffer = Some((b, size, offset))); 1 }
 pub unsafe fn IRenderContext_SetScissorRect(ctx: usize, rect: usize) {
@@ -2463,7 +2468,13 @@ pub unsafe fn CModel_MeshTrace(_model: usize, _input: usize, _output: usize) -> 
 // bones
 
 pub unsafe fn CModel_NumBones(model: usize) -> i32 { file(model).map(|f| f.bones.len() as i32).unwrap_or(0) }
-pub unsafe fn CModel_FindBoneIndex(model: usize, name: usize) -> i32 { file(model).map(|f| f.bone(&unsafe { read(name) })).unwrap_or(-1) }
+pub unsafe fn CModel_FindBoneIndex(model: usize, name: usize) -> i32 {
+    let Some(f) = file(model) else { return -1 };
+    let name = unsafe { read(name) };
+    let i = f.bone(&name);
+    if i < 0 && !f.bones.is_empty() { crate::trace::asked(&models::name_of(model).unwrap_or_default(), "bone", &name); }
+    i
+}
 pub unsafe fn CModel_boneName(model: usize, i: i32) -> usize {
     file(model).and_then(|f| at(&f.bones, i)).map(|b| ptr(&b.name)).unwrap_or(ptr(c""))
 }
@@ -2849,6 +2860,17 @@ pub unsafe fn g_pMtrlSystm2_CreateRawMaterial(name: usize, shader: usize, _anony
 }
 /// A material copied (Material.CreateCopy: a line's default material).
 pub unsafe fn g_pMtrlSystm2_CreateProceduralMaterialCopy(src: usize, _flags: i32, _anonymous: i32) -> usize { crate::camera::copy_material(src) }
+/// A number, a vector or a colour set on a material by its parameter's name
+/// (Material.Set: managed sends each as four floats), and read back.
+pub unsafe fn IMaterial2_Set_1(m: usize, name: usize, v: usize) {
+    if v == 0 { return; }
+    let q = unsafe { core::ptr::read_unaligned(v as *const S_Vector4) }.f__vec;
+    crate::camera::set_material_value(m, &unsafe { read(name) }, [q.f_X, q.f_Y, q.f_Z, q.f_W]);
+}
+pub unsafe fn IMaterial2_GetVector4(m: usize, name: usize) -> S_Vector4 {
+    let [x, y, z, w] = crate::camera::material_value(m, &unsafe { read(name) }).unwrap_or_default();
+    S_Vector4 { f__vec: crate::slots::S_System_Numerics_Vector4 { f_X: x, f_Y: y, f_Z: z, f_W: w } }
+}
 /// A texture set on a material by its parameter's name (Material.Set).
 pub unsafe fn IMaterial2_Set_2(m: usize, name: usize, t: usize) { crate::camera::set_material_texture(m, &unsafe { read(name) }, t) }
 /// A texture a material was given by name; one it wasn't is still a texture

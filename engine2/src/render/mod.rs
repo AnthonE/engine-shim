@@ -6,6 +6,7 @@
 //! every material s&box's content has is one of). The engine draws its
 //! scene with it when managed asks a camera for pixels (impls.rs,
 //! CCameraRenderer_RenderToBitmap); `render` draws one model.
+pub mod graph;
 pub mod lines;
 pub mod sprites;
 pub mod ui;
@@ -111,12 +112,38 @@ struct MaterialUniform {
     extra: [f32; 4],
 }
 
+/// The shader graphs read so far: each by its shader's name (none: not a
+/// graph's, or one that isn't translated), and their pipelines.
+#[derive(Default)]
+struct Graphs {
+    by_name: HashMap<String, Option<(u32, Arc<crate::assets::shadergraph::Translated>)>>,
+    pipelines: Vec<wgpu::RenderPipeline>,
+}
+
+/// A graph's material as it was read: its parameters' buffer, what the
+/// graph reads, and the values as the file (or the graph) gives them and as
+/// they were last written.
+struct GraphMaterial {
+    buffer: wgpu::Buffer,
+    params: Vec<crate::assets::shadergraph::Param>,
+    /// its textures as the graph names them, and as the material gave them
+    textures: Vec<crate::assets::shadergraph::Texture>,
+    views: Vec<wgpu::TextureView>,
+    file: [[f32; 4]; crate::assets::shadergraph::MAX_PARAMS],
+    written: [[f32; 4]; crate::assets::shadergraph::MAX_PARAMS],
+}
+
+/// A vertex as every model's pipeline takes it (Vertex).
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Uint32x4, 6 => Float32x4, 7 => Float32x2];
+
 /// A run of triangles to draw: its buffers (by index), its range, its material.
 struct GpuDraw {
     vertex_buffer: usize,
     index_buffer: usize,
     range: std::ops::Range<u32>,
     base_vertex: i32,
+    /// its material's name, as files name it
+    name: String,
     material: wgpu::BindGroup,
     kind: Kind,
     /// the material in its place in each of the model's material groups
@@ -144,11 +171,14 @@ enum Kind {
     Blend,
     Glass,
     CheapGlass,
+    /// a shader graph's own shader (graph.rs): which of the graphs' pipelines,
+    /// and how it's blended (0 opaque, 1 alpha-tested, 2 translucent)
+    Graph { shader: u32, blend: u8 },
 }
 
 impl Kind {
     /// drawn with what's opaque, writing depth
-    fn opaque(self) -> bool { matches!(self, Kind::Opaque | Kind::Cutout) }
+    fn opaque(self) -> bool { matches!(self, Kind::Opaque | Kind::Cutout | Kind::Graph { blend: 0 | 1, .. }) }
 }
 
 /// A mesh's draws on the GPU, and the buffers they read.
@@ -229,6 +259,19 @@ pub struct Renderer {
     bc: bool,
     textures: Mutex<HashMap<(String, bool), wgpu::TextureView>>,
     materials: Mutex<HashMap<String, (wgpu::BindGroup, Option<Kind>, Vec<String>)>>,
+    /// shader graphs' shaders (graph.rs): a material group of their own
+    /// (parameters, two samplers, sixteen textures), and each graph's
+    /// pipeline, made the first time a material of it is read
+    graph_layout: wgpu::BindGroupLayout,
+    graph_pipeline_layout: wgpu::PipelineLayout,
+    graphs: Mutex<Graphs>,
+    /// each graph material's parameters where the GPU reads them, by the
+    /// material's name: written again when managed sets one (set_graph_values)
+    graph_materials: Mutex<HashMap<String, GraphMaterial>>,
+    /// managed's own textures a graph's material was given, by object and version
+    runtime_textures: Mutex<HashMap<usize, (u64, wgpu::TextureView)>>,
+    /// when it was made: the time a graph's shader reads
+    started: std::time::Instant,
     /// for a material without a texture: white (a colour, occlusion, a
     /// tint mask), a flat normal (roughness 0.6), and a blendable's g_tRma
     /// of either version (not metal, not occluded, all revealed: version 1
@@ -308,6 +351,18 @@ impl Renderer {
             wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
         ] });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&view_layout, &material_layout, &object_layout, &lighting_layout], push_constant_ranges: &[] });
+        // a shader graph's material: its parameters, a sampler that wraps and
+        // one that doesn't, and its textures, to both stages (a graph may
+        // move its vertices by them)
+        let both = wgpu::ShaderStages::VERTEX_FRAGMENT;
+        let mut graph_entries = vec![
+            uniform(0, both),
+            wgpu::BindGroupLayoutEntry { binding: 1, visibility: both, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            wgpu::BindGroupLayoutEntry { binding: 2, visibility: both, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+        ];
+        graph_entries.extend((0..crate::assets::shadergraph::MAX_TEXTURES as u32).map(|k| wgpu::BindGroupLayoutEntry { visibility: both, ..tex(3 + k) }));
+        let graph_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("graph"), entries: &graph_entries });
+        let graph_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("graph"), bind_group_layouts: &[&view_layout, &graph_layout, &object_layout, &lighting_layout], push_constant_ranges: &[] });
         let glass_view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass view"), entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT), tex(1), shadow_map, compare] });
         let glass_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("glass"), entries: &[
             uniform(0, wgpu::ShaderStages::FRAGMENT), tex(1), tex(2),
@@ -396,7 +451,7 @@ impl Renderer {
         let ui = ui::Ui::new(&device, &queue);
         let sprites = sprites::Sprites::new(&device, &queue);
         let lines = lines::Lines::new(&device, &queue);
-        Ok(Renderer { instance, ui, sprites, lines, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), window_exposure: Default::default(), window_targets: Default::default(), shadow_maps: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
+        Ok(Renderer { instance, ui, sprites, lines, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), window_exposure: Default::default(), window_targets: Default::default(), shadow_maps: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), graph_layout, graph_pipeline_layout, graphs: Default::default(), graph_materials: Default::default(), runtime_textures: Default::default(), started: std::time::Instant::now(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -571,9 +626,197 @@ impl Renderer {
         (g, drawn)
     }
 
+    /// The seconds a graph's shader reads as the time (`ENGINE2_RENDER_TIME`
+    /// holds it still, for a picture that's the same twice).
+    fn time(&self) -> f32 {
+        static FIXED: OnceLock<Option<f32>> = OnceLock::new();
+        FIXED.get_or_init(|| std::env::var("ENGINE2_RENDER_TIME").ok().and_then(|t| t.parse().ok())).unwrap_or_else(|| self.started.elapsed().as_secs_f32())
+    }
+
+    /// The graph a shader was made from (`shaders/x.shdrgrph` beside
+    /// `shaders/x.shader`, in a creator's project), translated
+    /// (assets/shadergraph.rs) and made a pipeline, the first time a
+    /// material of it is read: its place among the graphs' pipelines, and
+    /// what it reads. None: not a graph's shader, or one that isn't
+    /// translated (said in `notes`), and its materials are drawn as complex.
+    fn graph(&self, content: &dyn Files, shader: &str, notes: &mut Vec<String>) -> Option<(u32, Arc<crate::assets::shadergraph::Translated>)> {
+        use crate::assets::shadergraph::{self, Blend};
+        let key = crate::fs::normal(shader);
+        // ENGINE2_GRAPHS=0: no graph is translated, and their materials are drawn as complex (as before there was this)
+        static ON: OnceLock<bool> = OnceLock::new();
+        if key.is_empty() || !*ON.get_or_init(|| std::env::var("ENGINE2_GRAPHS").map(|v| v != "0").unwrap_or(true)) { return None; }
+        if let Some(g) = self.graphs.lock().unwrap().by_name.get(&key) { return g.clone(); }
+        let made = (|| {
+            let stem = key.strip_suffix("_c").unwrap_or(&key).strip_suffix(".shader")?;
+            let text = String::from_utf8(content.read(&format!("{stem}.shdrgrph"))?).ok()?;
+            let t = shadergraph::translate(text.trim_start_matches('\u{feff}')).map_err(|e| notes.push(format!("{shader}: its graph: {e}"))).ok()?;
+            let source = graph::source(&t.wgsl);
+            graph::check(&source).map_err(|e| notes.push(format!("{shader}: its graph, translated, isn't a shader: {}", e.lines().next().unwrap_or("")))).ok()?;
+            let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(shader), source: wgpu::ShaderSource::Wgsl(source.into()) });
+            let translucent = t.blend == Blend::Translucent;
+            let pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(shader),
+                layout: Some(&self.graph_pipeline_layout),
+                vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_graph"), compilation_options: Default::default(), buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &VERTEX_ATTRIBUTES,
+                }] },
+                fragment: Some(wgpu::FragmentState { module: &module, entry_point: Some("fs_graph"), compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format: COLOR, blend: translucent.then_some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })] }),
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                depth_stencil: Some(wgpu::DepthStencilState { format: DEPTH, depth_write_enabled: !translucent, depth_compare: wgpu::CompareFunction::Less, stencil: Default::default(), bias: Default::default() }),
+                multisample: wgpu::MultisampleState { count: samples(), ..Default::default() },
+                multiview: None,
+                cache: None,
+            });
+            notes.push(format!("{shader}: a shader graph, translated ({} textures, {} parameters)", t.textures.len(), t.params.len()));
+            Some((pipeline, Arc::new(t)))
+        })();
+        let mut g = self.graphs.lock().unwrap();
+        let entry = made.map(|(pipeline, t)| {
+            g.pipelines.push(pipeline);
+            (g.pipelines.len() as u32 - 1, t)
+        });
+        g.by_name.insert(key, entry.clone());
+        entry
+    }
+
+    /// A material of a graph's shader: the graph's parameters as the
+    /// material sets them (or as the graph does), and its textures.
+    fn graph_material(&self, content: &dyn Files, name: &str, m: &material::Material, index: u32, graph: &crate::assets::shadergraph::Translated, notes: &mut Vec<String>) -> (wgpu::BindGroup, Option<Kind>) {
+        use crate::assets::shadergraph::{Blend, MAX_PARAMS, MAX_TEXTURES};
+        let mut values = [[0f32; 4]; MAX_PARAMS];
+        for (k, p) in graph.params.iter().enumerate().take(MAX_PARAMS) {
+            values[k] = match p.components {
+                0 => [m.ints.get(&p.name).map(|i| *i as f32).or(m.floats.get(&p.name).copied()).unwrap_or(p.default[0]), 0.0, 0.0, 0.0],
+                1 => [m.floats.get(&p.name).copied().or(m.vectors.get(&p.name).map(|v| v[0])).unwrap_or(p.default[0]), 0.0, 0.0, 0.0],
+                _ => m.vectors.get(&p.name).copied().unwrap_or(p.default),
+            };
+        }
+        if let Some(note) = graph::unmatched(name, &graph.textures, &m.textures) {
+            notes.push(note);
+        }
+        let views: Vec<wgpu::TextureView> = (0..MAX_TEXTURES).map(|k| {
+            let Some(t) = graph.textures.get(k) else { return self.white.clone() };
+            match m.textures.get(&t.name) {
+                Some(path) => self.texture(content, path, t.srgb).unwrap_or_else(|e| { notes.push(e); self.solid(t.default) }),
+                None => self.solid(t.default),
+            }
+        }).collect();
+        let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(name), contents: bytemuck::cast_slice(&values), usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST });
+        self.graph_materials.lock().unwrap().insert(crate::fs::normal(name), GraphMaterial { buffer: buffer.clone(), params: graph.params.clone(), textures: graph.textures.clone(), views: views.clone(), file: values, written: values });
+        let mut entries = vec![
+            wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.clamp) },
+        ];
+        entries.extend(views.iter().enumerate().map(|(k, v)| at(3 + k as u32, v)));
+        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(name), layout: &self.graph_layout, entries: &entries });
+        let blend = match graph.blend { Blend::Opaque => 0, Blend::Masked => 1, Blend::Translucent => 2 };
+        (group, Some(Kind::Graph { shader: index, blend }))
+    }
+
+    /// What the game has set on materials by parameter name (Material.Set),
+    /// by material name and the parameter's in lower case: each graph
+    /// material's parameters are those over its file's, written to the GPU
+    /// where they've changed. A parameter is found whatever its case
+    /// (Grubs sets `g_flfadeamount`; the graph names it `g_flFadeAmount`).
+    pub fn set_graph_values(&self, set: &HashMap<String, HashMap<String, [f32; 4]>>) {
+        for (name, m) in self.graph_materials.lock().unwrap().iter_mut() {
+            let mut values = m.file;
+            if let Some(given) = set.get(name) {
+                for (k, p) in m.params.iter().enumerate().take(values.len()) {
+                    if let Some(v) = given.get(&p.name.to_ascii_lowercase()) {
+                        values[k] = if p.components <= 1 { [v[0], 0.0, 0.0, 0.0] } else { *v };
+                    }
+                }
+            }
+            if values != m.written {
+                self.queue.write_buffer(&m.buffer, 0, bytemuck::cast_slice(&values));
+                m.written = values;
+            }
+        }
+    }
+
+    /// The materials of `model` as one object has them: for each of its
+    /// graph materials that reads something the object's own attributes set
+    /// (SceneObject.Attributes: a parameter or a texture the graph marks as
+    /// an attribute, by the name's token, or any parameter by its full
+    /// name), a group of the object's own, with those over the material's.
+    /// None: nothing of the object's is read, and it's drawn as any other.
+    /// `textures` are managed's own (gpu.rs), put on the GPU as they are now.
+    pub fn object_materials(&self, model: &Model, numbers: &HashMap<u32, [f32; 4]>, textures: &HashMap<u32, usize>) -> Option<Arc<HashMap<String, wgpu::BindGroup>>> {
+        let token = |name: &str| crate::handles::murmur2(name);
+        let all = self.graph_materials.lock().unwrap();
+        let mut out = HashMap::new();
+        for d in model.meshes.iter().flat_map(|m| &m.draws) {
+            let Some(m) = all.get(&d.name) else { continue };
+            if out.contains_key(&d.name) { continue; }
+            let mut values = m.written;
+            let mut views = m.views.clone();
+            let mut any = false;
+            for (k, p) in m.params.iter().enumerate().take(values.len()) {
+                let set = p.attribute.as_deref().and_then(|a| numbers.get(&token(a))).or_else(|| numbers.get(&token(&p.name)));
+                if let Some(v) = set {
+                    values[k] = if p.components <= 1 { [v[0], 0.0, 0.0, 0.0] } else { *v };
+                    any = true;
+                }
+            }
+            for (k, t) in m.textures.iter().enumerate().take(views.len()) {
+                let set = t.attribute.as_deref().and_then(|a| textures.get(&token(a))).or_else(|| textures.get(&token(&t.name)));
+                if let Some(view) = set.and_then(|t| self.runtime_texture(*t)) {
+                    views[k] = view;
+                    any = true;
+                }
+            }
+            if !any { continue; }
+            let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(&d.name), contents: bytemuck::cast_slice(&values), usage: wgpu::BufferUsages::UNIFORM });
+            let mut entries = vec![
+                wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.clamp) },
+            ];
+            entries.extend(views.iter().enumerate().map(|(k, v)| at(3 + k as u32, v)));
+            out.insert(d.name.clone(), self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(&d.name), layout: &self.graph_layout, entries: &entries }));
+        }
+        (!out.is_empty()).then(|| Arc::new(out))
+    }
+
+    /// One of managed's own textures (gpu.rs: one a game makes and writes,
+    /// as Grubs' terrain writes where it's scorched) on the GPU as it is
+    /// now, made again when it's been written to.
+    fn runtime_texture(&self, t: usize) -> Option<wgpu::TextureView> {
+        let version = crate::gpu::texture_version(t)?;
+        if let Some((v, view)) = self.runtime_textures.lock().unwrap().get(&t) {
+            if *v == version { return Some(view.clone()); }
+        }
+        let (w, h, _, px) = crate::gpu::texture_rgba(t)?;
+        let view = self.device.create_texture_with_data(&self.queue, &wgpu::TextureDescriptor {
+            label: Some("a game's texture"), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
+        }, wgpu::util::TextureDataOrder::LayerMajor, &px).create_view(&Default::default());
+        self.runtime_textures.lock().unwrap().insert(t, (version, view.clone()));
+        Some(view)
+    }
+
+    /// One colour as a texture: what a graph's texture is when its material names none.
+    fn solid(&self, rgba: [f32; 4]) -> wgpu::TextureView {
+        if rgba == [1.0; 4] { return self.white.clone(); }
+        let bytes = rgba.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+        self.device.create_texture_with_data(&self.queue, &wgpu::TextureDescriptor {
+            label: None, size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
+        }, Default::default(), &bytes).create_view(&Default::default())
+    }
+
     fn read_material(&self, content: &dyn Files, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, Option<Kind>) {
         let m = content.compiled(name).ok_or_else(|| format!("{name}: not found")).and_then(|r| material::read(&r));
+        // the stand-in's own materials (standin.rs) are made, not read
+        let m = m.or_else(|e| crate::standin::material(name).ok_or(e));
         let m = m.unwrap_or_else(|e| { notes.push(e); Default::default() });
+        // a shader a creator made as a graph: translated, and its own pipeline
+        if let Some((index, graph)) = self.graph(content, &m.shader, notes) {
+            return self.graph_material(content, name, &m, index, &graph, notes);
+        }
         let mut tex = |param: &str, srgb: bool, default: &wgpu::TextureView| match m.textures.get(param) {
             Some(t) => self.texture(content, t, srgb).unwrap_or_else(|e| { notes.push(e); default.clone() }),
             None => default.clone(),
@@ -712,7 +955,7 @@ impl Renderer {
                     let (m, k) = self.material(content, other, &mut notes);
                     Some((m, k?))
                 }).collect();
-                kind.map(|kind| GpuDraw { vertex_buffer: d.vertex_buffer, index_buffer: d.index_buffer, range: d.start_index as u32..end as u32, base_vertex: d.base_vertex as i32, material, kind, skins })
+                kind.map(|kind| GpuDraw { vertex_buffer: d.vertex_buffer, index_buffer: d.index_buffer, range: d.start_index as u32..end as u32, base_vertex: d.base_vertex as i32, name: crate::fs::normal(&d.material), material, kind, skins })
             }).collect();
             let indices = index_lists.iter().map(|i| self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(i), usage: wgpu::BufferUsages::INDEX })).collect();
             out.push(GpuMesh { vertices, indices, draws, group_mask: m.group_mask });
@@ -784,7 +1027,7 @@ impl Renderer {
         let texel = if casters > 0 { ((hi.x - lo.x).max(hi.y - lo.y) + 8.0) / SHADOW_SIZE as f32 } else { 0.0 };
         let uniform = ViewUniform {
             shadow: shadow.unwrap_or(Mat4::IDENTITY).to_cols_array_2d(),
-            shadow_params: [shadow.is_some() as i32 as f32, 1.0 / SHADOW_SIZE as f32, texel, 0.0],
+            shadow_params: [shadow.is_some() as i32 as f32, 1.0 / SHADOW_SIZE as f32, texel, self.time()],
             view_proj: view_proj.to_cols_array_2d(),
             inv_view_proj: view_proj.inverse().to_cols_array_2d(),
             eye: view.eye.extend(exposure).into(),
@@ -847,6 +1090,8 @@ impl Renderer {
             if kept.as_ref().is_none_or(|t| t.size != (width, height)) { *kept = Some(new_targets()); }
             kept.clone().unwrap()
         } else { new_targets() };
+        // the graphs' pipelines, as they are now (every material drawn has been read)
+        let graph_pipelines = self.graphs.lock().unwrap().pipelines.clone();
         // what's drawn over what's behind it, farthest first
         let mut later: Vec<(f32, usize, usize, usize)> = Vec::new();
         for (k, o) in objects.iter().enumerate() {
@@ -924,14 +1169,21 @@ impl Renderer {
                 }
             }
             opaque.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let mut cutout = None;
+            let mut drawn_with = None;
             for &(_, k, mi, di) in &opaque {
                 let (o, m) = (&objects[k], &objects[k].model.meshes[mi]);
                 let d = &m.draws[di];
                 let (material, kind) = d.look(o.skin);
-                if cutout != Some(kind == Kind::Cutout) {
-                    cutout = Some(kind == Kind::Cutout);
-                    pass.set_pipeline(if kind == Kind::Cutout { &self.cutout_pipeline } else { &self.pipeline });
+                let material = view.object_materials.get(&k).and_then(|m| m.get(&d.name)).unwrap_or(material);
+                // which pipeline: the alpha-tested, a graph's own, or complex's
+                let with = match kind { Kind::Cutout => (1, 0), Kind::Graph { shader, .. } => (2, shader), _ => (0, 0) };
+                if drawn_with != Some(with) {
+                    drawn_with = Some(with);
+                    pass.set_pipeline(match kind {
+                        Kind::Cutout => &self.cutout_pipeline,
+                        Kind::Graph { shader, .. } => graph_pipelines.get(shader as usize).unwrap_or(&self.pipeline),
+                        _ => &self.pipeline,
+                    });
                     pass.set_bind_group(0, &view_group, &[]);
                 }
                 pass.set_bind_group(1, material, &[]);
@@ -968,8 +1220,10 @@ impl Renderer {
                 let (o, m) = (&objects[k], &objects[k].model.meshes[mi]);
                 let dr = &m.draws[di];
                 let (material, kind) = dr.look(o.skin);
+                let material = view.object_materials.get(&k).and_then(|m| m.get(&dr.name)).unwrap_or(material);
                 let (pipeline, view_group) = match kind {
                     Kind::Blend => (&self.blend_pipeline, &view_group),
+                    Kind::Graph { shader, .. } => (graph_pipelines.get(shader as usize).unwrap_or(&self.blend_pipeline), &view_group),
                     Kind::Glass => (&self.glass_pipeline, &glass_view),
                     _ => (&self.cheap_glass_pipeline, &glass_view),
                 };
@@ -1205,6 +1459,9 @@ pub struct View {
     pub sprites: Vec<crate::sprites::Batch>,
     /// lines (beams, trails), drawn before the sprites
     pub lines: Vec<crate::lines::Line>,
+    /// objects with graph materials of their own (object_materials), by
+    /// their place among the objects drawn
+    pub object_materials: HashMap<usize, Arc<HashMap<String, wgpu::BindGroup>>>,
 }
 
 /// A light a map's lightmaps name by its bake index (managed's
@@ -1510,6 +1767,7 @@ impl View {
             exposure: Exposure::default(),
             sprites: Vec::new(),
             lines: Vec::new(),
+            object_materials: HashMap::new(),
         }
     }
 
@@ -1521,7 +1779,7 @@ impl View {
         let fov = 30f32.to_radians();
         let dir = Vec3::new(yaw.to_radians().cos() * pitch.to_radians().cos(), yaw.to_radians().sin() * pitch.to_radians().cos(), pitch.to_radians().sin());
         let eye = center + dir * (radius / (fov * 0.5).sin()) * 1.05;
-        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default(), sprites: Vec::new(), lines: Vec::new() }
+        View { eye, view: Mat4::look_at_rh(eye, center, Vec3::Z), proj: Mat4::perspective_rh(fov, 1.0, radius * 0.05, radius * 10.0), clear: [0.0; 4], sun: None, sky: None, sky_rotation: glam::Quat::IDENTITY, lightmaps: None, probes: Vec::new(), tonemap: Tonemap::Hable, exposure: Exposure::default(), sprites: Vec::new(), lines: Vec::new(), object_materials: HashMap::new() }
     }
 }
 
@@ -1565,6 +1823,67 @@ mod tests {
 
     fn differ(a: &[u8], b: &[u8]) -> usize {
         a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(a, b)| a[..3].iter().zip(&b[..3]).any(|(x, y)| x.abs_diff(*y) > 8)).count()
+    }
+
+    /// A value the game sets on a graph's material by name (Material.Set)
+    /// reaches the shader: the same ball, drawn again, is another colour.
+    #[test]
+    fn a_value_set_on_a_graphs_material_changes_what_is_drawn() {
+        use super::*;
+        use wgpu::util::DeviceExt;
+        struct Graph;
+        impl Files for Graph {
+            fn read(&self, path: &str) -> Option<Vec<u8>> {
+                (path == "shaders/tinted.shdrgrph").then(|| br#"{"BlendMode": "Opaque", "ShadingModel": "Unlit", "nodes": [
+                    {"_class": "Result", "Identifier": "0", "Albedo": {"Identifier": "1", "Output": "Result"}},
+                    {"_class": "Float4", "Identifier": "1", "Name": "Fill Colour", "IsAttribute": true, "Value": "1,0,0,1"}]}"#.to_vec())
+            }
+        }
+        let Ok(r) = Renderer::new() else { return };
+        let mut notes = Vec::new();
+        let (index, graph) = r.graph(&Graph, "shaders/tinted.shader", &mut notes).expect("the graph translates");
+        let m = material::Material { name: "materials/gauge.vmat".into(), shader: "shaders/tinted.shader".into(), ..Default::default() };
+        let (group, kind) = r.graph_material(&Graph, "materials/gauge.vmat", &m, index, &graph, &mut notes);
+        assert_eq!(kind, Some(Kind::Graph { shader: index, blend: 0 }));
+        // a square facing the camera, of that material
+        let quad: Vec<Vertex> = [[-40.0, -40.0], [40.0, -40.0], [40.0, 40.0], [-40.0, 40.0]].iter().map(|p| Vertex {
+            position: [0.0, p[0], p[1]], normal: [-1.0, 0.0, 0.0], uv: [0.0, 0.0], blend: [0.0; 4], paint: [1.0; 4], bones: [0; 4], weights: [0.0; 4], lightmap: [0.0; 2] }).collect();
+        let model = Model {
+            meshes: vec![GpuMesh {
+                vertices: vec![r.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&quad), usage: wgpu::BufferUsages::VERTEX })],
+                indices: vec![r.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&[0u32, 1, 2, 0, 2, 3]), usage: wgpu::BufferUsages::INDEX })],
+                draws: vec![GpuDraw { vertex_buffer: 0, index_buffer: 0, range: 0..6, base_vertex: 0, name: "materials/gauge.vmat".into(), material: group, kind: kind.unwrap(), skins: Vec::new() }],
+                group_mask: 1,
+            }],
+            default_mask: 1, min: Vec3::new(0.0, -40.0, -40.0), max: Vec3::new(0.0, 40.0, 40.0), notes: Vec::new(), lightmap_uv: false,
+        };
+        let view = View { eye: Vec3::new(-100.0, 0.0, 0.0), view: Mat4::look_at_rh(Vec3::new(-100.0, 0.0, 0.0), Vec3::ZERO, Vec3::Z), proj: Mat4::perspective_rh(1.0, 1.0, 1.0, 1000.0), ..View::framing(&model, 0.0, 0.0) };
+        let middle = |r: &Renderer| {
+            let instance = [Instance { model: &model, transform: Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 }];
+            let image = r.draw(&instance, &view, 64, 64);
+            let at = (32 * 64 + 32) * 4;
+            [image[at], image[at + 1], image[at + 2]]
+        };
+        let red = middle(&r);
+        assert!(red[0] > 150 && red[1] < 60 && red[2] < 60, "its own colour, red: {red:?}");
+        // set as Grubs sets its gauge's: the name in lower case
+        r.set_graph_values(&HashMap::from([("materials/gauge.vmat".to_string(), HashMap::from([("g_vfillcolour".to_string(), [0.0, 0.0, 1.0, 1.0])]))]));
+        let blue = middle(&r);
+        assert!(blue[2] > 150 && blue[0] < 60, "set to blue: {blue:?}");
+        // and with nothing set any more, its own again
+        r.set_graph_values(&HashMap::new());
+        assert_eq!(middle(&r), red);
+        // what one object is given (SceneObject.Attributes, by the name's token) is that object's alone
+        let green = HashMap::from([(crate::handles::murmur2("Fill Colour"), [0.0, 1.0, 0.0, 1.0])]);
+        let own = r.object_materials(&model, &green, &HashMap::new()).expect("the graph reads that attribute");
+        assert!(r.object_materials(&model, &HashMap::from([(crate::handles::murmur2("Something Else"), [1.0; 4])]), &HashMap::new()).is_none(), "an attribute it doesn't read makes nothing of its own");
+        let mut view_own = View { eye: view.eye, view: view.view, proj: view.proj, ..View::framing(&model, 0.0, 0.0) };
+        view_own.object_materials.insert(0, own);
+        let instance = [Instance { model: &model, transform: Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 }];
+        let image = r.draw(&instance, &view_own, 64, 64);
+        let at = (32 * 64 + 32) * 4;
+        assert!(image[at + 1] > 120 && image[at] < 60, "its own, green: {:?}", &image[at..at + 3]);
+        assert_eq!(middle(&r), red, "and another object of the same material is still red");
     }
 
     /// A model's skins and body groups, as an object chooses them: the

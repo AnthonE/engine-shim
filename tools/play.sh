@@ -14,6 +14,9 @@ where=${1:-zoo}; width=${2:-1280}; height=${3:-720}
 export DOTNET_ROOT=${DOTNET_ROOT:-$HOME/.dotnet} PATH=$HOME/.dotnet:$PATH
 
 [ -d "$SANDBOX/.git" ] || git clone -q https://github.com/Facepunch/sandbox "$SANDBOX"
+# Sandbox as it was when the engine at SBOX_PUBLIC_COMMIT was: its newest
+# no longer compiles against that engine (SANDBOX_COMMIT says which)
+git -C "$SANDBOX" checkout -q "$(cat "$ROOT/SANDBOX_COMMIT")" 2>/dev/null || echo "Sandbox isn't at SANDBOX_COMMIT (local changes?): its code may not compile on this engine"
 sh tools/compile.sh "$SBOX/game/core" surface prefab sound decal
 content="$SANDBOX/Assets"
 if [ "$where" = flatgrass ]; then

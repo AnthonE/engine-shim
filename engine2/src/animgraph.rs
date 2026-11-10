@@ -382,11 +382,13 @@ pub fn load(name: &str) -> usize {
     let key = crate::fs::normal(name.trim_end_matches("_c"));
     if key.is_empty() { return 0; }
     if let Some(&g) = loaded().by_name.get(&key) { return g; }
-    let Some(data) = crate::fs::read_compiled(&key).and_then(|b| crate::assets::resource::Resource::parse(b).ok()).and_then(|r| r.kv3("DATA")?.ok()) else {
+    let read_graph = crate::fs::read_compiled(&key).and_then(|b| crate::assets::resource::Resource::parse(b).ok()).and_then(|r| r.kv3("DATA")?.ok()).map(|data| read(&key, &data));
+    // the default player's, which comes only with Facepunch's download: ours (standin.rs)
+    let Some(graph) = read_graph.or_else(|| crate::standin::graph(name)) else {
         crate::trace::note(&format!("animgraph: {name}: no graph to read"));
         return 0;
     };
-    let g: &'static Graph = Box::leak(Box::new(read(&key, &data)));
+    let g: &'static Graph = Box::leak(Box::new(graph));
     let ptr = g as *const Graph as usize;
     let mut l = loaded();
     l.by_name.insert(key, ptr);

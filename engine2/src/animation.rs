@@ -189,6 +189,7 @@ impl Posed {
     /// Play a sequence by name from its start (an unknown name, or none: stop).
     pub fn play(&mut self, name: &str) {
         self.sequence = crate::models::file(self.model).and_then(|f| f.anim.sequences.iter().position(|s| s.name.eq_ignore_ascii_case(name)));
+        if self.sequence.is_none() && !name.is_empty() { crate::trace::asked(&crate::models::name_of(self.model).unwrap_or_default(), "sequence", name); }
         self.cycle = 0.0;
         self.begun = true;
     }
@@ -290,7 +291,9 @@ pub fn parameter(obj: usize, index: usize) -> usize {
 
 pub fn parameter_named(obj: usize, name: &str) -> usize {
     let Some(g) = crate::animgraph::graph(graph_of(obj)) else { return 0 };
-    g.params.iter().position(|p| p.name.to_bytes().eq_ignore_ascii_case(name.as_bytes())).map(|i| parameter(obj, i)).unwrap_or(0)
+    let found = g.params.iter().position(|p| p.name.to_bytes().eq_ignore_ascii_case(name.as_bytes()));
+    if found.is_none() { crate::trace::asked(&g.name.to_string_lossy(), "parameter", name); }
+    found.map(|i| parameter(obj, i)).unwrap_or(0)
 }
 
 /// A parameter object's graph parameter, and its value on its object (set with `set`).

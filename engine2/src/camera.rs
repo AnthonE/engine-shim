@@ -130,6 +130,35 @@ pub fn material_texture(m: usize, name: &str) -> Option<usize> {
     MATERIAL_TEXTURES.lock().unwrap().as_ref()?.get(&m)?.get(name).copied()
 }
 
+/// Values managed set on a material by parameter name (Material.Set with a
+/// number, a vector or a colour: Grubs' charge gauge sets how far it's
+/// filled), and how many times any has been set. A shader graph's material
+/// reads them over its own (render: `set_graph_values`), by the material's
+/// name: a copy of a material shares its name, so shares them.
+static MATERIAL_VALUES: Mutex<Option<HashMap<usize, HashMap<String, [f32; 4]>>>> = Mutex::new(None);
+static MATERIAL_VALUES_SET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn set_material_value(m: usize, name: &str, v: [f32; 4]) {
+    MATERIAL_VALUES.lock().unwrap().get_or_insert_with(Default::default).entry(m).or_default().insert(name.to_ascii_lowercase(), v);
+    MATERIAL_VALUES_SET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn material_value(m: usize, name: &str) -> Option<[f32; 4]> {
+    MATERIAL_VALUES.lock().unwrap().as_ref()?.get(&m)?.get(&name.to_ascii_lowercase()).copied()
+}
+
+/// Every value set on a material, by the material's name (as files name
+/// it) and the parameter's in lower case; and how many sets there have been.
+pub fn material_values() -> (u64, HashMap<String, HashMap<String, [f32; 4]>>) {
+    let set = MATERIAL_VALUES_SET.load(std::sync::atomic::Ordering::Relaxed);
+    let values = MATERIAL_VALUES.lock().unwrap().clone().unwrap_or_default();
+    let mut out: HashMap<String, HashMap<String, [f32; 4]>> = HashMap::new();
+    for (m, v) in values {
+        if let Some(name) = material_name(m) { out.entry(crate::fs::normal(&name)).or_default().extend(v); }
+    }
+    (set, out)
+}
+
 /// Textures by name, each one object (as materials are).
 static TEXTURES: Mutex<Option<(HashMap<String, usize>, HashMap<usize, String>)>> = Mutex::new(None);
 
@@ -344,7 +373,12 @@ mod draw {
         let m = M.get_or_init(Default::default);
         let key = crate::fs::normal(name);
         if let Some(g) = m.lock().unwrap().get(&key) { return g.clone(); }
-        let g = r.model(&EngineFiles, name).map_err(|e| crate::trace::note(&format!("render: {e}"))).ok().map(Arc::new);
+        // a file's, or (the default player's, with no file) the stand-in's meshes
+        let drawn = r.model(&EngineFiles, name).or_else(|e| match crate::standin::draw_meshes(name) {
+            Some((meshes, default, skins)) => r.model_of(&EngineFiles, name, &meshes, default, &skins),
+            None => Err(e),
+        });
+        let g = drawn.map_err(|e| crate::trace::note(&format!("render: {e}"))).ok().map(Arc::new);
         if let Some(g) = &g { for n in &g.notes { crate::trace::note(&format!("render: {n}")); } }
         m.lock().unwrap().insert(key, g.clone());
         g
@@ -365,6 +399,54 @@ mod draw {
         if let Some(g) = &g { for n in &g.notes { crate::trace::note(&format!("render: {n}")); } }
         m.lock().unwrap().insert(model, (version, g.clone()));
         g
+    }
+
+    /// Each object's graph materials as its own attributes make them, made
+    /// again only when what it was given (or a texture among it) changes.
+    fn object_materials(r: &Renderer, placed: &[(Arc<Model>, Mat4, [f32; 4], Vec<Mat4>, bool, Option<u64>, usize)], with: &[(usize, usize)]) -> HashMap<usize, Arc<HashMap<String, wgpu::BindGroup>>> {
+        use crate::gpu::Val;
+        use std::hash::{Hash, Hasher};
+        type Kept = HashMap<usize, (u64, Option<Arc<HashMap<String, wgpu::BindGroup>>>)>;
+        static KEPT: OnceLock<Mutex<Kept>> = OnceLock::new();
+        let mut kept = KEPT.get_or_init(Default::default).lock().unwrap();
+        let mut out = HashMap::new();
+        for &(k, obj) in with {
+            let Some(values) = crate::gpu::object_values(obj) else { continue };
+            let mut numbers: HashMap<u32, [f32; 4]> = HashMap::new();
+            let mut textures: HashMap<u32, usize> = HashMap::new();
+            for (key, v) in &values {
+                match v {
+                    Val::Float(f) => { numbers.insert(*key, [*f, 0.0, 0.0, 0.0]); }
+                    Val::Vec2(v) => { numbers.insert(*key, [v[0], v[1], 0.0, 0.0]); }
+                    Val::Vec3(v) => { numbers.insert(*key, [v[0], v[1], v[2], 0.0]); }
+                    Val::Vec4(v) => { numbers.insert(*key, *v); }
+                    Val::Int(i) => { numbers.insert(*key, [*i as f32, 0.0, 0.0, 0.0]); }
+                    Val::Bool(b) => { numbers.insert(*key, [*b as i32 as f32, 0.0, 0.0, 0.0]); }
+                    Val::Texture(t) => { textures.insert(*key, *t); }
+                    _ => {}
+                }
+            }
+            // what it was given, and each texture as it is now, as one number
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (Arc::as_ptr(&placed[k].0) as usize).hash(&mut h);
+            let mut keys: Vec<_> = numbers.iter().map(|(k, v)| (*k, v.map(f32::to_bits))).collect();
+            keys.sort();
+            keys.hash(&mut h);
+            let mut texs: Vec<_> = textures.iter().map(|(k, t)| (*k, *t, crate::gpu::texture_version(*t))).collect();
+            texs.sort();
+            texs.hash(&mut h);
+            let key = h.finish();
+            let groups = match kept.get(&obj) {
+                Some((was, groups)) if *was == key => groups.clone(),
+                _ => {
+                    let groups = r.object_materials(&placed[k].0, &numbers, &textures);
+                    kept.insert(obj, (key, groups.clone()));
+                    groups
+                }
+            };
+            if let Some(g) = groups { out.insert(k, g); }
+        }
+        out
     }
 
     fn mat(x: &crate::animation::Xf) -> Mat4 {
@@ -568,6 +650,8 @@ mod draw {
         );
         // what's in its worlds and shown: each object's model, where, how tinted
         let mut placed: Vec<(Arc<Model>, Mat4, [f32; 4], Vec<Mat4>, bool, Option<u64>, usize)> = Vec::new();
+        // the objects among them with attributes of their own, for their graph materials
+        let mut with_attributes: Vec<(usize, usize)> = Vec::new();
         // ENGINE2_FRAME_DUMP: what each frame placed, said with it
         let dump = std::env::var_os("ENGINE2_FRAME_DUMP").is_some();
         let mut described: Vec<String> = Vec::new();
@@ -591,6 +675,7 @@ mod draw {
                 let bones = skin(obj, model);
                 if dump { described.push(format!("{} at {:?} scale {:?}, {} bones posed, bounds {:?}..{:?}, tags [{}]", crate::models::name_of(model).unwrap_or_else(|| "(built)".into()), m.w_axis.truncate(), m.x_axis.truncate().length(), bones.len(), g.min, g.max, super::tag_names(&super::tags(obj)))); }
                 placed.push((g, m, tint, bones, false, super::chosen_mesh_groups(obj), super::skin(obj)));
+                with_attributes.push((placed.len() - 1, obj));
             }
         }
         // the lights in its worlds that a map's lightmaps name, by their bake index
@@ -664,8 +749,16 @@ mod draw {
         let (sprites, lines, custom) = custom_objects(camera, &view, width, height);
         view.sprites = sprites;
         view.lines = lines;
+        // what a game set on an object itself (SceneObject.Attributes), for its graph materials
+        view.object_materials = object_materials(r, &placed, &with_attributes);
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
         crate::trace::mark("gather");
+        // what managed has set on materials since the last frame, for the graphs' materials that read it
+        {
+            static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+            let (set, values) = super::material_values();
+            if SEEN.swap(set, std::sync::atomic::Ordering::Relaxed) != set { r.set_graph_values(&values); }
+        }
         let image = r.draw_into(&instances, &view, width as u32, height as u32, target);
         let mut said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes); {custom}", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
         if dump {

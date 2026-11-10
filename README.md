@@ -382,6 +382,7 @@ adds a watcher. Measured (`grep shimwatch target/spike/server.log`):
 ```sh
 sh tools/compile.sh ../sbox-public/game/core surface prefab sound decal
 git clone https://github.com/Facepunch/sandbox ../sandbox
+git -C ../sandbox checkout "$(cat SANDBOX_COMMIT)"   # Sandbox as of the engine's commit: its newest no longer compiles on it
 sh tools/sandbox.sh ../sandbox
 SBOX=../sbox-public sh spike.sh 120 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
 # once "Server started!" (startup waits a while on sbox.game for what it can't have):
@@ -552,7 +553,8 @@ What the game's components still can't do:
   (their input passes through) and root motion isn't taken out. Nobody
   has compared a pose with Facepunch's engine: a graph runs as its nodes
   are read here. Footsteps, the events a player's walk would fire, are
-  Citizen's, which comes only with Facepunch's closed download.
+  Citizen's, which comes only with Facepunch's closed download: the
+  stand-in's walk fires its own (below).
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
   has none.
 - **Workshop maps.** A map that's only on Steam's workshop needs Steam
@@ -1451,6 +1453,188 @@ with a stand-in for systemd and certbot and run as its unit runs it: as
 row written (`status_url` https on its own host) and `status.json`
 answering on loopback for nginx.
 
+## A game's own shaders: shader graphs
+
+`engine2/src/assets/shadergraph.rs`, `render/graph.rs`, `render/graph.wgsl`.
+s&box compiles a game's shaders with the closed `vfx_vulkan`, so until now
+a material on a shader of the game's own was drawn as `complex`: grey.
+Most of a creator's shaders, though, are made in s&box's graph editor, and
+a graph (`.shdrgrph`) is plain JSON beside the shader it was compiled
+into. The compiler that reads one is open too (sbox-public's
+`game/addons/tools/Code/ShaderGraph`, its nodes in
+`game/editor/ShaderGraph/Code/Nodes`, MIT), and what it writes ends by
+filling in a material and handing it to `ShadingModelStandard::Shade`. So
+a graph needs none of s&box's lighting here:
+
+- **Translated** (`shadergraph.rs`). Each node as `GraphCompiler`
+  compiles it, into WGSL: the same inputs in the same order, the same
+  defaults, the same casts between one and four components. 80 kinds of
+  node: the arithmetic, the vector ones, textures (plain and triplanar,
+  colour and normal), parameters, branches, time, the noises, the blend
+  modes, tile and offset, normals between tangent, object and world
+  space, colour spaces, polar coordinates, and what a pixel knows of
+  itself and its view (position, normal, vertex colour, tint, where it is
+  on the screen, the camera, the sun). Textures and parameters are named as the compiler names
+  them (`g_tColour`, `g_flTiling`, `g_vTint_Colour`, `g_bFogEnabled`; two
+  textures of one name numbered in the order their nodes are reached), so
+  a material's own values for them are found. A graph with a node that
+  isn't translated is refused, and says which. A material that sets none
+  of the textures its graph reads is said too (`graph::unmatched`): it is
+  drawn with the graph's defaults, often plain white, and the cause is a
+  package compiled from an older graph than the one beside it (the sky
+  dome of Facepunch's `sky` package is one).
+- **Lit** (`graph.wgsl`). The material (colour, emission, opacity, a
+  tangent-space normal, roughness, metalness, occlusion) goes to the same
+  `light()` complex's does. Opaque, alpha-tested (`Masked`) and
+  translucent graphs, lit and unlit; a graph that moves its vertices
+  (`PositionOffset`) moves them in a vertex stage of its own. s&box's
+  helpers are ported beside it: `procedural.hlsl`'s noises, the editor's
+  triplanar sampling and blend modes, `normal.hlsl`.
+- **Drawn** (`render/mod.rs`). A material whose shader has a graph beside
+  it (`shaders/x.shdrgrph` for `shaders/x.shader`, in the project's
+  folders) gets the graph's pipeline, made the first time one is read:
+  up to 32 parameters and 16 textures, a sampler that wraps and one that
+  doesn't. Checked as wgpu will check it first (naga), so a graph that
+  translates into nonsense is drawn as complex and said, not a panic.
+  `ENGINE2_GRAPHS=0` turns it off; `ENGINE2_RENDER_TIME` holds the time
+  a graph reads still.
+
+```sh
+cargo test --release -p engine2 graph
+ENGINE2_SAMPLE_GRAPHS=../grubs cargo test --release -p engine2 a_games_graphs -- --nocapture
+ENGINE2_CONTENT=../content-grubs:../grubs/Assets cargo run --release -p render -- ball materials/environment/sand_a.vmat sand.png
+ENGINE2_CONTENT=../content-grubs cargo run --release -p render -- material particles/fire/fire_01.vmat
+```
+
+Measured on Grubs (its repository's 13 graphs, 430 nodes of 43 kinds):
+all 13 translate into WGSL that naga takes, and each names its textures
+and its parameters exactly as s&box's own compiler named them in the
+`.shader` it wrote beside the graph (the test reads both). Of the 142
+materials in Grubs' published package, 23 are on those shaders. On a ball
+(`render ball`), with the graphs off and on: its sand and its rocks go
+from grey to their own layered colours, its teleport from a grey ball to
+rings of light with gaps between, its fire to flames with the ball cut
+away between them, and the magic missile's ball is pushed out of round by
+its graph's vertex offset.
+
+And on everyone's (`ENGINE2_GRAPH_SURVEY`, a test that counts and fails
+nothing): GitHub's search finds 276 shader graphs in public repositories,
+270 of them fetched, from 76 repositories. 202 translate into WGSL naga
+takes, and none translates into WGSL it refuses. For 65 of the 76, every
+graph translates. 51 of the 68 that don't are one repository's, an editor
+extension showing off the nodes it adds (Shader Graph Extras: 1 of its 52
+translates); without it, 201 of 218. What stops the rest, most common
+first: subgraphs (16), post-process graphs (8), cube textures (4), the
+scene's colour behind the surface (3), and nodes extensions add.
+
+In the game (Grubs hosted and joined headless, `tools/grubs/ShimWatch.cs`
+saving the scene's camera every ten seconds): the player's renderer
+translates `gr_foreground_scorch` (11 textures, 9 parameters),
+`gr_foreground` (5, 7) and `gr_skydome` (2, 3) as their materials are
+first read, and the match's terrain, which Grubs builds and carves at
+runtime, is drawn in its sand with the shells in it, against its dark
+rock, where it was flat before.
+
+What isn't there: nobody has put a frame beside s&box's own of the same
+graph, so "as its compiler compiles it" is the code read, not a picture
+compared. A value a game sets on a material from code (`Material.Set` with a
+number, a vector or a colour: Grubs fills its weapon's charge gauge so)
+reaches the graph's parameter of that name, whatever its case, by the
+material's name: a copy of a material shares its name, so shares what's
+set on it. What a game sets on one object (`renderer.Attributes.Set`: a parameter
+or a texture the graph marks as an attribute, or any parameter by its
+full name) is that object's alone: its graph materials get a group of
+their own with those over the material's, made again when what it was
+given, or a texture among it, changes. Grubs tells each chunk of its
+terrain where it's scorched so (a texture its SDF library writes, and
+how to read it). Measured in the game: an explosion under a grub
+(`tools/grubs/ShimWatch.cs`) carves its crater on the server and the
+player, and the player's view has the crater ringed in scorched rock
+where the sand was. A second
+set of texture coordinates reads as the first; mirrored addressing wraps;
+the sun's shadow of a graph that moves its vertices is cast from where
+they were. Subgraphs, cube textures, the scene's colour and depth, screen
+positions and post-process graphs aren't translated. A shader written by
+hand (Grubs' `new_water`, `simple_water`, `triplanar`) is still drawn as
+complex.
+
+## The default player: a stand-in
+
+`engine2/src/standin.rs`. s&box's player (Citizen: its model, its
+animations, its animation graph, its clothing) comes only with Facepunch's
+closed download, under their EULA, and isn't read here. A game built on
+s&box's `PlayerController` or `CitizenAnimationHelper` asks for it by name
+all the same, and until now got a model with no bones: a player with no
+body, no walk and no footsteps. Now those names are answered by a figure
+of our own, made in code and copied from nothing:
+
+- **What it answers.** A model asked for under `models/citizen/` or
+  `models/citizen_human/` whose file isn't there (`PlayerController` loads
+  `models/citizen_human/human.vmdl`; Sandbox's player
+  `citizen_human_male.vmdl`), and a graph asked for there. A game that
+  ships its own model at one of those paths gets its own:
+  the stand-in answers only after the read fails. `ENGINE2_STANDIN=0`
+  turns it off.
+- **The model.** A jointed mannequin of 25 ellipsoids on 22 bones, 70
+  units tall, its eyes at 64 (where s&box's player looks from). Its bones
+  carry the names games ask for by name (`pelvis`, `head`, `hand_L`,
+  `hand_R`... measured in sbox-public's and Sandbox's C#), its attachments
+  too (`eyes`, `hand_R`, `foot_L`...), with 15 capsule hitboxes (one
+  tagged `head`) and three plain materials (`materials/standin/*.vmat`,
+  made, not read). One mesh group, no collision of its own (a
+  `PlayerController` has its own capsule), no clothing: `Dresser` finds
+  nothing to dress it in, and it's drawn bare.
+- **Its animations.** Computed from a gait, none recorded: standing,
+  walking and running in four directions, crouched and crouch-walking, in
+  the air, seated, swimming, eight ways to hold something, and bending to
+  look up and down. Every gait's cycle is 0.72 s, so they blend in step;
+  each fires `AE_FOOTSTEP` as a foot lands (`Foot`, `attachment`,
+  `volume`, as `SceneModel.OnAnimationEvent` reads them).
+- **Its graph.** The 41 parameters `CitizenAnimationHelper` and
+  `PlayerController` set, with their kinds and options (`holdtype`'s nine,
+  `move_style`'s three...), on the nodes animgraph.rs already runs: a 2D
+  blend of the gaits on `move_x`/`move_y`, a blend to the crouched ones on
+  `duck`, a state machine for the ground, the air (`b_grounded`,
+  `b_noclip`), a seat (`b_sit`) and water (`b_swim`), a selector on
+  `holdtype` masked to the chest and arms, and `aim_body_pitch` added over
+  it. Not answered yet: the look-at vectors (`aim_eyes`, `aim_head`,
+  `aim_body`), IK targets, `sit`'s poses, `special_movement_states`,
+  hit reactions, `scale_height`, `voice`. They're taken and do nothing.
+
+What it takes from Citizen is names only: paths, parameter names and
+options, bone and attachment names, the interface a game compiles
+against, as the slot table is. Its shape, its motion and its look are its
+own. Whether that's enough to ship it to players is a lawyer's read, not
+this file's.
+
+```sh
+cargo test --release -p engine2 standin
+cargo run --release -p render -- standin standin.png 35 12 512 walk_n 0.25
+```
+
+Measured (`cargo test`): its graph run as animation.rs runs it stands
+with its feet on the ground, walks with its feet passing each other and a
+footstep event each time one lands, crouches 12 units lower with its feet
+still on the ground, tucks its legs off the ground and stands again on
+landing; a pistol brings its right hand out in front at chest height
+without moving its feet, and aiming down and up bends it.
+
+Measured in Sandbox (`tools/sandbox/ShimWatch.cs`'s `Body`, a headless
+player in third person, driven by `WishVelocity`): the model Sandbox's
+player asks for (`models/citizen_human/citizen_human_male.vmdl`) is the
+stand-in's (`22 bones, hand_R True, eyes 64.0 up, hitboxes 15`); Sandbox
+sets its `holdtype` to 8 (the physgun) and its hands come up; told to
+walk it goes at 110 with `move_x 110`, told to run at 320 with `move_x
+320`, its head bobbing between 52 and 59 up as it does, and 62 footsteps
+reach the game's `OnFootstepEvent` in 19 s of walking and running (while
+two gaits blend, each fires its own, so more than two a cycle then);
+stopped, it stands. The scene's camera, behind it, draws it.
+
+Names a game asks a model or a graph for that it doesn't have are said
+once each in the trace (`asked: <whose>: bone|parameter|sequence <name>:
+none`): what the stand-in would still have to answer for that game.
+Sandbox's zoo, hosted and joined as above, asks for none.
+
 ## What a player hears
 
 `engine2/src/audio.rs`. s&box mixes in C# (`Sandbox.Audio.MixingThread`);
@@ -1632,6 +1816,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/publish.sh` | builds staged as the Elo Pros origin serves them: depots, the pointer that makes them live, the manifest |
 | `deploy/` | a game's server on the game box: `install-server.sh`, its systemd unit and settings, nginx's status locations, the certificate hook |
 | `tools/grubs.sh`, `tools/grubs/` | Ape Tavern's Grubs made ready to host here, and a watcher that starts its match |
+| `engine2/src/assets/shadergraph.rs`, `render/graph.rs`, `render/graph.wgsl` | a game's shader graphs: translated to WGSL as s&box's own compiler reads them, and lit as complex is |
+| `engine2/src/standin.rs` | the default player's stand-in: a model, its animations and its graph, made in code, answering the names games ask Citizen for |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
@@ -1646,14 +1832,16 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    credits do (scry-forge `meter/relay.py`).
 3. **Assets.** Models (collision, bones, hitboxes, sequences, key
    values, animation graphs), surfaces and maps are read (above).
-   A client reads materials and textures too; a game's own shaders it
+   A client reads materials and textures too, and a game's own shaders
+   where they were made as graphs (above); one written by hand it
    doesn't (below).
 4. **A client.** It draws with a renderer of our own, on wgpu
    (`engine2/src/render/`): models skinned and posed, maps lit as they were
    baked, the sky, the sun's shadows, the HUD and the UI, in a window, with
    input and sound (above). What's left: particles, decals, shadows from
-   local lights on what moves, a game's own shaders (s&box's UI and HUD
-   shaders are ported to WGSL by hand), the UI's `border-shape` paths,
+   local lights on what moves, a game's hand-written shaders (its graphs
+   are translated; s&box's UI and HUD shaders are ported to WGSL by
+   hand), the UI's `border-shape` paths,
    world panels, reverb; and a frame's cost in a crowd of props on a real
    GPU (above: flatgrass standing still).
 5. **The browser**, after the desktop builds. A game is built for the web
@@ -1672,8 +1860,8 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    Materials, textures and shaders only matter to a client.
 4. **A client.** It plays, in a window (above): models, maps lit as they
    were baked, the UI and HUD, sprites, lines, sound and input, drawn on
-   wgpu from what s&box's public shaders say. Next: decals, local lights'
-   shadows, a game's own shaders.
+   wgpu from what s&box's public shaders say, a game's shader graphs
+   translated. Next: decals, local lights' shadows, a game's subgraphs.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
    download.
 
@@ -1681,7 +1869,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 
 - **Licences beyond the code.** The C# and `.def` files are MIT. Facepunch's
   player models and clothing (Citizen) are under their EULA, as are assets
-  a game pulls from sbox.game's library. A game runs here only with assets
+  a game pulls from sbox.game's library. The stand-in (above) answers
+  Citizen's names with a figure of our own; a lawyer reads that before a
+  build with it goes to players. A game runs here only with assets
   its creator owns, and only with that creator's opt-in.
   `Facepunch.ActionGraphs` (NuGet) declares no licence; ask before bundling it.
 - **The creator's own terms** with Facepunch decide where their game may
@@ -1690,8 +1880,10 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
   (Vulkan, Metal, DX12; WebGPU in a browser), not Bevy or Godot. What's
   open is a game's own shaders: s&box compiles them with the closed
   `vfx_vulkan`, and so far each one drawn here is ported to WGSL by hand.
-  A translator, or a game that brings its shaders as WGSL, is to be
-  decided.
+  A graph-made shader is translated now (above: every one of Grubs' 13).
+  What's open is the shader written by hand: ported to WGSL one at a
+  time, as s&box's own are, or through a translator (DXC to SPIR-V to
+  naga is the thing to try), or a game that brings its own as WGSL.
 - **The renderer.** The client draws with wgpu directly (`render/`), each
   of s&box's public shaders ported as it's met, not on Bevy or Godot.
   Bevy (Rust, MIT/Apache, wasm) would fit a Rust `engine2`; Godot (MIT)

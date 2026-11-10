@@ -104,6 +104,54 @@ fn main() {
         for n in notes { eprintln!("  {n}"); }
         return;
     }
+    // what a material says (its shader, textures and values), for looking into one:
+    //   render material materials/x.vmat [more...]
+    if args.get(1).map(String::as_str) == Some("material") {
+        for name in &args[2..] {
+            match content.compiled(name).ok_or_else(|| format!("{name}: not found")).and_then(|r| engine2::assets::material::read(&r)) {
+                Ok(m) => {
+                    println!("{name}: shader {} (version {})", m.shader, m.shader_version);
+                    let mut rows: Vec<String> = m.textures.iter().map(|(k, v)| format!("  texture {k} = {v}")).collect();
+                    rows.extend(m.ints.iter().map(|(k, v)| format!("  int {k} = {v}")));
+                    rows.extend(m.floats.iter().map(|(k, v)| format!("  float {k} = {v}")));
+                    rows.extend(m.vectors.iter().map(|(k, v)| format!("  vector {k} = {v:?}")));
+                    rows.sort();
+                    for r in rows { println!("{r}"); }
+                }
+                Err(e) => println!("{e}"),
+            }
+        }
+        return;
+    }
+    // a material on a ball, for looking at one (a shader graph's, say):
+    //   render ball materials/x.vmat out.png [yaw pitch size]
+    if args.get(1).map(String::as_str) == Some("ball") {
+        let (Some(material), Some(out)) = (args.get(2), args.get(3)) else { usage() };
+        let m = r.model_of(&content, "a ball", &[ball(material, 32.0)], 1, &[]).unwrap_or_else(|e| fail(&e));
+        for n in &m.notes { eprintln!("{n}"); }
+        let instance = [Instance { model: &m, transform: Default::default(), tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 }];
+        let view = { let mut v = View::framing(&m, num(4, 35.0), num(5, 20.0)); tone(&mut v); v };
+        let size = num(6, 512.0) as u32;
+        let pixels = r.draw(&instance, &view, size, size);
+        png(std::path::Path::new(out), size, size, &pixels).unwrap_or_else(|e| fail(&e));
+        return;
+    }
+    // the default player's stand-in (engine2/src/standin.rs), in one of its sequences:
+    //   render standin out.png [yaw pitch size] [sequence] [cycle]
+    if args.get(1).map(String::as_str) == Some("standin") {
+        let Some(out) = args.get(2) else { usage() };
+        let name = "models/citizen/citizen.vmdl";
+        let (meshes, default, skins) = engine2::standin::draw_meshes(name).unwrap_or_else(|| fail("the stand-in is off"));
+        let m = r.model_of(&content, name, &meshes, default, &skins).unwrap_or_else(|e| fail(&e));
+        let sequence = args.get(6).map(String::as_str).unwrap_or("idle");
+        let bones = engine2::standin::skin_at(sequence, num(7, 0.0)).unwrap_or_else(|| fail(&format!("no sequence {sequence}: {}", engine2::standin::sequences().join(" "))));
+        let instance = [Instance { model: &m, transform: Default::default(), tint: [1.0; 4], bones, lightmapped: false, origin: None, mask: None, skin: 0 }];
+        let view = { let mut v = View::framing(&m, num(3, 35.0), num(4, 20.0)); tone(&mut v); v };
+        let size = num(5, 512.0) as u32;
+        let pixels = r.draw(&instance, &view, size, size);
+        png(std::path::Path::new(out), size, size, &pixels).unwrap_or_else(|e| fail(&e));
+        return;
+    }
     let (Some(model), Some(out)) = (args.get(1), args.get(2)) else { usage() };
     let m = r.model(&content, model).unwrap_or_else(|e| fail(&e));
     let loaded = t.elapsed();
@@ -125,6 +173,41 @@ fn lump(content: &Content, folder: &str) -> Vec<entities::Entity> {
         .and_then(|r| r.kv3("DATA")?.ok())
         .map(|d: Value| entities::read_lump(&d))
         .unwrap_or_default()
+}
+
+/// A ball of one material: positions, normals and coordinates that go
+/// twice around it.
+fn ball(material: &str, radius: f32) -> engine2::assets::mesh::Mesh {
+    use engine2::assets::mesh::{Attribute, Buffers, Draw, IndexBuffer, Mesh, VertexBuffer};
+    let (rings, segments) = (32usize, 64usize);
+    let mut data = Vec::new();
+    for ring in 0..=rings {
+        let lat = std::f32::consts::PI * ring as f32 / rings as f32;
+        for segment in 0..=segments {
+            let lon = std::f32::consts::TAU * segment as f32 / segments as f32;
+            let n = [lat.sin() * lon.cos(), lat.sin() * lon.sin(), lat.cos()];
+            for f in n.map(|c| c * radius).into_iter().chain(n).chain([2.0 * segment as f32 / segments as f32, ring as f32 / rings as f32]) { data.extend_from_slice(&f.to_le_bytes()); }
+        }
+    }
+    let row = (segments + 1) as u32;
+    let mut indices = Vec::new();
+    for ring in 0..rings as u32 {
+        for segment in 0..segments as u32 {
+            let (a, b) = (ring * row + segment, (ring + 1) * row + segment);
+            indices.extend_from_slice(&[a, b, a + 1, a + 1, b, b + 1]);
+        }
+    }
+    let attribute = |name: &str, format: u32, offset: usize| Attribute { name: name.to_string(), index: 0, format, offset };
+    Mesh {
+        draws: vec![Draw { material: material.to_string(), vertex_buffer: 0, index_buffer: 0, base_vertex: 0, start_index: 0, index_count: indices.len(), tint: [1.0; 3] }],
+        buffers: Buffers {
+            // DXGI's R32G32B32_FLOAT (6) and R32G32_FLOAT (16)
+            vertices: vec![VertexBuffer { count: (rings + 1) * (segments + 1), stride: 32, attributes: vec![attribute("POSITION", 6, 0), attribute("NORMAL", 6, 12), attribute("TEXCOORD", 16, 24)], data }],
+            indices: vec![IndexBuffer { count: indices.len(), size: 4, data: indices.iter().flat_map(|i| i.to_le_bytes()).collect() }],
+        },
+        bones: Vec::new(),
+        group_mask: 1,
+    }
 }
 
 fn usage() -> ! {
