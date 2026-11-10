@@ -3088,8 +3088,8 @@ unsafe extern "C" fn s1705(_a0: usize, _a1: S_Sandbox_StringToken) -> usize { hi
 unsafe extern "C" fn s1706(_a0: usize, _a1: usize) -> i32 { hit(1706); unsafe { core::mem::zeroed() } }
 unsafe extern "C" fn s1707(_a0: usize, _a1: usize, _a2: usize) { hit(1707);  }
 unsafe extern "C" fn s1708(_a0: usize, _a1: usize, _a2: usize) -> usize { hit(1708); unsafe { crate::impls::IMaterial2_GetString(_a0, _a1, _a2) } }
-unsafe extern "C" fn s1709(_a0: usize, _a1: usize, _a2: usize) { hit(1709);  }
-unsafe extern "C" fn s1710(_a0: usize, _a1: usize) -> S_Vector4 { hit(1710); unsafe { core::mem::zeroed() } }
+unsafe extern "C" fn s1709(_a0: usize, _a1: usize, _a2: usize) { hit(1709); unsafe { crate::impls::IMaterial2_Set_1(_a0, _a1, _a2) } }
+unsafe extern "C" fn s1710(_a0: usize, _a1: usize) -> S_Vector4 { hit(1710); unsafe { crate::impls::IMaterial2_GetVector4(_a0, _a1) } }
 unsafe extern "C" fn s1711(_a0: usize, _a1: usize, _a2: usize) { hit(1711); unsafe { crate::impls::IMaterial2_Set_2(_a0, _a1, _a2) } }
 unsafe extern "C" fn s1712(_a0: usize, _a1: usize) -> usize { hit(1712); unsafe { crate::impls::IMaterial2_GetTexture(_a0, _a1) } }
 unsafe extern "C" fn s1713(_a0: usize, _a1: i32) { hit(1713);  }

@@ -120,6 +120,16 @@ struct Graphs {
     pipelines: Vec<wgpu::RenderPipeline>,
 }
 
+/// A graph's material as it was read: its parameters' buffer, what the
+/// graph reads, and the values as the file (or the graph) gives them and as
+/// they were last written.
+struct GraphMaterial {
+    buffer: wgpu::Buffer,
+    params: Vec<crate::assets::shadergraph::Param>,
+    file: [[f32; 4]; crate::assets::shadergraph::MAX_PARAMS],
+    written: [[f32; 4]; crate::assets::shadergraph::MAX_PARAMS],
+}
+
 /// A vertex as every model's pipeline takes it (Vertex).
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4, 5 => Uint32x4, 6 => Float32x4, 7 => Float32x2];
 
@@ -250,6 +260,9 @@ pub struct Renderer {
     graph_layout: wgpu::BindGroupLayout,
     graph_pipeline_layout: wgpu::PipelineLayout,
     graphs: Mutex<Graphs>,
+    /// each graph material's parameters where the GPU reads them, by the
+    /// material's name: written again when managed sets one (set_graph_values)
+    graph_materials: Mutex<HashMap<String, GraphMaterial>>,
     /// when it was made: the time a graph's shader reads
     started: std::time::Instant,
     /// for a material without a texture: white (a colour, occlusion, a
@@ -431,7 +444,7 @@ impl Renderer {
         let ui = ui::Ui::new(&device, &queue);
         let sprites = sprites::Sprites::new(&device, &queue);
         let lines = lines::Lines::new(&device, &queue);
-        Ok(Renderer { instance, ui, sprites, lines, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), window_exposure: Default::default(), window_targets: Default::default(), shadow_maps: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), graph_layout, graph_pipeline_layout, graphs: Default::default(), started: std::time::Instant::now(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
+        Ok(Renderer { instance, ui, sprites, lines, gpu: adapter, tonemap_shader, tonemap_pipelines: Default::default(), window_exposure: Default::default(), window_targets: Default::default(), shadow_maps: Default::default(), tonemap_layout, empty, shadow_pipeline, uniform_layout, compare_sampler, blend_pipeline, glass_pipeline, cheap_glass_pipeline, glass_view_layout, glass_layout, none, bc, textures: Default::default(), materials: Default::default(), graph_layout, graph_pipeline_layout, graphs: Default::default(), graph_materials: Default::default(), started: std::time::Instant::now(), skies: Default::default(), sky_pipeline, sky_layout, lighting_layout, unlit, clamp, device, queue, pipeline, cutout_pipeline, view_layout, material_layout, object_layout, sampler, white, flat, rma, none2d, adapter: format!("{} ({:?}, {} samples a pixel)", info.name, info.backend, samples()) })
     }
 
     /// A texture by name, every mip the file holds, on the GPU.
@@ -679,7 +692,8 @@ impl Renderer {
                 None => self.solid(t.default),
             }
         }).collect();
-        let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(name), contents: bytemuck::cast_slice(&values), usage: wgpu::BufferUsages::UNIFORM });
+        let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(name), contents: bytemuck::cast_slice(&values), usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST });
+        self.graph_materials.lock().unwrap().insert(crate::fs::normal(name), GraphMaterial { buffer: buffer.clone(), params: graph.params.clone(), file: values, written: values });
         let mut entries = vec![
             wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
@@ -689,6 +703,28 @@ impl Renderer {
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(name), layout: &self.graph_layout, entries: &entries });
         let blend = match graph.blend { Blend::Opaque => 0, Blend::Masked => 1, Blend::Translucent => 2 };
         (group, Some(Kind::Graph { shader: index, blend }))
+    }
+
+    /// What the game has set on materials by parameter name (Material.Set),
+    /// by material name and the parameter's in lower case: each graph
+    /// material's parameters are those over its file's, written to the GPU
+    /// where they've changed. A parameter is found whatever its case
+    /// (Grubs sets `g_flfadeamount`; the graph names it `g_flFadeAmount`).
+    pub fn set_graph_values(&self, set: &HashMap<String, HashMap<String, [f32; 4]>>) {
+        for (name, m) in self.graph_materials.lock().unwrap().iter_mut() {
+            let mut values = m.file;
+            if let Some(given) = set.get(name) {
+                for (k, p) in m.params.iter().enumerate().take(values.len()) {
+                    if let Some(v) = given.get(&p.name.to_ascii_lowercase()) {
+                        values[k] = if p.components <= 1 { [v[0], 0.0, 0.0, 0.0] } else { *v };
+                    }
+                }
+            }
+            if values != m.written {
+                self.queue.write_buffer(&m.buffer, 0, bytemuck::cast_slice(&values));
+                m.written = values;
+            }
+        }
     }
 
     /// One colour as a texture: what a graph's texture is when its material names none.
@@ -1710,6 +1746,56 @@ mod tests {
 
     fn differ(a: &[u8], b: &[u8]) -> usize {
         a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(a, b)| a[..3].iter().zip(&b[..3]).any(|(x, y)| x.abs_diff(*y) > 8)).count()
+    }
+
+    /// A value the game sets on a graph's material by name (Material.Set)
+    /// reaches the shader: the same ball, drawn again, is another colour.
+    #[test]
+    fn a_value_set_on_a_graphs_material_changes_what_is_drawn() {
+        use super::*;
+        use wgpu::util::DeviceExt;
+        struct Graph;
+        impl Files for Graph {
+            fn read(&self, path: &str) -> Option<Vec<u8>> {
+                (path == "shaders/tinted.shdrgrph").then(|| br#"{"BlendMode": "Opaque", "ShadingModel": "Unlit", "nodes": [
+                    {"_class": "Result", "Identifier": "0", "Albedo": {"Identifier": "1", "Output": "Result"}},
+                    {"_class": "Float4", "Identifier": "1", "Name": "Fill Colour", "Value": "1,0,0,1"}]}"#.to_vec())
+            }
+        }
+        let Ok(r) = Renderer::new() else { return };
+        let mut notes = Vec::new();
+        let (index, graph) = r.graph(&Graph, "shaders/tinted.shader", &mut notes).expect("the graph translates");
+        let m = material::Material { name: "materials/gauge.vmat".into(), shader: "shaders/tinted.shader".into(), ..Default::default() };
+        let (group, kind) = r.graph_material(&Graph, "materials/gauge.vmat", &m, index, &graph, &mut notes);
+        assert_eq!(kind, Some(Kind::Graph { shader: index, blend: 0 }));
+        // a square facing the camera, of that material
+        let quad: Vec<Vertex> = [[-40.0, -40.0], [40.0, -40.0], [40.0, 40.0], [-40.0, 40.0]].iter().map(|p| Vertex {
+            position: [0.0, p[0], p[1]], normal: [-1.0, 0.0, 0.0], uv: [0.0, 0.0], blend: [0.0; 4], paint: [1.0; 4], bones: [0; 4], weights: [0.0; 4], lightmap: [0.0; 2] }).collect();
+        let model = Model {
+            meshes: vec![GpuMesh {
+                vertices: vec![r.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&quad), usage: wgpu::BufferUsages::VERTEX })],
+                indices: vec![r.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&[0u32, 1, 2, 0, 2, 3]), usage: wgpu::BufferUsages::INDEX })],
+                draws: vec![GpuDraw { vertex_buffer: 0, index_buffer: 0, range: 0..6, base_vertex: 0, material: group, kind: kind.unwrap(), skins: Vec::new() }],
+                group_mask: 1,
+            }],
+            default_mask: 1, min: Vec3::new(0.0, -40.0, -40.0), max: Vec3::new(0.0, 40.0, 40.0), notes: Vec::new(), lightmap_uv: false,
+        };
+        let view = View { eye: Vec3::new(-100.0, 0.0, 0.0), view: Mat4::look_at_rh(Vec3::new(-100.0, 0.0, 0.0), Vec3::ZERO, Vec3::Z), proj: Mat4::perspective_rh(1.0, 1.0, 1.0, 1000.0), ..View::framing(&model, 0.0, 0.0) };
+        let middle = |r: &Renderer| {
+            let instance = [Instance { model: &model, transform: Mat4::IDENTITY, tint: [1.0; 4], bones: Vec::new(), lightmapped: false, origin: None, mask: None, skin: 0 }];
+            let image = r.draw(&instance, &view, 64, 64);
+            let at = (32 * 64 + 32) * 4;
+            [image[at], image[at + 1], image[at + 2]]
+        };
+        let red = middle(&r);
+        assert!(red[0] > 150 && red[1] < 60 && red[2] < 60, "its own colour, red: {red:?}");
+        // set as Grubs sets its gauge's: the name in lower case
+        r.set_graph_values(&HashMap::from([("materials/gauge.vmat".to_string(), HashMap::from([("g_vfillcolour".to_string(), [0.0, 0.0, 1.0, 1.0])]))]));
+        let blue = middle(&r);
+        assert!(blue[2] > 150 && blue[0] < 60, "set to blue: {blue:?}");
+        // and with nothing set any more, its own again
+        r.set_graph_values(&HashMap::new());
+        assert_eq!(middle(&r), red);
     }
 
     /// A model's skins and body groups, as an object chooses them: the

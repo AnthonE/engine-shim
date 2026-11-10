@@ -130,6 +130,35 @@ pub fn material_texture(m: usize, name: &str) -> Option<usize> {
     MATERIAL_TEXTURES.lock().unwrap().as_ref()?.get(&m)?.get(name).copied()
 }
 
+/// Values managed set on a material by parameter name (Material.Set with a
+/// number, a vector or a colour: Grubs' charge gauge sets how far it's
+/// filled), and how many times any has been set. A shader graph's material
+/// reads them over its own (render: `set_graph_values`), by the material's
+/// name: a copy of a material shares its name, so shares them.
+static MATERIAL_VALUES: Mutex<Option<HashMap<usize, HashMap<String, [f32; 4]>>>> = Mutex::new(None);
+static MATERIAL_VALUES_SET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn set_material_value(m: usize, name: &str, v: [f32; 4]) {
+    MATERIAL_VALUES.lock().unwrap().get_or_insert_with(Default::default).entry(m).or_default().insert(name.to_ascii_lowercase(), v);
+    MATERIAL_VALUES_SET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn material_value(m: usize, name: &str) -> Option<[f32; 4]> {
+    MATERIAL_VALUES.lock().unwrap().as_ref()?.get(&m)?.get(&name.to_ascii_lowercase()).copied()
+}
+
+/// Every value set on a material, by the material's name (as files name
+/// it) and the parameter's in lower case; and how many sets there have been.
+pub fn material_values() -> (u64, HashMap<String, HashMap<String, [f32; 4]>>) {
+    let set = MATERIAL_VALUES_SET.load(std::sync::atomic::Ordering::Relaxed);
+    let values = MATERIAL_VALUES.lock().unwrap().clone().unwrap_or_default();
+    let mut out: HashMap<String, HashMap<String, [f32; 4]>> = HashMap::new();
+    for (m, v) in values {
+        if let Some(name) = material_name(m) { out.entry(crate::fs::normal(&name)).or_default().extend(v); }
+    }
+    (set, out)
+}
+
 /// Textures by name, each one object (as materials are).
 static TEXTURES: Mutex<Option<(HashMap<String, usize>, HashMap<usize, String>)>> = Mutex::new(None);
 
@@ -671,6 +700,12 @@ mod draw {
         view.lines = lines;
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
         crate::trace::mark("gather");
+        // what managed has set on materials since the last frame, for the graphs' materials that read it
+        {
+            static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+            let (set, values) = super::material_values();
+            if SEEN.swap(set, std::sync::atomic::Ordering::Relaxed) != set { r.set_graph_values(&values); }
+        }
         let image = r.draw_into(&instances, &view, width as u32, height as u32, target);
         let mut said = format!("render: camera at {:?}, {} objects ({world_objects} the map's) into {width}x{height}; sun {:?}, sky {}, lightmaps {} ({} baked lights, {} probe volumes); {custom}", view.eye, instances.len(), view.sun, view.sky.is_some(), view.lightmaps.is_some(), baked.len(), view.probes.len());
         if dump {

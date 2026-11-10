@@ -1522,8 +1522,13 @@ rock, where it was flat before.
 
 What isn't there: nobody has put a frame beside s&box's own of the same
 graph, so "as its compiler compiles it" is the code read, not a picture
-compared. Parameters and textures a game sets from code at run time
-(`IsAttribute`: Grubs' weapon charge gauge) read their defaults. A second
+compared. A value a game sets on a material from code (`Material.Set` with a
+number, a vector or a colour: Grubs fills its weapon's charge gauge so)
+reaches the graph's parameter of that name, whatever its case, by the
+material's name: a copy of a material shares its name, so shares what's
+set on it. What a game sets on one object (`renderer.Attributes.Set`, an
+`IsAttribute` parameter or texture: the mask of where Grubs' terrain is
+scorched) isn't carried yet, and reads its default. A second
 set of texture coordinates reads as the first; mirrored addressing wraps;
 the sun's shadow of a graph that moves its vertices is cast from where
 they were. Subgraphs, cube textures, the scene's colour and depth, screen
@@ -1835,7 +1840,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    were baked, the UI and HUD, sprites, lines, sound and input, drawn on
    wgpu from what s&box's public shaders say, a game's shader graphs
    translated. Next: decals, local lights' shadows, what a game sets on
-   its graphs from code.
+   one object's graph material from code.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
    download.
 

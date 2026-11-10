@@ -2855,6 +2855,17 @@ pub unsafe fn g_pMtrlSystm2_CreateRawMaterial(name: usize, shader: usize, _anony
 }
 /// A material copied (Material.CreateCopy: a line's default material).
 pub unsafe fn g_pMtrlSystm2_CreateProceduralMaterialCopy(src: usize, _flags: i32, _anonymous: i32) -> usize { crate::camera::copy_material(src) }
+/// A number, a vector or a colour set on a material by its parameter's name
+/// (Material.Set: managed sends each as four floats), and read back.
+pub unsafe fn IMaterial2_Set_1(m: usize, name: usize, v: usize) {
+    if v == 0 { return; }
+    let q = unsafe { core::ptr::read_unaligned(v as *const S_Vector4) }.f__vec;
+    crate::camera::set_material_value(m, &unsafe { read(name) }, [q.f_X, q.f_Y, q.f_Z, q.f_W]);
+}
+pub unsafe fn IMaterial2_GetVector4(m: usize, name: usize) -> S_Vector4 {
+    let [x, y, z, w] = crate::camera::material_value(m, &unsafe { read(name) }).unwrap_or_default();
+    S_Vector4 { f__vec: crate::slots::S_System_Numerics_Vector4 { f_X: x, f_Y: y, f_Z: z, f_W: w } }
+}
 /// A texture set on a material by its parameter's name (Material.Set).
 pub unsafe fn IMaterial2_Set_2(m: usize, name: usize, t: usize) { crate::camera::set_material_texture(m, &unsafe { read(name) }, t) }
 /// A texture a material was given by name; one it wasn't is still a texture
