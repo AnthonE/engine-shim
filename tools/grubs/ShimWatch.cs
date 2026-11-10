@@ -1,4 +1,5 @@
 using Grubs;
+using Grubs.Helpers;
 using Grubs.Systems.GameMode;
 using Grubs.Systems.Pawn;
 using Sandbox.Sdf;
@@ -22,6 +23,8 @@ public sealed class ShimWatch : Component
 
 	int _carved = -1;
 	int _views;
+	int _playing;
+	bool _blown;
 
 	// what a player sees, every ten seconds: the scene's camera drawn into a
 	// bitmap and saved (the terrain's and the effects' materials are the
@@ -67,6 +70,21 @@ public sealed class ShimWatch : Component
 			ffa.Start();
 			Log.Info( $"shimwatch: started, as SANDBOX does, with {players.Count} players: state {ffa.State}" );
 			return;
+		}
+
+		// once, ten seconds into the match: an explosion under the first grub,
+		// as a weapon's would be: a crater, and the scorch around it (the
+		// terrain's chunks are told where through their renderers' attributes)
+		if ( !_blown && ffa.State == FreeForAllState.Playing && ++_playing == 5 )
+		{
+			var grub = players.SelectMany( p => p.Grubs ).FirstOrDefault( g => g.IsValid() );
+			if ( grub.IsValid() )
+			{
+				_blown = true;
+				var at = grub.WorldPosition + Vector3.Right * 40f - Vector3.Up * 24f;
+				ExplosionHelper.Instance.Explode( this, at, 96f, 0f, Guid.Empty, "shimwatch" );
+				Log.Info( $"shimwatch: an explosion at {at.x:0},{at.y:0},{at.z:0}" );
+			}
 		}
 
 		var grubs = players.SelectMany( p => p.Grubs.Where( g => g.IsValid() ).Select( g =>

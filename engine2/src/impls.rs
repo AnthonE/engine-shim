@@ -487,6 +487,11 @@ pub unsafe fn RndrPplnTls_GetTargetHeight(v: usize, _target: usize) -> i32 { gpu
 
 pub unsafe fn RenderTools_SetRenderState(ctx: usize, attrs: usize, mode: usize, _layout: usize, _stats: usize) -> i32 { gpu::set_state(ctx, attrs, mode) as i32 }
 pub unsafe fn IRenderContext_GetAttributesPtrForModify(_ctx: usize) -> usize { gpu::new_attrs() }
+/// A scene object's own attributes (SceneObject.Attributes): one set per
+/// object, kept, so what a game sets on it is there when it's drawn.
+pub unsafe fn CSceneObject_GetAttributesPtrForModify(obj: usize) -> usize { gpu::object_attrs(obj) }
+pub unsafe fn CScnnmtblbjct_GetAttributesPtrForModify(obj: usize) -> usize { gpu::object_attrs(obj) }
+pub unsafe fn CDynmcScnbjct_GetAttributesPtrForModify(obj: usize) -> usize { gpu::object_attrs(obj) }
 pub unsafe fn IRenderContext_BindIndexBuffer(ctx: usize, b: usize, offset: i32) -> i32 { gpu::with_context(ctx, |c| c.index_buffer = Some((b, 2, offset))); 1 }
 pub unsafe fn IRenderContext_BindIndexBuffer_1(ctx: usize, b: usize, size: i32, offset: i32) -> i32 { gpu::with_context(ctx, |c| c.index_buffer = Some((b, size, offset))); 1 }
 pub unsafe fn IRenderContext_SetScissorRect(ctx: usize, rect: usize) {

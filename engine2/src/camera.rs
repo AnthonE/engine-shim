@@ -401,6 +401,54 @@ mod draw {
         g
     }
 
+    /// Each object's graph materials as its own attributes make them, made
+    /// again only when what it was given (or a texture among it) changes.
+    fn object_materials(r: &Renderer, placed: &[(Arc<Model>, Mat4, [f32; 4], Vec<Mat4>, bool, Option<u64>, usize)], with: &[(usize, usize)]) -> HashMap<usize, Arc<HashMap<String, wgpu::BindGroup>>> {
+        use crate::gpu::Val;
+        use std::hash::{Hash, Hasher};
+        type Kept = HashMap<usize, (u64, Option<Arc<HashMap<String, wgpu::BindGroup>>>)>;
+        static KEPT: OnceLock<Mutex<Kept>> = OnceLock::new();
+        let mut kept = KEPT.get_or_init(Default::default).lock().unwrap();
+        let mut out = HashMap::new();
+        for &(k, obj) in with {
+            let Some(values) = crate::gpu::object_values(obj) else { continue };
+            let mut numbers: HashMap<u32, [f32; 4]> = HashMap::new();
+            let mut textures: HashMap<u32, usize> = HashMap::new();
+            for (key, v) in &values {
+                match v {
+                    Val::Float(f) => { numbers.insert(*key, [*f, 0.0, 0.0, 0.0]); }
+                    Val::Vec2(v) => { numbers.insert(*key, [v[0], v[1], 0.0, 0.0]); }
+                    Val::Vec3(v) => { numbers.insert(*key, [v[0], v[1], v[2], 0.0]); }
+                    Val::Vec4(v) => { numbers.insert(*key, *v); }
+                    Val::Int(i) => { numbers.insert(*key, [*i as f32, 0.0, 0.0, 0.0]); }
+                    Val::Bool(b) => { numbers.insert(*key, [*b as i32 as f32, 0.0, 0.0, 0.0]); }
+                    Val::Texture(t) => { textures.insert(*key, *t); }
+                    _ => {}
+                }
+            }
+            // what it was given, and each texture as it is now, as one number
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (Arc::as_ptr(&placed[k].0) as usize).hash(&mut h);
+            let mut keys: Vec<_> = numbers.iter().map(|(k, v)| (*k, v.map(f32::to_bits))).collect();
+            keys.sort();
+            keys.hash(&mut h);
+            let mut texs: Vec<_> = textures.iter().map(|(k, t)| (*k, *t, crate::gpu::texture_version(*t))).collect();
+            texs.sort();
+            texs.hash(&mut h);
+            let key = h.finish();
+            let groups = match kept.get(&obj) {
+                Some((was, groups)) if *was == key => groups.clone(),
+                _ => {
+                    let groups = r.object_materials(&placed[k].0, &numbers, &textures);
+                    kept.insert(obj, (key, groups.clone()));
+                    groups
+                }
+            };
+            if let Some(g) = groups { out.insert(k, g); }
+        }
+        out
+    }
+
     fn mat(x: &crate::animation::Xf) -> Mat4 {
         Mat4::from_scale_rotation_translation(
             Vec3::new(x.scale.x, x.scale.y, x.scale.z),
@@ -602,6 +650,8 @@ mod draw {
         );
         // what's in its worlds and shown: each object's model, where, how tinted
         let mut placed: Vec<(Arc<Model>, Mat4, [f32; 4], Vec<Mat4>, bool, Option<u64>, usize)> = Vec::new();
+        // the objects among them with attributes of their own, for their graph materials
+        let mut with_attributes: Vec<(usize, usize)> = Vec::new();
         // ENGINE2_FRAME_DUMP: what each frame placed, said with it
         let dump = std::env::var_os("ENGINE2_FRAME_DUMP").is_some();
         let mut described: Vec<String> = Vec::new();
@@ -625,6 +675,7 @@ mod draw {
                 let bones = skin(obj, model);
                 if dump { described.push(format!("{} at {:?} scale {:?}, {} bones posed, bounds {:?}..{:?}, tags [{}]", crate::models::name_of(model).unwrap_or_else(|| "(built)".into()), m.w_axis.truncate(), m.x_axis.truncate().length(), bones.len(), g.min, g.max, super::tag_names(&super::tags(obj)))); }
                 placed.push((g, m, tint, bones, false, super::chosen_mesh_groups(obj), super::skin(obj)));
+                with_attributes.push((placed.len() - 1, obj));
             }
         }
         // the lights in its worlds that a map's lightmaps name, by their bake index
@@ -698,6 +749,8 @@ mod draw {
         let (sprites, lines, custom) = custom_objects(camera, &view, width, height);
         view.sprites = sprites;
         view.lines = lines;
+        // what a game set on an object itself (SceneObject.Attributes), for its graph materials
+        view.object_materials = object_materials(r, &placed, &with_attributes);
         let instances: Vec<Instance> = placed.iter().map(|(g, m, tint, bones, lightmapped, mask, skin)| Instance { model: g, transform: *m, tint: *tint, bones: bones.clone(), lightmapped: *lightmapped, origin: None, mask: *mask, skin: *skin }).collect();
         crate::trace::mark("gather");
         // what managed has set on materials since the last frame, for the graphs' materials that read it

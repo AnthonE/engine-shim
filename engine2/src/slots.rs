@@ -1670,7 +1670,7 @@ unsafe extern "C" fn s287(_a0: usize) { hit(287);  }
 unsafe extern "C" fn s288(_a0: usize) -> i32 { hit(288); crate::handles::related(_a0, "SceneObject") }
 unsafe extern "C" fn s289(_a0: usize, _a1: S_Sandbox_StringToken, _a2: usize, _a3: u32) { hit(289);  }
 unsafe extern "C" fn s290(_a0: usize, _a1: usize) { hit(290);  }
-unsafe extern "C" fn s291(_a0: usize) -> usize { hit(291); crate::trace::object(291) }
+unsafe extern "C" fn s291(_a0: usize) -> usize { hit(291); unsafe { crate::impls::CDynmcScnbjct_GetAttributesPtrForModify(_a0) } }
 unsafe extern "C" fn s292(_a0: usize, _a1: u64) { hit(292);  }
 unsafe extern "C" fn s293(_a0: usize, _a1: u64) { hit(293);  }
 unsafe extern "C" fn s294(_a0: usize, _a1: u64) { hit(294);  }
@@ -2371,7 +2371,7 @@ unsafe extern "C" fn s988(_a0: usize) { hit(988);  }
 unsafe extern "C" fn s989(_a0: usize) -> i32 { hit(989); crate::handles::related(_a0, "SceneObject") }
 unsafe extern "C" fn s990(_a0: usize, _a1: S_Sandbox_StringToken, _a2: usize, _a3: u32) { hit(990);  }
 unsafe extern "C" fn s991(_a0: usize, _a1: usize) { hit(991);  }
-unsafe extern "C" fn s992(_a0: usize) -> usize { hit(992); crate::trace::object(992) }
+unsafe extern "C" fn s992(_a0: usize) -> usize { hit(992); unsafe { crate::impls::CScnnmtblbjct_GetAttributesPtrForModify(_a0) } }
 unsafe extern "C" fn s993(_a0: usize, _a1: u64) { hit(993);  }
 unsafe extern "C" fn s994(_a0: usize, _a1: u64) { hit(994);  }
 unsafe extern "C" fn s995(_a0: usize, _a1: u64) { hit(995);  }
@@ -2639,7 +2639,7 @@ unsafe extern "C" fn s1256(_a0: usize) { hit(1256);  }
 unsafe extern "C" fn s1257(_a0: usize) -> i32 { hit(1257); crate::handles::related(_a0, "SceneObject") }
 unsafe extern "C" fn s1258(_a0: usize, _a1: S_Sandbox_StringToken, _a2: usize, _a3: u32) { hit(1258);  }
 unsafe extern "C" fn s1259(_a0: usize, _a1: usize) { hit(1259);  }
-unsafe extern "C" fn s1260(_a0: usize) -> usize { hit(1260); crate::trace::object(1260) }
+unsafe extern "C" fn s1260(_a0: usize) -> usize { hit(1260); unsafe { crate::impls::CSceneObject_GetAttributesPtrForModify(_a0) } }
 unsafe extern "C" fn s1261(_a0: usize, _a1: u64) { hit(1261); unsafe { crate::impls::CSceneObject_EnableMeshGroups(_a0, _a1) } }
 unsafe extern "C" fn s1262(_a0: usize, _a1: u64) { hit(1262); unsafe { crate::impls::CSceneObject_DisableMeshGroups(_a0, _a1) } }
 unsafe extern "C" fn s1263(_a0: usize, _a1: u64) { hit(1263); unsafe { crate::impls::CSceneObject_ResetMeshGroups(_a0, _a1) } }

@@ -243,6 +243,26 @@ pub fn flatten(d: &Device, attrs: usize) -> HashMap<u32, Val> {
     out
 }
 
+/// A scene object's own attributes (managed's SceneObject.Attributes and a
+/// renderer's Attributes): made the first time they're asked for, and what
+/// a shader graph's material reads its per-object inputs from.
+static OBJECT_ATTRS: std::sync::Mutex<Option<HashMap<usize, usize>>> = std::sync::Mutex::new(None);
+
+pub fn object_attrs(obj: usize) -> usize {
+    if let Some(a) = OBJECT_ATTRS.lock().unwrap().get_or_insert_with(Default::default).get(&obj) { return *a; }
+    let a = new_attrs();
+    OBJECT_ATTRS.lock().unwrap().get_or_insert_with(Default::default).insert(obj, a);
+    a
+}
+
+/// What a scene object's attributes hold, if it was ever given any.
+pub fn object_values(obj: usize) -> Option<HashMap<u32, Val>> {
+    let a = *OBJECT_ATTRS.lock().unwrap().as_ref()?.get(&obj)?;
+    let d = device();
+    let v = flatten(&d, a);
+    (!v.is_empty()).then_some(v)
+}
+
 // ---- GPU buffers
 
 pub fn new_buffer(kind: i64, elements: i32, element_size: i32, name: &str) -> usize {
