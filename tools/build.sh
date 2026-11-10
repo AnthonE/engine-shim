@@ -102,6 +102,9 @@ else
 	cp "$DOTNET_ROOT/LICENSE.txt" "$DOTNET_ROOT/ThirdPartyNotices.txt" "$out/dotnet/" 2>/dev/null || true
 fi
 
+# the licence this is under, and the notices of what in it is others'
+cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$out/"
+
 # the game: its project (the server compiles its code; a player is sent it),
 # its maps' paks, and the packages' files a player reads from disk
 name=$(basename "$sbproj" .sbproj)
