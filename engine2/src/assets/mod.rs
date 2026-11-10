@@ -8,6 +8,7 @@ pub mod material;
 pub mod mesh;
 pub mod model;
 pub mod resource;
+pub mod shadergraph;
 pub mod texture;
 pub mod vpk;
 pub mod worldnode;

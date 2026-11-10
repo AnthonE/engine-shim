@@ -21,6 +21,25 @@ public sealed class ShimWatch : Component
 	bool _waiting;
 
 	int _carved = -1;
+	int _views;
+
+	// what a player sees, every ten seconds: the scene's camera drawn into a
+	// bitmap and saved (the terrain's and the effects' materials are the
+	// game's own shader graphs, translated: engine2/src/assets/shadergraph.rs)
+	void View()
+	{
+		if ( Networking.IsHost || ++_views % 5 != 0 ) return;
+		var camera = Scene.Camera ?? Scene.GetAllComponents<CameraComponent>().FirstOrDefault();
+		if ( !camera.IsValid() ) { Log.Info( "shimwatch view: no camera" ); return; }
+		var bitmap = new Bitmap( 960, 540 );
+		var exposure = camera.AutoExposure.Enabled;
+		camera.AutoExposure.Enabled = false;
+		camera.RenderToBitmap( bitmap, false );
+		camera.AutoExposure.Enabled = exposure;
+		var file = $"shimview_{_views * 2}.png";
+		FileSystem.Data.WriteAllBytes( file, bitmap.ToPng() );
+		Log.Info( $"shimwatch view: {camera.GameObject.Name} at {camera.WorldPosition}, to {FileSystem.Data.GetFullPath( file )}" );
+	}
 
 	protected override void OnUpdate()
 	{
@@ -32,6 +51,7 @@ public sealed class ShimWatch : Component
 			Log.Info( $"shimwatch: terrain carved {carved} times ({(Networking.IsHost ? "host" : "player")})" );
 			_carved = carved;
 		}
+		View();
 		if ( !Networking.IsHost ) return;
 		if ( BaseGameMode.Current is not FreeForAll ffa ) { Log.Info( "shimwatch: no Free For All mode yet" ); return; }
 

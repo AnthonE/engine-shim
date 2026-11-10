@@ -1453,6 +1453,84 @@ with a stand-in for systemd and certbot and run as its unit runs it: as
 row written (`status_url` https on its own host) and `status.json`
 answering on loopback for nginx.
 
+## A game's own shaders: shader graphs
+
+`engine2/src/assets/shadergraph.rs`, `render/graph.rs`, `render/graph.wgsl`.
+s&box compiles a game's shaders with the closed `vfx_vulkan`, so until now
+a material on a shader of the game's own was drawn as `complex`: grey.
+Most of a creator's shaders, though, are made in s&box's graph editor, and
+a graph (`.shdrgrph`) is plain JSON beside the shader it was compiled
+into. The compiler that reads one is open too (sbox-public's
+`game/addons/tools/Code/ShaderGraph`, its nodes in
+`game/editor/ShaderGraph/Code/Nodes`, MIT), and what it writes ends by
+filling in a material and handing it to `ShadingModelStandard::Shade`. So
+a graph needs none of s&box's lighting here:
+
+- **Translated** (`shadergraph.rs`). Each node as `GraphCompiler`
+  compiles it, into WGSL: the same inputs in the same order, the same
+  defaults, the same casts between one and four components. 67 kinds of
+  node: the arithmetic, the vector ones, textures (plain and triplanar,
+  colour and normal), parameters, branches, time, the noises, the blend
+  modes, tile and offset, normals between tangent, object and world
+  space, and what a pixel knows of itself (position, normal, vertex
+  colour, tint). Textures and parameters are named as the compiler names
+  them (`g_tColour`, `g_flTiling`, `g_vTint_Colour`, `g_bFogEnabled`; two
+  textures of one name numbered in the order their nodes are reached), so
+  a material's own values for them are found. A graph with a node that
+  isn't translated is refused, and says which.
+- **Lit** (`graph.wgsl`). The material (colour, emission, opacity, a
+  tangent-space normal, roughness, metalness, occlusion) goes to the same
+  `light()` complex's does. Opaque, alpha-tested (`Masked`) and
+  translucent graphs, lit and unlit; a graph that moves its vertices
+  (`PositionOffset`) moves them in a vertex stage of its own. s&box's
+  helpers are ported beside it: `procedural.hlsl`'s noises, the editor's
+  triplanar sampling and blend modes, `normal.hlsl`.
+- **Drawn** (`render/mod.rs`). A material whose shader has a graph beside
+  it (`shaders/x.shdrgrph` for `shaders/x.shader`, in the project's
+  folders) gets the graph's pipeline, made the first time one is read:
+  up to 32 parameters and 16 textures, a sampler that wraps and one that
+  doesn't. Checked as wgpu will check it first (naga), so a graph that
+  translates into nonsense is drawn as complex and said, not a panic.
+  `ENGINE2_GRAPHS=0` turns it off; `ENGINE2_RENDER_TIME` holds the time
+  a graph reads still.
+
+```sh
+cargo test --release -p engine2 graph
+ENGINE2_SAMPLE_GRAPHS=../grubs cargo test --release -p engine2 a_games_graphs -- --nocapture
+ENGINE2_CONTENT=../content-grubs:../grubs/Assets cargo run --release -p render -- ball materials/environment/sand_a.vmat sand.png
+ENGINE2_CONTENT=../content-grubs cargo run --release -p render -- material particles/fire/fire_01.vmat
+```
+
+Measured on Grubs (its repository's 13 graphs, 430 nodes of 43 kinds):
+all 13 translate into WGSL that naga takes, and each names its textures
+and its parameters exactly as s&box's own compiler named them in the
+`.shader` it wrote beside the graph (the test reads both). Of the 142
+materials in Grubs' published package, 23 are on those shaders. On a ball
+(`render ball`), with the graphs off and on: its sand and its rocks go
+from grey to their own layered colours, its teleport from a grey ball to
+rings of light with gaps between, its fire to flames with the ball cut
+away between them, and the magic missile's ball is pushed out of round by
+its graph's vertex offset.
+
+In the game (Grubs hosted and joined headless, `tools/grubs/ShimWatch.cs`
+saving the scene's camera every ten seconds): the player's renderer
+translates `gr_foreground_scorch` (11 textures, 9 parameters),
+`gr_foreground` (5, 7) and `gr_skydome` (2, 3) as their materials are
+first read, and the match's terrain, which Grubs builds and carves at
+runtime, is drawn in its sand with the shells in it, against its dark
+rock, where it was flat before.
+
+What isn't there: nobody has put a frame beside s&box's own of the same
+graph, so "as its compiler compiles it" is the code read, not a picture
+compared. Parameters and textures a game sets from code at run time
+(`IsAttribute`: Grubs' weapon charge gauge) read their defaults. A second
+set of texture coordinates reads as the first; mirrored addressing wraps;
+the sun's shadow of a graph that moves its vertices is cast from where
+they were. Subgraphs, cube textures, the scene's colour and depth, screen
+positions and post-process graphs aren't translated. A shader written by
+hand (Grubs' `new_water`, `simple_water`, `triplanar`) is still drawn as
+complex.
+
 ## The default player: a stand-in
 
 `engine2/src/standin.rs`. s&box's player (Citizen: its model, its
@@ -1711,6 +1789,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/publish.sh` | builds staged as the Elo Pros origin serves them: depots, the pointer that makes them live, the manifest |
 | `deploy/` | a game's server on the game box: `install-server.sh`, its systemd unit and settings, nginx's status locations, the certificate hook |
 | `tools/grubs.sh`, `tools/grubs/` | Ape Tavern's Grubs made ready to host here, and a watcher that starts its match |
+| `engine2/src/assets/shadergraph.rs`, `render/graph.rs`, `render/graph.wgsl` | a game's shader graphs: translated to WGSL as s&box's own compiler reads them, and lit as complex is |
 | `engine2/src/standin.rs` | the default player's stand-in: a model, its animations and its graph, made in code, answering the names games ask Citizen for |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
@@ -1726,14 +1805,16 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    credits do (scry-forge `meter/relay.py`).
 3. **Assets.** Models (collision, bones, hitboxes, sequences, key
    values, animation graphs), surfaces and maps are read (above).
-   A client reads materials and textures too; a game's own shaders it
+   A client reads materials and textures too, and a game's own shaders
+   where they were made as graphs (above); one written by hand it
    doesn't (below).
 4. **A client.** It draws with a renderer of our own, on wgpu
    (`engine2/src/render/`): models skinned and posed, maps lit as they were
    baked, the sky, the sun's shadows, the HUD and the UI, in a window, with
    input and sound (above). What's left: particles, decals, shadows from
-   local lights on what moves, a game's own shaders (s&box's UI and HUD
-   shaders are ported to WGSL by hand), the UI's `border-shape` paths,
+   local lights on what moves, a game's hand-written shaders (its graphs
+   are translated; s&box's UI and HUD shaders are ported to WGSL by
+   hand), the UI's `border-shape` paths,
    world panels, reverb; and a frame's cost in a crowd of props on a real
    GPU (above: flatgrass standing still).
 5. **The browser**, after the desktop builds. A game is built for the web
@@ -1752,8 +1833,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
    Materials, textures and shaders only matter to a client.
 4. **A client.** It plays, in a window (above): models, maps lit as they
    were baked, the UI and HUD, sprites, lines, sound and input, drawn on
-   wgpu from what s&box's public shaders say. Next: decals, local lights'
-   shadows, a game's own shaders.
+   wgpu from what s&box's public shaders say, a game's shader graphs
+   translated. Next: decals, local lights' shadows, what a game sets on
+   its graphs from code.
 5. **The browser.** .NET and Rust both build to WebAssembly. Expect a large
    download.
 
@@ -1772,14 +1854,10 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
   (Vulkan, Metal, DX12; WebGPU in a browser), not Bevy or Godot. What's
   open is a game's own shaders: s&box compiles them with the closed
   `vfx_vulkan`, and so far each one drawn here is ported to WGSL by hand.
-  A translator, or a game that brings its shaders as WGSL, is to be
-  decided. Measured on Grubs: of its 18 shaders 13 are shader graphs
-  (`.shdrgrph`, plain JSON: 430 nodes of 43 kinds between them) and 16
-  end by handing a material to `ShadingModelStandard::Shade`. So a first
-  translator needn't carry s&box's lighting: a graph made into the
-  material (colour, normal, roughness, opacity), lit by `shader.wgsl` as
-  `complex` is. What each node means is in sbox-public's
-  `game/editor/ShaderGraph` (MIT).
+  A graph-made shader is translated now (above: every one of Grubs' 13).
+  What's open is the shader written by hand: ported to WGSL one at a
+  time, as s&box's own are, or through a translator (DXC to SPIR-V to
+  naga is the thing to try), or a game that brings its own as WGSL.
 - **The renderer.** The client draws with wgpu directly (`render/`), each
   of s&box's public shaders ported as it's met, not on Bevy or Godot.
   Bevy (Rust, MIT/Apache, wasm) would fit a Rust `engine2`; Godot (MIT)

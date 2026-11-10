@@ -56,7 +56,7 @@ struct View {
     ground: vec4<f32>,
     sky_rotation: mat4x4<f32>,
     // world to the sun's shadow map; x: shadows (1), y: a texel of it in
-    // uv, z: in the world
+    // uv, z: in the world, w: the time in seconds (a graph's shader reads it)
     shadow: mat4x4<f32>,
     shadow_params: vec4<f32>,
 };
@@ -85,6 +85,7 @@ struct Material {
 @group(0) @binding(1) var scene: texture_2d<f32>;
 @group(0) @binding(2) var shadow_map: texture_depth_2d;
 @group(0) @binding(3) var shadow_compare: sampler_comparison;
+// <stock> the stock shaders' own material: a graph's shader (graph.wgsl) is this file without what's marked so
 @group(1) @binding(0) var<uniform> material: Material;
 @group(1) @binding(1) var color_a: texture_2d<f32>;
 @group(1) @binding(2) var occlusion_a: texture_2d<f32>;
@@ -96,6 +97,7 @@ struct Material {
 @group(1) @binding(9) var color_c: texture_2d<f32>;
 @group(1) @binding(10) var normal_c: texture_2d<f32>;
 @group(1) @binding(11) var occlusion_c: texture_2d<f32>;
+// </stock>
 
 // each object: where it is, and its tint (a scene object's)
 struct Object {
@@ -153,10 +155,18 @@ struct Out {
     @location(3) blend: vec4<f32>,
     @location(4) paint: vec4<f32>,
     @location(5) lightmap: vec2<f32>,
+    // in the object's own space (after its bones): what a graph's shader may read
+    @location(6) local: vec3<f32>,
+    @location(7) local_normal: vec3<f32>,
 };
 
 @vertex
 fn vs_main(v: In) -> Out {
+    return vertex(v);
+}
+
+// A vertex, placed: vs_main's, and where a graph's shader starts from.
+fn vertex(v: In) -> Out {
     var o: Out;
     var position = vec4<f32>(v.position, 1.0);
     var normal = vec4<f32>(v.normal, 0.0);
@@ -175,6 +185,8 @@ fn vs_main(v: In) -> Out {
     o.blend = v.blend;
     o.paint = v.paint;
     o.lightmap = v.lightmap * lighting.lightmap.xy;
+    o.local = position.xyz;
+    o.local_normal = normal.xyz;
     return o;
 }
 
@@ -239,6 +251,7 @@ fn hemi_oct(rg: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(n.x, -n.y, n.z);
 }
 
+// <stock>
 // One of blendable's layers: its colour tinted where its mask says, its
 // normal (tangent space), roughness, metalness, occlusion, reveal mask.
 struct Layer {
@@ -288,6 +301,7 @@ fn mix_layer(a: Layer, b: Layer, k: f32) -> Layer {
     o.mask = mix(a.mask, b.mask, k);
     return o;
 }
+// </stock>
 
 // A surface as a material's textures make it, to be lit.
 struct Surface {
@@ -430,6 +444,7 @@ fn debug_view(s: Surface, n: vec3<f32>, l: Lit) -> vec4<f32> {
     return vec4<f32>(0.0);
 }
 
+// <stock>
 @fragment
 fn fs_main(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let layers = material.mode.x;
@@ -566,3 +581,4 @@ fn fs_glass(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32
     if (d.a > 0.0) { return d; }
     return vec4<f32>(through + l.color, 1.0);
 }
+// </stock>
