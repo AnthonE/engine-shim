@@ -1,3 +1,7 @@
+engine-shim is MoreRight's, under the MIT licence (LICENSE). What follows
+is what in it is other people's, or made from theirs, and the notice each
+came with.
+
 engine2/src/slots.rs is generated from s&box's engine source (the interop
 definitions and the generated managed interop), which carries this notice:
 
@@ -38,3 +42,11 @@ engine2/src/render/hud.wgsl ports Facepunch's Sandbox's HUD shaders
 (github.com/Facepunch/sandbox, Assets/shaders/hud_glow.shader and
 hud_composite.shader at 492608bf31887f4ac2acc51c7e3ee4a585621ad8), under the MIT
 licence: Copyright (c) 2026 Facepunch.
+
+engine2/src/assets/shadergraph.rs translates a shader graph node by node
+as s&box's graph compiler does, and engine2/src/render/graph.wgsl ports
+the helpers that compiler's shaders use (github.com/Facepunch/sbox-public
+at the commit in SBOX_PUBLIC_COMMIT: game/addons/tools/Code/ShaderGraph,
+game/editor/ShaderGraph/Code/Nodes and its ShaderTemplate.cs,
+procedural.hlsl, common/utils/normal.hlsl), under the MIT licence:
+Copyright (c) 2025 Facepunch Studios Ltd.

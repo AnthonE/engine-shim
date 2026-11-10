@@ -1891,5 +1891,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
   still open.
 - **The name.** s&box is Facepunch's; nothing we ship uses it as ours.
 
-The `.def` files, the generated interop and the slot names are Facepunch
-Studios', under the MIT licence (NOTICE).
+## Licence
+
+MIT (`LICENSE`). The `.def` files, the generated interop and the slot names
+are Facepunch Studios', under the MIT licence; `NOTICE` lists those and
+everything else here that is made from someone else's work, with the notice
+each came with. A build made by `tools/build.sh` carries both files.
