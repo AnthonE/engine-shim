@@ -1773,7 +1773,13 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
   open is a game's own shaders: s&box compiles them with the closed
   `vfx_vulkan`, and so far each one drawn here is ported to WGSL by hand.
   A translator, or a game that brings its shaders as WGSL, is to be
-  decided.
+  decided. Measured on Grubs: of its 18 shaders 13 are shader graphs
+  (`.shdrgrph`, plain JSON: 430 nodes of 43 kinds between them) and 16
+  end by handing a material to `ShadingModelStandard::Shade`. So a first
+  translator needn't carry s&box's lighting: a graph made into the
+  material (colour, normal, roughness, opacity), lit by `shader.wgsl` as
+  `complex` is. What each node means is in sbox-public's
+  `game/editor/ShaderGraph` (MIT).
 - **The renderer.** The client draws with wgpu directly (`render/`), each
   of s&box's public shaders ported as it's met, not on Bevy or Godot.
   Bevy (Rust, MIT/Apache, wasm) would fit a Rust `engine2`; Godot (MIT)
