@@ -1468,12 +1468,13 @@ a graph needs none of s&box's lighting here:
 
 - **Translated** (`shadergraph.rs`). Each node as `GraphCompiler`
   compiles it, into WGSL: the same inputs in the same order, the same
-  defaults, the same casts between one and four components. 67 kinds of
+  defaults, the same casts between one and four components. 81 kinds of
   node: the arithmetic, the vector ones, textures (plain and triplanar,
   colour and normal), parameters, branches, time, the noises, the blend
   modes, tile and offset, normals between tangent, object and world
-  space, and what a pixel knows of itself (position, normal, vertex
-  colour, tint). Textures and parameters are named as the compiler names
+  space, colour spaces, polar coordinates, and what a pixel knows of
+  itself and its view (position, normal, vertex colour, tint, where it is
+  on the screen, the camera, the sun). Textures and parameters are named as the compiler names
   them (`g_tColour`, `g_flTiling`, `g_vTint_Colour`, `g_bFogEnabled`; two
   textures of one name numbered in the order their nodes are reached), so
   a material's own values for them are found. A graph with a node that
@@ -1511,6 +1512,16 @@ from grey to their own layered colours, its teleport from a grey ball to
 rings of light with gaps between, its fire to flames with the ball cut
 away between them, and the magic missile's ball is pushed out of round by
 its graph's vertex offset.
+
+And on everyone's (`ENGINE2_GRAPH_SURVEY`, a test that counts and fails
+nothing): GitHub's search finds 276 shader graphs in public repositories,
+270 of them fetched, from 76 repositories. 202 translate into WGSL naga
+takes, and none translates into WGSL it refuses. For 65 of the 76, every
+graph translates. 51 of the 68 that don't are one repository's, an editor
+extension showing off the nodes it adds (Shader Graph Extras: 1 of its 52
+translates); without it, 201 of 218. What stops the rest, most common
+first: subgraphs (16), post-process graphs (8), cube textures (4), the
+scene's colour behind the surface (3), and nodes extensions add.
 
 In the game (Grubs hosted and joined headless, `tools/grubs/ShimWatch.cs`
 saving the scene's camera every ten seconds): the player's renderer

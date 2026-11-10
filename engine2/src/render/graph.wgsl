@@ -47,6 +47,8 @@ struct GIn {
     tint: vec4<f32>,
     time: f32,
     front: f32,
+    // where it is on the screen: in pixels, its depth, and 1/w
+    screen: vec4<f32>,
 };
 
 // What a graph fills in (s&box's Material, as far as the Result node sets
@@ -107,7 +109,61 @@ fn g_view_dir(world: vec3<f32>) -> vec3<f32> {
     return normalize(view.eye.xyz - world);
 }
 
+// Where a point in the world is across the screen, 0 to 1 each way from
+// its top left (CalculateViewportUv of where it's drawn).
+fn g_screen_uv(world: vec3<f32>) -> vec2<f32> {
+    let p = view.view_proj * vec4<f32>(world, 1.0);
+    return vec2<f32>(p.x / p.w * 0.5 + 0.5, 0.5 - p.y / p.w * 0.5);
+}
+
+// The way the camera looks: from its near plane's middle to its far one's.
+fn g_camera_dir() -> vec3<f32> {
+    let near = view.inv_view_proj * vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let far = view.inv_view_proj * vec4<f32>(0.0, 0.0, 1.0, 1.0);
+    return normalize(far.xyz / far.w - near.xyz / near.w);
+}
+
+// NormalBlend's two ways (Transform.cs)
+fn g_normal_blend(a: vec3<f32>, b: vec3<f32>) -> vec3<f32> {
+    return normalize(vec3<f32>(a.xy + b.xy, a.z * b.z));
+}
+
+fn g_normal_blend_reoriented(a: vec3<f32>, b: vec3<f32>) -> vec3<f32> {
+    let t = a + vec3<f32>(0.0, 0.0, 1.0);
+    let u = b * vec3<f32>(-1.0, -1.0, 1.0);
+    return (t / t.z) * dot(t, u) - u;
+}
+
+// ShaderTemplate.cs
+fn g_rgb_to_hsv(c: vec3<f32>) -> vec3<f32> {
+    let k = vec4<f32>(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    let p = mix(vec4<f32>(c.bg, k.wz), vec4<f32>(c.gb, k.xy), step(c.b, c.g));
+    let q = mix(vec4<f32>(p.xyw, c.r), vec4<f32>(c.r, p.yzx), step(p.x, c.r));
+    let d = q.x - min(q.w, q.y);
+    let e = 1.0e-10;
+    return vec3<f32>(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+fn g_hsv_to_rgb(c: vec3<f32>) -> vec3<f32> {
+    let k = vec4<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    let p = abs(fract(c.xxx + k.xyz) * 6.0 - k.www);
+    return c.z * mix(k.xxx, clamp(p - k.xxx, vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
+}
+
+// sRGB's own curve (s&box's SrgbGammaToLinear isn't in its public files)
+fn g_srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+}
+
+fn g_linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    return select(1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3<f32>(0.0031308));
+}
+
 // ---- procedural.hlsl
+
+fn g_polar(uv: vec2<f32>, radius_scale: f32, length_scale: f32) -> vec2<f32> {
+    return vec2<f32>(length(uv) * 2.0 * radius_scale, atan2(uv.x, uv.y) * 0.15915494309189533577 * length_scale);
+}
 
 fn g_fuzzy(uv: vec2<f32>, d: vec2<f32>) -> f32 {
     return fract(sin(dot(uv, d)) * 43758.5453);
@@ -305,6 +361,7 @@ fn vs_graph(v: In) -> Out {
         g.tint = object.tint;
         g.time = view.shadow_params.w;
         g.front = 1.0;
+        g.screen = o.clip;
         o.world = o.world + graph_offset(g);
         o.clip = view.view_proj * vec4<f32>(o.world, 1.0);
     }
@@ -339,6 +396,7 @@ fn fs_graph(i: Out, @builtin(front_facing) front: bool) -> @location(0) vec4<f32
     g.tint = object.tint;
     g.time = view.shadow_params.w;
     g.front = select(0.0, 1.0, front);
+    g.screen = i.clip;
     let m = graph_material(g);
 
     // ShaderTemplate.Material_output, then lit as complex is

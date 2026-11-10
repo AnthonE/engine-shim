@@ -82,6 +82,20 @@ mod tests {
             r#"{"_class": "VertexColor", "Identifier": "vc"}"#.to_string(),
             r#"{"_class": "Tint", "Identifier": "tint"}"#.to_string(),
             r#"{"_class": "Reroute", "Identifier": "reroute", "Input": {"Identifier": "vc", "Output": "RGB"}}"#.to_string(),
+            r#"{"_class": "Distance", "Identifier": "distance", "A": {"Identifier": "wp", "Output": "Result"}, "B": {"Identifier": "camera", "Output": "WorldPosition"}}"#.to_string(),
+            r#"{"_class": "Camera", "Identifier": "camera"}"#.to_string(),
+            r#"{"_class": "Sun", "Identifier": "sun"}"#.to_string(),
+            r#"{"_class": "ScreenPosition", "Identifier": "screen"}"#.to_string(),
+            r#"{"_class": "ScreenCoordinate", "Identifier": "screenuv"}"#.to_string(),
+            r#"{"_class": "TangentViewVector", "Identifier": "tvv"}"#.to_string(),
+            r#"{"_class": "PolarCoordinates", "Identifier": "polar", "RadialScale": {"Identifier": "f", "Output": "Result"}}"#.to_string(),
+            r#"{"_class": "NormalBlend", "Identifier": "nb", "A": {"Identifier": "tn", "Output": "Result"}, "B": {"Identifier": "trin", "Output": "Result"}}"#.to_string(),
+            r#"{"_class": "NormalBlend", "Identifier": "nbr", "Mode": "Reoriented", "A": {"Identifier": "tn", "Output": "Result"}}"#.to_string(),
+            r#"{"_class": "Reflection", "Identifier": "reflect", "A": {"Identifier": "vd", "Output": "Result"}, "B": {"Identifier": "wn", "Output": "Result"}}"#.to_string(),
+            r#"{"_class": "RGBtoHSV", "Identifier": "hsv", "In": {"Identifier": "tex", "Output": "Result"}}"#.to_string(),
+            r#"{"_class": "HSVtoRGB", "Identifier": "rgb", "In": {"Identifier": "hsv", "Output": "Out"}}"#.to_string(),
+            r#"{"_class": "SrgbGammaToLinear", "Identifier": "tolinear", "In": {"Identifier": "f3", "Output": "Result"}}"#.to_string(),
+            r#"{"_class": "SrgbLinearToGamma", "Identifier": "togamma"}"#.to_string(),
         ];
         // every result is added into one sum, so each node is reached
         let mut reached: Vec<(String, &str)> = ["tex", "tri", "trin", "combine", "swizzle", "append", "lerp", "remap", "oneminus", "branch", "compare", "fresnel", "fuzzy",
@@ -90,6 +104,8 @@ mod tests {
         reached[4].1 = "Output";
         reached[5].1 = "Output";
         reached.push(("vc".into(), "Alpha"));
+        for n in ["distance", "tvv", "polar", "nb", "nbr", "reflect", "tolinear", "togamma", "screenuv"] { reached.push((n.into(), "Result")); }
+        reached.extend([("camera".into(), "Direction"), ("sun".into(), "Direction"), ("sun".into(), "Color"), ("screen".into(), "XYZ"), ("screen".into(), "W"), ("rgb".into(), "Out")]);
         reached.push(("combine".into(), "XY"));
         for u in unary {
             nodes.push(format!(r#"{{"_class": "{u}", "Identifier": "u{u}", "Input": {{"Identifier": "f3", "Output": "Result"}}}}"#));
@@ -119,6 +135,54 @@ mod tests {
         // unlit, opaque and unmoved is one too
         let plain = translate(r#"{"BlendMode": "Opaque", "ShadingModel": "Unlit", "nodes": [{"_class": "Result", "Identifier": "0"}]}"#).unwrap();
         check(&source(&plain.wgsl)).unwrap();
+    }
+
+    /// How many of the graphs under `ENGINE2_GRAPH_SURVEY` (other people's,
+    /// fetched for the count and never committed) translate into a shader
+    /// wgpu takes, and what stops the rest, most common first. It says, and
+    /// fails nothing: what to translate next is read off it.
+    #[test]
+    fn a_survey_of_graphs() {
+        let Ok(root) = std::env::var("ENGINE2_GRAPH_SURVEY") else { return };
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.is_dir() { walk(&p, out); } else if p.extension().is_some_and(|x| x == "shdrgrph") { out.push(p); }
+            }
+        }
+        let mut graphs = Vec::new();
+        walk(std::path::Path::new(&root), &mut graphs);
+        let (mut good, mut subgraphs) = (0, 0);
+        let mut why: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for g in &graphs {
+            let name = g.strip_prefix(&root).unwrap_or(g).to_string_lossy().to_string();
+            let Ok(text) = std::fs::read_to_string(g) else { why.entry("unreadable".into()).or_default().push(name); continue };
+            match translate(text.trim_start_matches('\u{feff}')) {
+                Ok(t) => match check(&source(&t.wgsl)) {
+                    Ok(()) => good += 1,
+                    Err(e) => why.entry(format!("not valid WGSL: {}", e.lines().next().unwrap_or(""))).or_default().push(name),
+                },
+                Err(e) if e.contains("a subgraph isn't") => subgraphs += 1,
+                Err(e) => why.entry(e).or_default().push(name),
+            }
+        }
+        let mut rows: Vec<(String, Vec<String>)> = why.into_iter().collect();
+        rows.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+        println!("survey: {} graphs; {subgraphs} are subgraphs (a piece of a shader, not one); of the other {}, {good} translate into valid WGSL", graphs.len(), graphs.len() - subgraphs);
+        for (reason, names) in &rows { println!("survey: {:3}  {reason}  (e.g. {})", names.len(), names[0]); }
+        // by whose they are (the folder each was put in): how many of each translate
+        let mut whose: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+        for g in &graphs {
+            let name = g.strip_prefix(&root).unwrap_or(g).to_string_lossy().to_string();
+            let owner = name.split('/').next().unwrap_or("").to_string();
+            let failed = rows.iter().any(|(_, names)| names.contains(&name));
+            let e = whose.entry(owner).or_default();
+            e.0 += 1;
+            e.1 += !failed as usize;
+        }
+        let whole = whose.values().filter(|(n, ok)| n == ok).count();
+        println!("survey: {} sources; every graph of {whole} of them translates", whose.len());
+        for (owner, (n, ok)) in whose.iter().filter(|(_, (n, ok))| n != ok) { println!("survey:   {owner}: {ok} of {n}"); }
     }
 
     /// Every graph under `ENGINE2_SAMPLE_GRAPHS` (a game's checkout, never

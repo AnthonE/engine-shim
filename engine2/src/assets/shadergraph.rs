@@ -26,8 +26,9 @@
 //! them; a number is always written as a float.
 //!
 //! Not translated yet (a graph with one is refused, and says which):
-//! subgraphs, cube textures, the scene's colour and depth, screen
-//! positions, post-process graphs. Mirrored texture addressing is wrapped.
+//! subgraphs, cube textures, the scene's colour and depth, the camera's
+//! planes and the viewport's size, post-process graphs, and nodes an
+//! editor extension adds. Mirrored texture addressing is wrapped.
 use std::collections::HashMap;
 
 use serde_json::Value as J;
@@ -410,6 +411,11 @@ impl<'a> Compiler<'a> {
                 if a.n <= 1 { return expr(format!("{} * {b}", a.code), 1); }
                 expr(format!("dot({}, {b})", a.code), 1)
             }
+            "Distance" => {
+                let a = self.or(link("A"), 0.0);
+                let b = self.or(link("B"), 0.0).cast(a.n);
+                expr(format!("distance({}, {b})", a.code), 1)
+            }
             "Min" | "Max" => {
                 let (a, b) = self.pair(link("InputA"), link("InputB"), number(value("DefaultA"), 0.0), number(value("DefaultB"), 0.0));
                 expr(format!("{}({}, {})", class.to_ascii_lowercase(), a.code, b.code), a.n)
@@ -474,6 +480,32 @@ impl<'a> Compiler<'a> {
             "IsFrontFace" => Some(Val { code: "i.front".into(), n: 1, constant: true }),
             "VertexColor" => if output == "Alpha" { expr("i.color.a".into(), 1) } else { expr("i.color.rgb".into(), 3) },
             "Tint" => expr("i.tint".into(), 4),
+            // where the pixel is on the screen: in pixels (and its depth), or 0 to 1 across it
+            "ScreenPosition" => match output {
+                "XYZ" => expr("i.screen.xyz".into(), 3),
+                "XY" => expr("i.screen.xy".into(), 2),
+                "Z" => expr("i.screen.z".into(), 1),
+                "W" => expr("i.screen.w".into(), 1),
+                _ => None,
+            },
+            "ScreenCoordinate" => expr("g_screen_uv(i.world)".into(), 2),
+            // Camera.cs, Sun.cs: where the camera is and looks, and the sun's light as it travels
+            "Camera" => match output {
+                "WorldPosition" => expr("view.eye.xyz".into(), 3),
+                "Direction" => expr("g_camera_dir()".into(), 3),
+                other => {
+                    self.fail(format!("a Camera node's {other} isn't translated yet"));
+                    None
+                }
+            },
+            "Sun" => if output == "Color" { expr("view.sun_color.rgb".into(), 3) } else { expr("(-view.sun.xyz)".into(), 3) },
+            "TangentViewVector" => {
+                let at = self.result(link("WorldPosition")).map(|v| v.cast(3)).unwrap_or_else(|| "i.world".into());
+                let normal = self.result(link("WorldNormal")).map(|v| v.cast(3)).unwrap_or_else(|| "i.normal".into());
+                let tu = self.result(link("TangentUWs")).map(|v| v.cast(3)).unwrap_or_else(|| "i.tangent_u".into());
+                let tv = self.result(link("TangentVWs")).map(|v| v.cast(3)).unwrap_or_else(|| "i.tangent_v".into());
+                expr(format!("g_ws_to_ts(-g_view_dir({at}), normalize({normal}), {tu}, {tv})"), 3)
+            }
 
             // Texture.cs: a texture is named before its coordinates are looked at
             "TextureSampler" | "TextureTriplanar" | "NormapMapTriplanar" => {
@@ -562,6 +594,29 @@ impl<'a> Compiler<'a> {
                 }
                 if world_out { normal = format!("g_transform_normal({normal}, i.normal, i.tangent_u, i.tangent_v)"); }
                 expr(normal, 3)
+            }
+            "PolarCoordinates" => {
+                let coords = self.result(link("Coords"));
+                let centre = numbers(value("DefaultCenter"));
+                let centre = self.result(link("Center")).map(|v| v.cast(2)).unwrap_or_else(|| Val::vector(&[centre.first().copied().unwrap_or(0.5), centre.get(1).copied().unwrap_or(0.5)]).code);
+                let radial = number(value("DefaultRadialScale"), 1.0);
+                let radial = self.or(link("RadialScale"), radial).cast(1);
+                let length = number(value("DefaultLengthScale"), 1.0);
+                let length = self.or(link("LengthScale"), length).cast(1);
+                let uv = coords.map(|c| c.cast(2)).unwrap_or_else(|| "i.uv".into());
+                expr(format!("g_polar(({uv}) - ({centre}), {radial}, {length})"), 2)
+            }
+            "NormalBlend" | "Reflection" => {
+                let one = Val::vector(&[1.0; 3]).code;
+                let a = self.result(link("A")).map(|v| v.cast(3)).unwrap_or_else(|| one.clone());
+                let b = self.result(link("B")).map(|v| v.cast(3)).unwrap_or(one);
+                let f = if class == "Reflection" { "reflect" } else if choice(value("Mode"), &["Default", "Reoriented"]) == 1 { "g_normal_blend_reoriented" } else { "g_normal_blend" };
+                expr(format!("{f}({a}, {b})"), 3)
+            }
+            "RGBtoHSV" | "HSVtoRGB" | "SrgbGammaToLinear" | "SrgbLinearToGamma" => {
+                let f = match class { "RGBtoHSV" => "g_rgb_to_hsv", "HSVtoRGB" => "g_hsv_to_rgb", "SrgbGammaToLinear" => "g_srgb_to_linear", _ => "g_linear_to_srgb" };
+                let input = self.result(link("In")).map(|v| v.cast(3)).unwrap_or_else(|| Val::vector(&[1.0; 3]).code);
+                expr(format!("{f}({input})"), 3)
             }
             "TileAndOffset" => {
                 let coords = self.result(link("Coords"));
