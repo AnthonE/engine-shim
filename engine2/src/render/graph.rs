@@ -26,17 +26,65 @@ pub fn source(generated: &str) -> String {
 /// Is it WGSL that means something: parsed and validated as wgpu will, so a
 /// graph that translates into nonsense is refused before a pipeline is made
 /// of it (which would panic).
+/// A material that gives its graph none of the textures the graph reads,
+/// though it has textures of its own: said once, since what's drawn is the
+/// graph's defaults (often plain white). It happens when a package's
+/// material was compiled from an older graph than the one beside it: the
+/// names the two use for the same inputs no longer agree.
+pub fn unmatched(name: &str, graph: &[crate::assets::shadergraph::Texture], given: &std::collections::HashMap<String, String>) -> Option<String> {
+    let wanted: Vec<&str> = graph.iter().filter(|t| t.attribute.is_none()).map(|t| t.name.as_str()).collect();
+    if wanted.is_empty() || given.is_empty() || wanted.iter().any(|w| given.contains_key(*w)) {
+        return None;
+    }
+    let mut has: Vec<&str> = given.keys().map(String::as_str).collect();
+    has.sort_unstable();
+    Some(format!(
+        "{name}: its graph reads {} and the material sets {}: none match, so it's drawn with the graph's defaults (the material and the graph are from different versions)",
+        wanted.join(", "),
+        has.join(", ")
+    ))
+}
+
 pub fn check(source: &str) -> Result<(), String> {
-    use wgpu::naga;
-    let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-        .validate(&module).map(|_| ()).map_err(|e| e.emit_to_string(source))
+    // naga walks an expression by recursion, and a graph of many nodes is
+    // one long expression: on a thread with a small stack (a test's, an
+    // unoptimised build) it runs out. So the check has a stack of its own.
+    let source = source.to_owned();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            use wgpu::naga;
+            let module = naga::front::wgsl::parse_str(&source).map_err(|e| e.emit_to_string(&source))?;
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+                .validate(&module)
+                .map(|_| ())
+                .map_err(|e| e.emit_to_string(&source))
+        })
+        .map_err(|e| format!("the shader could not be checked: {e}"))?
+        .join()
+        .unwrap_or_else(|_| Err("the shader check stopped".into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::assets::shadergraph::translate;
+
+    #[test]
+    fn a_material_that_matches_none_of_its_graphs_textures_is_said() {
+        use crate::assets::shadergraph::Texture;
+        let texture = |name: &str, attribute: Option<&str>| Texture { name: name.into(), srgb: true, clamp: false, default: [1.0; 4], attribute: attribute.map(str::to_owned) };
+        let graph = [texture("g_tSkyTexture1", None), texture("g_tSkyTexture2", None), texture("g_tFromCode", Some("FromCode"))];
+        let given = |names: &[&str]| names.iter().map(|n| (n.to_string(), "a.vtex".to_string())).collect::<std::collections::HashMap<_, _>>();
+        // the sky dome's case: the package's names are an older graph's
+        let note = unmatched("materials/sky.vmat", &graph, &given(&["g_tSkyTexture", "g_tSkyTexture_0"])).unwrap();
+        assert!(note.contains("g_tSkyTexture1, g_tSkyTexture2") && note.contains("g_tSkyTexture, g_tSkyTexture_0"), "{note}");
+        assert!(!note.contains("g_tFromCode"), "what the game sets at run time is not the material's to give");
+        // one match is a match; a material with no textures has nothing to mismatch
+        assert_eq!(unmatched("m", &graph, &given(&["g_tSkyTexture1", "g_tOther"])), None);
+        assert_eq!(unmatched("m", &graph, &given(&[])), None);
+        assert_eq!(unmatched("m", &[texture("g_tFromCode", Some("FromCode"))], &given(&["g_tColor"])), None);
+    }
 
     #[test]
     fn a_graph_of_every_kind_of_node_is_a_shader_wgpu_takes() {

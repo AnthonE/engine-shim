@@ -679,6 +679,20 @@ impl<'a> Compiler<'a> {
 
 /// A graph (a `.shdrgrph`'s text) as WGSL, or why not.
 pub fn translate(text: &str) -> Result<Translated, String> {
+    // A node is worked out by working out what feeds it, by recursion: a
+    // graph that is one long chain goes as deep as it is long, which is more
+    // than a small stack holds (a test's thread, an unoptimised build). It
+    // happens once a graph, so it has a stack of its own.
+    let text = text.to_owned();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || translate_here(&text))
+        .map_err(|e| format!("the graph could not be translated: {e}"))?
+        .join()
+        .unwrap_or_else(|_| Err("translating the graph stopped".into()))
+}
+
+fn translate_here(text: &str) -> Result<Translated, String> {
     let graph: J = serde_json::from_str(text).map_err(|e| format!("not a graph: {e}"))?;
     if flag(graph.get("IsSubgraph"), false) { return Err("a subgraph isn't a material's shader".into()); }
     if choice(graph.get("Domain"), &["Surface", "PostProcess"]) == 1 { return Err("a post-process graph isn't translated yet".into()); }

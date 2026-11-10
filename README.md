@@ -1478,7 +1478,11 @@ a graph needs none of s&box's lighting here:
   them (`g_tColour`, `g_flTiling`, `g_vTint_Colour`, `g_bFogEnabled`; two
   textures of one name numbered in the order their nodes are reached), so
   a material's own values for them are found. A graph with a node that
-  isn't translated is refused, and says which.
+  isn't translated is refused, and says which. A material that sets none
+  of the textures its graph reads is said too (`graph::unmatched`): it is
+  drawn with the graph's defaults, often plain white, and the cause is a
+  package compiled from an older graph than the one beside it (the sky
+  dome of Facepunch's `sky` package is one).
 - **Lit** (`graph.wgsl`). The material (colour, emission, opacity, a
   tangent-space normal, roughness, metalness, occlusion) goes to the same
   `light()` complex's does. Opaque, alpha-tested (`Masked`) and

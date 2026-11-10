@@ -692,6 +692,9 @@ impl Renderer {
                 _ => m.vectors.get(&p.name).copied().unwrap_or(p.default),
             };
         }
+        if let Some(note) = graph::unmatched(name, &graph.textures, &m.textures) {
+            notes.push(note);
+        }
         let views: Vec<wgpu::TextureView> = (0..MAX_TEXTURES).map(|k| {
             let Some(t) = graph.textures.get(k) else { return self.white.clone() };
             match m.textures.get(&t.name) {
