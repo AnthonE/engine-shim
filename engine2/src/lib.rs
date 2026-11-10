@@ -32,6 +32,7 @@ mod window;
 mod rendermesh;
 mod serverlist;
 mod siwe;
+pub mod standin;
 mod state;
 mod slots;
 mod steam;

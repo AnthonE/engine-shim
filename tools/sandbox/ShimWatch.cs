@@ -18,6 +18,13 @@ public sealed class ShimWatch : Component
 
 	protected override void OnFixedUpdate()
 	{
+		// the body's walk (Body, below): where it's told to go, every step
+		if ( _me.IsValid() && _drive.HasValue )
+		{
+			_me.UseInputControls = false;
+			_me.WishVelocity = _drive.Value;
+		}
+
 		// the arms on their animation graph: each hand's furthest from where it rested
 		if ( _graphRest.HasValue && _target.IsValid() && _target.TryGetBoneTransform( "hand_R", out var r ) && _target.TryGetBoneTransform( "hand_L", out var l ) )
 		{
@@ -122,6 +129,7 @@ public sealed class ShimWatch : Component
 
 		Shoot();
 		Events();
+		Body();
 		View();
 		Listen();
 
@@ -136,6 +144,34 @@ public sealed class ShimWatch : Component
 		}
 
 		Log.Info( $"shimwatch {_ticks}: players [{string.Join( "; ", players )}] | bodies {bodies.Count} awake {awake}{restless} z {zs.Min():0}..{zs.Max():0} | joints {joints} | colliders {colliders}" );
+	}
+
+	// the player's own body: the default player's model, which is the
+	// stand-in (engine2/src/standin.rs) where Citizen isn't. Seen from behind
+	// (third person) as it stands, walks, runs and stops, on what the
+	// game's own PlayerController tells its graph; its steps counted.
+	PlayerController _me;
+	Vector3? _drive;
+	int _steps;
+	void Body()
+	{
+		if ( Networking.IsHost ) return;
+		if ( !_me.IsValid() ) _me = Scene.GetAllComponents<PlayerController>().FirstOrDefault( p => !p.IsProxy );
+		if ( !_me.IsValid() || !_me.Renderer.IsValid() || _ticks < 8 ) return;
+		var r = _me.Renderer;
+		if ( _ticks == 8 )
+		{
+			r.OnFootstepEvent += e => _steps++;
+			_me.ThirdPerson = true;
+			_me.UseInputControls = false;
+			var eyes = r.GetAttachment( "eyes" );
+			Log.Info( $"shimwatch body: {r.Model?.Name}, {r.Model?.BoneCount} bones, hand_R {r.Model?.Bones.HasBone( "hand_R" )}, eyes {(eyes.HasValue ? $"{(eyes.Value.Position - _me.WorldPosition).z:0.0} up" : "none")}, graph {r.AnimationGraph?.ResourcePath}, hitboxes {r.Model?.HitboxSet?.All.Count}" );
+		}
+		var forward = Rotation.FromYaw( _me.EyeAngles.yaw ).Forward;
+		_drive = _ticks switch { >= 11 and < 20 => forward * 110, >= 21 and < 30 => forward * 320, _ => Vector3.Zero };
+		r.TryGetBoneTransform( "hand_R", out var hand );
+		r.TryGetBoneTransform( "head", out var head );
+		Log.Info( $"shimwatch body {_ticks}: at {_me.WorldPosition.x:0},{_me.WorldPosition.y:0},{_me.WorldPosition.z:0} speed {_me.Velocity.Length:0}, move_x {r.GetFloat( "move_x" ):0} grounded {r.GetBool( "b_grounded" )} holdtype {r.GetInt( "holdtype" )} duck {r.GetFloat( "duck" ):0.0}, head {(head.Position - _me.WorldPosition).z:0.0} up, hand_R {(hand.Position - _me.WorldPosition).z:0.0} up, steps heard {_steps} | wish {_me.WishVelocity.Length:0} input {_me.UseInputControls} mode {_me.Mode?.GetType().Name} body {(_me.Body.IsValid() ? $"{_me.Body.Velocity.Length:0} motion {_me.Body.MotionEnabled}" : "none")}" );
 	}
 
 	const string TargetModel = "models/first_person/v_first_person_arms_human.vmdl";

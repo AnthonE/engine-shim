@@ -344,7 +344,12 @@ mod draw {
         let m = M.get_or_init(Default::default);
         let key = crate::fs::normal(name);
         if let Some(g) = m.lock().unwrap().get(&key) { return g.clone(); }
-        let g = r.model(&EngineFiles, name).map_err(|e| crate::trace::note(&format!("render: {e}"))).ok().map(Arc::new);
+        // a file's, or (the default player's, with no file) the stand-in's meshes
+        let drawn = r.model(&EngineFiles, name).or_else(|e| match crate::standin::draw_meshes(name) {
+            Some((meshes, default, skins)) => r.model_of(&EngineFiles, name, &meshes, default, &skins),
+            None => Err(e),
+        });
+        let g = drawn.map_err(|e| crate::trace::note(&format!("render: {e}"))).ok().map(Arc::new);
         if let Some(g) = &g { for n in &g.notes { crate::trace::note(&format!("render: {n}")); } }
         m.lock().unwrap().insert(key, g.clone());
         g

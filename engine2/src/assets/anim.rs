@@ -73,6 +73,9 @@ pub struct Clip {
     /// a delta, laid over the bind pose rather than replacing it
     pub delta: bool,
     blocks: Vec<Block>,
+    /// a clip made here, not read: every bone's pose at each frame, in its
+    /// parent's space (empty for a file's clip, which decodes its blocks)
+    keyed: Vec<Vec<BonePose>>,
     /// what fires as it plays (a footstep, a sound, a body group set)
     pub events: Vec<Event>,
 }
@@ -86,6 +89,12 @@ pub struct Event {
 }
 
 impl Clip {
+    /// A clip of poses given outright: one for every bone at each frame
+    /// (a delta's are laid over the bind pose, as a file's are).
+    pub fn keyed(name: &str, fps: f32, looping: bool, delta: bool, frames: Vec<Vec<BonePose>>, events: Vec<Event>) -> Clip {
+        Clip { name: name.to_string(), fps, frames: frames.len(), looping, delta, blocks: Vec::new(), keyed: frames, events }
+    }
+
     /// From one frame to the last: the clip's length in seconds.
     pub fn duration(&self) -> f32 {
         if self.frames > 1 && self.fps > 0.0 { (self.frames - 1) as f32 / self.fps } else { 0.0 }
@@ -275,6 +284,7 @@ pub fn read(r: &Resource, bones: &[String]) -> Animations {
             looping: flag(c, "m_bLooping"),
             delta: flag(c, "m_bDelta"),
             blocks,
+            keyed: Vec::new(),
             events: c.get("m_eventArray").map(Value::as_array).unwrap_or(&[]).iter().filter_map(|e| Some(Event {
                 cycle: e.f32("m_flCycle"),
                 name: std::ffi::CString::new(e.get("m_sEventName")?.as_str()?).ok()?,
@@ -322,6 +332,10 @@ impl Animations {
 
     /// Frame `f` of a clip, over `pose` (the bind pose, in parent space).
     fn frame(&self, clip: &Clip, f: usize, pose: &mut [BonePose]) {
+        if let Some(k) = clip.keyed.get(f) {
+            for (p, q) in pose.iter_mut().zip(k) { *p = *q; }
+            return;
+        }
         for b in clip.blocks.iter().filter(|b| f >= b.start && f <= b.end) {
             for &s in &b.segments {
                 if let Some(Some(seg)) = self.segments.get(s) { seg.read(f - b.start, pose); }

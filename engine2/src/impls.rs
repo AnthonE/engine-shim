@@ -2463,7 +2463,13 @@ pub unsafe fn CModel_MeshTrace(_model: usize, _input: usize, _output: usize) -> 
 // bones
 
 pub unsafe fn CModel_NumBones(model: usize) -> i32 { file(model).map(|f| f.bones.len() as i32).unwrap_or(0) }
-pub unsafe fn CModel_FindBoneIndex(model: usize, name: usize) -> i32 { file(model).map(|f| f.bone(&unsafe { read(name) })).unwrap_or(-1) }
+pub unsafe fn CModel_FindBoneIndex(model: usize, name: usize) -> i32 {
+    let Some(f) = file(model) else { return -1 };
+    let name = unsafe { read(name) };
+    let i = f.bone(&name);
+    if i < 0 && !f.bones.is_empty() { crate::trace::asked(&models::name_of(model).unwrap_or_default(), "bone", &name); }
+    i
+}
 pub unsafe fn CModel_boneName(model: usize, i: i32) -> usize {
     file(model).and_then(|f| at(&f.bones, i)).map(|b| ptr(&b.name)).unwrap_or(ptr(c""))
 }

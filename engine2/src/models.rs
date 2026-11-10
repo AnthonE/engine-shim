@@ -425,7 +425,11 @@ pub fn load(name: &str) -> usize {
     if let Some(&m) = models().by_name.get(&key) { return m; }
     let (m, error) = match read_model(name) {
         Ok((physics, file)) => (from_file(physics, file), None),
-        Err(e) => (from_file(0, None), Some(e)),
+        // the default player's, which comes only with Facepunch's download: ours (standin.rs)
+        Err(e) => match crate::standin::model(name) {
+            Some(file) => { crate::trace::note(&format!("models: {name}: {e}; the stand-in answers")); (from_file(0, Some(file)), None) }
+            None => (from_file(0, None), Some(e)),
+        },
     };
     let mut all = models();
     all.names.insert(m, name.to_string());

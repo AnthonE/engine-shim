@@ -104,6 +104,22 @@ fn main() {
         for n in notes { eprintln!("  {n}"); }
         return;
     }
+    // the default player's stand-in (engine2/src/standin.rs), in one of its sequences:
+    //   render standin out.png [yaw pitch size] [sequence] [cycle]
+    if args.get(1).map(String::as_str) == Some("standin") {
+        let Some(out) = args.get(2) else { usage() };
+        let name = "models/citizen/citizen.vmdl";
+        let (meshes, default, skins) = engine2::standin::draw_meshes(name).unwrap_or_else(|| fail("the stand-in is off"));
+        let m = r.model_of(&content, name, &meshes, default, &skins).unwrap_or_else(|e| fail(&e));
+        let sequence = args.get(6).map(String::as_str).unwrap_or("idle");
+        let bones = engine2::standin::skin_at(sequence, num(7, 0.0)).unwrap_or_else(|| fail(&format!("no sequence {sequence}: {}", engine2::standin::sequences().join(" "))));
+        let instance = [Instance { model: &m, transform: Default::default(), tint: [1.0; 4], bones, lightmapped: false, origin: None, mask: None, skin: 0 }];
+        let view = { let mut v = View::framing(&m, num(3, 35.0), num(4, 20.0)); tone(&mut v); v };
+        let size = num(5, 512.0) as u32;
+        let pixels = r.draw(&instance, &view, size, size);
+        png(std::path::Path::new(out), size, size, &pixels).unwrap_or_else(|e| fail(&e));
+        return;
+    }
     let (Some(model), Some(out)) = (args.get(1), args.get(2)) else { usage() };
     let m = r.model(&content, model).unwrap_or_else(|e| fail(&e));
     let loaded = t.elapsed();

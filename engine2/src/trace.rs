@@ -22,6 +22,15 @@ fn out() -> &'static Mutex<Box<dyn Write + Send>> {
     })
 }
 
+/// A name a game asked a model or a graph for that it doesn't have (a bone,
+/// a parameter, a sequence), said once each: what a stand-in for it
+/// (standin.rs) would still have to answer.
+pub fn asked(whose: &str, kind: &str, name: &str) {
+    static SEEN: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    let line = format!("asked: {whose}: {kind} {name}: none");
+    if SEEN.get_or_init(Default::default).lock().unwrap().insert(line.clone()) { note(&line); }
+}
+
 pub fn note(s: &str) {
     let mut w = out().lock().unwrap();
     let _ = writeln!(w, "{s}");

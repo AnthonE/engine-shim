@@ -382,6 +382,7 @@ adds a watcher. Measured (`grep shimwatch target/spike/server.log`):
 ```sh
 sh tools/compile.sh ../sbox-public/game/core surface prefab sound decal
 git clone https://github.com/Facepunch/sandbox ../sandbox
+git -C ../sandbox checkout "$(cat SANDBOX_COMMIT)"   # Sandbox as of the engine's commit: its newest no longer compiles on it
 sh tools/sandbox.sh ../sandbox
 SBOX=../sbox-public sh spike.sh 120 +shimgame $PWD/../sandbox/sandbox.sbproj +shimhost
 # once "Server started!" (startup waits a while on sbox.game for what it can't have):
@@ -552,7 +553,8 @@ What the game's components still can't do:
   (their input passes through) and root motion isn't taken out. Nobody
   has compared a pose with Facepunch's engine: a graph runs as its nodes
   are read here. Footsteps, the events a player's walk would fire, are
-  Citizen's, which comes only with Facepunch's closed download.
+  Citizen's, which comes only with Facepunch's closed download: the
+  stand-in's walk fires its own (below).
 - **Rolling resistance.** A surface's is kept but not simulated: Rapier
   has none.
 - **Workshop maps.** A map that's only on Steam's workshop needs Steam
@@ -1451,6 +1453,83 @@ with a stand-in for systemd and certbot and run as its unit runs it: as
 row written (`status_url` https on its own host) and `status.json`
 answering on loopback for nginx.
 
+## The default player: a stand-in
+
+`engine2/src/standin.rs`. s&box's player (Citizen: its model, its
+animations, its animation graph, its clothing) comes only with Facepunch's
+closed download, under their EULA, and isn't read here. A game built on
+s&box's `PlayerController` or `CitizenAnimationHelper` asks for it by name
+all the same, and until now got a model with no bones: a player with no
+body, no walk and no footsteps. Now those names are answered by a figure
+of our own, made in code and copied from nothing:
+
+- **What it answers.** A model asked for under `models/citizen/` or
+  `models/citizen_human/` whose file isn't there (`PlayerController` loads
+  `models/citizen_human/human.vmdl`; Sandbox's player
+  `citizen_human_male.vmdl`), and a graph asked for there. A game that
+  ships its own model at one of those paths gets its own:
+  the stand-in answers only after the read fails. `ENGINE2_STANDIN=0`
+  turns it off.
+- **The model.** A jointed mannequin of 25 ellipsoids on 22 bones, 70
+  units tall, its eyes at 64 (where s&box's player looks from). Its bones
+  carry the names games ask for by name (`pelvis`, `head`, `hand_L`,
+  `hand_R`... measured in sbox-public's and Sandbox's C#), its attachments
+  too (`eyes`, `hand_R`, `foot_L`...), with 15 capsule hitboxes (one
+  tagged `head`) and three plain materials (`materials/standin/*.vmat`,
+  made, not read). One mesh group, no collision of its own (a
+  `PlayerController` has its own capsule), no clothing: `Dresser` finds
+  nothing to dress it in, and it's drawn bare.
+- **Its animations.** Computed from a gait, none recorded: standing,
+  walking and running in four directions, crouched and crouch-walking, in
+  the air, seated, swimming, eight ways to hold something, and bending to
+  look up and down. Every gait's cycle is 0.72 s, so they blend in step;
+  each fires `AE_FOOTSTEP` as a foot lands (`Foot`, `attachment`,
+  `volume`, as `SceneModel.OnAnimationEvent` reads them).
+- **Its graph.** The 41 parameters `CitizenAnimationHelper` and
+  `PlayerController` set, with their kinds and options (`holdtype`'s nine,
+  `move_style`'s three...), on the nodes animgraph.rs already runs: a 2D
+  blend of the gaits on `move_x`/`move_y`, a blend to the crouched ones on
+  `duck`, a state machine for the ground, the air (`b_grounded`,
+  `b_noclip`), a seat (`b_sit`) and water (`b_swim`), a selector on
+  `holdtype` masked to the chest and arms, and `aim_body_pitch` added over
+  it. Not answered yet: the look-at vectors (`aim_eyes`, `aim_head`,
+  `aim_body`), IK targets, `sit`'s poses, `special_movement_states`,
+  hit reactions, `scale_height`, `voice`. They're taken and do nothing.
+
+What it takes from Citizen is names only: paths, parameter names and
+options, bone and attachment names, the interface a game compiles
+against, as the slot table is. Its shape, its motion and its look are its
+own. Whether that's enough to ship it to players is a lawyer's read, not
+this file's.
+
+```sh
+cargo test --release -p engine2 standin
+cargo run --release -p render -- standin standin.png 35 12 512 walk_n 0.25
+```
+
+Measured (`cargo test`): its graph run as animation.rs runs it stands
+with its feet on the ground, walks with its feet passing each other and a
+footstep event each time one lands, crouches 12 units lower with its feet
+still on the ground, tucks its legs off the ground and stands again on
+landing; a pistol brings its right hand out in front at chest height
+without moving its feet, and aiming down and up bends it.
+
+Measured in Sandbox (`tools/sandbox/ShimWatch.cs`'s `Body`, a headless
+player in third person, driven by `WishVelocity`): the model Sandbox's
+player asks for (`models/citizen_human/citizen_human_male.vmdl`) is the
+stand-in's (`22 bones, hand_R True, eyes 64.0 up, hitboxes 15`); Sandbox
+sets its `holdtype` to 8 (the physgun) and its hands come up; told to
+walk it goes at 110 with `move_x 110`, told to run at 320 with `move_x
+320`, its head bobbing between 52 and 59 up as it does, and 62 footsteps
+reach the game's `OnFootstepEvent` in 19 s of walking and running (while
+two gaits blend, each fires its own, so more than two a cycle then);
+stopped, it stands. The scene's camera, behind it, draws it.
+
+Names a game asks a model or a graph for that it doesn't have are said
+once each in the trace (`asked: <whose>: bone|parameter|sequence <name>:
+none`): what the stand-in would still have to answer for that game.
+Sandbox's zoo, hosted and joined as above, asks for none.
+
 ## What a player hears
 
 `engine2/src/audio.rs`. s&box mixes in C# (`Sandbox.Audio.MixingThread`);
@@ -1632,6 +1711,7 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 | `tools/publish.sh` | builds staged as the Elo Pros origin serves them: depots, the pointer that makes them live, the manifest |
 | `deploy/` | a game's server on the game box: `install-server.sh`, its systemd unit and settings, nginx's status locations, the certificate hook |
 | `tools/grubs.sh`, `tools/grubs/` | Ape Tavern's Grubs made ready to host here, and a watcher that starts its match |
+| `engine2/src/standin.rs` | the default player's stand-in: a model, its animations and its graph, made in code, answering the names games ask Citizen for |
 | `tools/sandbox.sh`, `tools/sandbox/` | Facepunch's Sandbox, made ready to host here, and a watcher of its world |
 
 ## Next
@@ -1681,7 +1761,9 @@ and Facepunch's artifact download (`Setup.sh`) is never run.
 
 - **Licences beyond the code.** The C# and `.def` files are MIT. Facepunch's
   player models and clothing (Citizen) are under their EULA, as are assets
-  a game pulls from sbox.game's library. A game runs here only with assets
+  a game pulls from sbox.game's library. The stand-in (above) answers
+  Citizen's names with a figure of our own; a lawyer reads that before a
+  build with it goes to players. A game runs here only with assets
   its creator owns, and only with that creator's opt-in.
   `Facepunch.ActionGraphs` (NuGet) declares no licence; ask before bundling it.
 - **The creator's own terms** with Facepunch decide where their game may

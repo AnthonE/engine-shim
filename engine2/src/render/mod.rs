@@ -573,6 +573,8 @@ impl Renderer {
 
     fn read_material(&self, content: &dyn Files, name: &str, notes: &mut Vec<String>) -> (wgpu::BindGroup, Option<Kind>) {
         let m = content.compiled(name).ok_or_else(|| format!("{name}: not found")).and_then(|r| material::read(&r));
+        // the stand-in's own materials (standin.rs) are made, not read
+        let m = m.or_else(|e| crate::standin::material(name).ok_or(e));
         let m = m.unwrap_or_else(|e| { notes.push(e); Default::default() });
         let mut tex = |param: &str, srgb: bool, default: &wgpu::TextureView| match m.textures.get(param) {
             Some(t) => self.texture(content, t, srgb).unwrap_or_else(|e| { notes.push(e); default.clone() }),
